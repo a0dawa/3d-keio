@@ -106,7 +106,8 @@ global.localStorage = anything;
 
 /* ---- 実行して車両モジュールの中身を取り出す ---- */
 const EXPORT = ';globalThis.__X={K8:K8,PAL:PAL,BANDS:BANDS,WIN:WIN,FWIN:FWIN,' +
-  'CARGEO:CARGEO,TRIMGEO:TRIMGEO,FACEGEO:FACEGEO,makeCar:makeCar,sideWindows:sideWindows};';
+  'CARGEO:CARGEO,TRIMGEO:TRIMGEO,FACEGEO:FACEGEO,makeCar:makeCar,sideWindows:sideWindows,' +
+  'shapeAt:shapeAt,frontX:frontX,frontHalfAt:frontHalfAt};';
 try {
   eval(m[1] + '\n' + EXPORT);
 } catch (e) {
@@ -221,6 +222,90 @@ const dead = ['FTEX', 'FRONT_TEX', 'FACEMAT', 'buildCarGeo', 'carColor']
   .filter((s) => html.includes(s));
 rows.push(['旧写真転写方式の残存', 'なし', dead.length ? dead.join(',') : 'なし', '-', '', dead.length ? 'NG' : 'OK']);
 if (dead.length) ng++;
+
+/* ---- (8) 整合性:部品が車体からはみ出していないか ---------------------------
+   寸法が合っていても部品が車体を突き抜けていたら模型として破綻する。
+   ここは「実測値との照合」ではなく「自分自身との幾何的な整合」を見る。        */
+function pass(name, ok, detail) {
+  if (!ok) ng++;
+  rows.push([name, '整合', ok ? '整合' : detail, '-', '', ok ? 'OK' : 'NG']);
+}
+// 8-1 側面トリム(窓・扉)が車体表面に密着しているか(0〜30mmの浮きに収まるか)
+{
+  let worst = 0, worstAt = null;
+  for (const key of ['mid', 'cf']) {
+    const cf = key === 'cf', g = X.TRIMGEO[key];
+    const P = g.attributes.position.array;
+    for (let i = 0; i < P.length; i += 3) {
+      const gap = Math.abs(P[i + 2]) - X.shapeAt(P[i], cf, false).hw;
+      if (gap < -0.001 || gap > 0.030) {
+        if (Math.abs(gap) > Math.abs(worst)) { worst = gap; worstAt = [key, P[i].toFixed(2), gap.toFixed(3)]; }
+      }
+    }
+  }
+  pass('側面トリムの密着', worstAt === null, worstAt ? worstAt.join('/') + 'm' : '');
+}
+// 8-2 前面の部品(窓・貫通扉・表示器)が前面の輪郭からはみ出していないか
+{
+  const P = X.FACEGEO.f.attributes.position.array;
+  let bad = null;
+  for (let i = 0; i < P.length; i += 3) {
+    const y = P[i + 1], z = Math.abs(P[i + 2]), lim = X.frontHalfAt(y);
+    if (y > K.ROOF - K.WHEEL * 0 + 0.001) { bad = bad || ['屋根超え', y.toFixed(3)]; }
+    if (z > lim + 0.001) bad = bad || ['側方はみ出し y=' + y.toFixed(2), (z - lim).toFixed(3) + 'm'];
+  }
+  pass('前面部品が輪郭内', bad === null, bad ? bad.join(' ') : '');
+}
+// 8-3 屋根上・床下の機器:車体幅の内側/レール面より上にあるか
+{
+  const car = X.makeCar('keio', true, false, true);   // パンタ付き先頭車
+  let overW = null, underRail = null, maxHalf = K.W / 2, maxTop = K.ROOF;
+  car.traverse((o) => {
+    const g = o.geometry;
+    if (!g || !g.p) return;
+    let hz, hy;
+    if (g.type === 'Box') { hz = g.p[2] / 2; hy = g.p[1] / 2; }
+    else if (g.type === 'Cyl') {                       // 回転で軸の向きが変わる
+      const r = Math.max(g.p[0], g.p[1]), h = g.p[2] / 2;
+      const axisY = Math.abs(o.rotation.x) < 1e-6 && Math.abs(o.rotation.z) < 1e-6;
+      hy = axisY ? h : r;
+      hz = Math.abs(o.rotation.x) > 1e-6 ? h : r;
+    } else return;
+    const z = Math.abs(o.position.z) + hz, lo = o.position.y - hy, hi = o.position.y + hy;
+    if (z > K.W / 2 + 0.001) overW = overW || [z.toFixed(3)];
+    if (lo < -0.001) underRail = underRail || [lo.toFixed(3)];
+    if (z > maxHalf) maxHalf = z;
+    if (hi > maxTop) maxTop = hi;
+  });
+  pass('機器が車体幅の内側', overW === null, overW ? '半幅' + overW + 'm' : '');
+  pass('機器がレール面より上', underRail === null, underRail ? '最下' + underRail + 'm' : '');
+  // 建築限界の余裕:高架橋の桁半幅は「最外軌道+2.45m」が下限(TEMPLATE.md 防御的設計)
+  const ok = maxHalf <= 2.34;
+  pass('桁幅への余裕(≤2.34m)', ok, maxHalf.toFixed(3) + 'm');
+  rows.push(['車両の最大半幅', '≤2.340', maxHalf.toFixed(3), '-', 'm', maxHalf <= 2.34 ? 'OK' : 'NG']);
+  rows.push(['パンタ折畳時の全高', '(参考)', maxTop.toFixed(3), '-', 'm', 'OK']);
+}
+// 8-4 客用窓が扉と干渉していないか
+{
+  let clash = null;
+  for (const w of X.sideWindows(false, false))
+    for (const d of K.DOORX)
+      if (w[1] > d - K.DOORW / 2 && w[0] < d + K.DOORW / 2)
+        clash = clash || [w[0].toFixed(2) + '-' + w[1].toFixed(2)];
+  pass('客用窓と扉の非干渉', clash === null, clash ? '重なり ' + clash : '');
+}
+// 8-5 編成:連結面間20mに対し、車体と幌が隣の車両と干渉しないか
+{
+  const car = X.makeCar('keio', false, false, false);
+  let maxX = K.LEN / 2;
+  car.traverse((o) => {
+    const g = o.geometry;
+    if (!g || !g.p) return;
+    const hx = g.type === 'Box' ? g.p[0] / 2 : Math.max(g.p[0], g.p[1]);
+    if (Math.abs(o.position.x) + hx > maxX) maxX = Math.abs(o.position.x) + hx;
+  });
+  pass('編成内の非干渉', maxX <= K.PITCH / 2, '車端' + maxX.toFixed(3) + 'm > ' + (K.PITCH / 2) + 'm');
+}
 
 /* ---- 出力 ---- */
 const pad = (s, n) => String(s) + ' '.repeat(Math.max(0, n - [...String(s)].reduce((a, ch) => a + (ch.charCodeAt(0) > 0x2e80 ? 2 : 1), 0)));

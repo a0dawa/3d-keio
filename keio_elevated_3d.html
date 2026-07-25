@@ -1398,7 +1398,7 @@ function buildTrimGeo(cabF,cabR){
       const a=dx-K8.DOORW/2, b=dx+K8.DOORW/2;
       sidePanel(P,C,I,a,b,K8.FLOOR+0.06,K8.SHLD-0.10,zo(OUT),'door');
       sidePanel(P,C,I,dx-0.012,dx+0.012,K8.FLOOR+0.06,K8.SHLD-0.10,zo(OUT*1.6),'dark');
-      sideWindow(P,C,I,a+0.15,b-0.15,WIN.B-0.16,WIN.T,zo(OUT*2),zo(OUT*1.5));
+      sideWindow(P,C,I,a+0.15,b-0.15,WIN.B-0.16,WIN.T-0.05,zo(OUT*2),zo(OUT*1.5));
     }
     // 客用窓(扉配置から自動生成)
     for(const w of sideWindows(cabF,cabR))
@@ -1447,9 +1447,10 @@ function buildFaceGeo(sgn){
   for(const zz of [-0.44,0.44])
     pushQuad(P,C,I,at(K8.FLOOR+0.10,zz-0.015,OUT*2),at(K8.FLOOR+0.10,zz+0.015,OUT*2),
                    at(FWIN.T,zz+0.015,OUT*2),at(FWIN.T,zz-0.015,OUT*2),PAL.dark,PAL.dark);
-  // 行先表示器(前面窓の上・中央)
-  pushQuad(P,C,I,at(FWIN.T+0.03,-0.52,OUT*2),at(FWIN.T+0.03,0.52,OUT*2),
-                 at(FWIN.T+0.19,0.52,OUT*2),at(FWIN.T+0.19,-0.52,OUT*2),PAL.dark,PAL.dark);
+  // 行先表示器(前面窓の上・中央)。高さも幅も前面輪郭から導き、はみ出しを構造的に防ぐ。
+  { const yb=FWIN.T+0.02, yt=Math.min(FWIN.T+0.14, FTIP.yt-0.03);
+    const zw=Math.min(0.45, frontHalfAt(yt)-0.06);
+    pushQuad(P,C,I,at(yb,-zw,OUT*2),at(yb,zw,OUT*2),at(yt,zw,OUT*2),at(yt,-zw,OUT*2),PAL.dark,PAL.dark); }
   const g=new THREE.BufferGeometry();
   g.setAttribute('position',new THREE.Float32BufferAttribute(P,3));
   g.setAttribute('color',new THREE.Float32BufferAttribute(C,3));
@@ -1517,7 +1518,11 @@ const G_SKT=new THREE.BoxGeometry(0.30,0.54,2.24);       // スカート(排障�
 const G_CPL=new THREE.BoxGeometry(0.66,0.24,0.34);       // 連結器
 const G_HOOD=new THREE.BoxGeometry(0.10,1.90,1.02);      // 連結部の幌
 
-function addBogie(g,bx,motored){
+// 台車1台。addFine に渡した部品は遠景(LOD)で非表示になる。
+// 台車は1両あたり42メッシュにもなり描画負荷の主因なので、
+// 骨格(側梁・横梁・空気ばね・車輪・車軸)だけを常時表示とし、
+// ブレーキディスク・軸箱・主電動機は近景専用にする。
+function addBogie(g,bx,motored,addFine){
   for(const sz of [-1,1]){
     const sd=new THREE.Mesh(G_SIDE,M_BOG); sd.position.set(bx,0.62,sz*0.99); g.add(sd);
     const ap=new THREE.Mesh(G_ASP,M_AIR);  ap.position.set(bx,0.86,sz*0.86); g.add(ap);
@@ -1527,12 +1532,12 @@ function addBogie(g,bx,motored){
     const ax=new THREE.Mesh(G_AXL,M_WHL); ax.rotation.x=Math.PI/2; ax.position.set(bx+wx,K8.WHEEL,0); g.add(ax);
     for(const wz of [-1.06,1.06]){
       const w=new THREE.Mesh(G_WHL,M_WHL); w.rotation.x=Math.PI/2; w.position.set(bx+wx,K8.WHEEL,wz); g.add(w);
-      const d=new THREE.Mesh(G_DISC,M_DISC); d.rotation.x=Math.PI/2; d.position.set(bx+wx,K8.WHEEL,wz*0.68); g.add(d);
-      const ab=new THREE.Mesh(G_ABX,M_BOG); ab.position.set(bx+wx,K8.WHEEL+0.10,wz*0.86); g.add(ab);
+      const d=addFine(new THREE.Mesh(G_DISC,M_DISC)); d.rotation.x=Math.PI/2; d.position.set(bx+wx,K8.WHEEL,wz*0.68);
+      addFine(new THREE.Mesh(G_ABX,M_BOG)).position.set(bx+wx,K8.WHEEL+0.10,wz*0.86);
     }
     if(motored){
-      const mt=new THREE.Mesh(G_MOT,M_BOG); mt.rotation.x=Math.PI/2;
-      mt.position.set(bx+wx*0.35,K8.WHEEL+0.06,0); g.add(mt);
+      const mt=addFine(new THREE.Mesh(G_MOT,M_BOG)); mt.rotation.x=Math.PI/2;
+      mt.position.set(bx+wx*0.35,K8.WHEEL+0.06,0);
     }
   }
 }
@@ -1560,8 +1565,8 @@ function makeCar(livery,panto,cabF,cabR){
   const bt=new THREE.Mesh(G_BAT ,M_UND); bt.position.set(-6.20,K8.FLOOR-0.28,0.10); addFine(bt);
   const tk=new THREE.Mesh(G_TANK,M_UND); tk.rotation.z=Math.PI/2; tk.position.set(5.40,K8.FLOOR-0.30,0.55); addFine(tk);
   // 台車(先頭台車は付随、他は電動という簡略。編成の見た目には十分)
-  addBogie(g,-K8.BOGIE/2, !cabR);
-  addBogie(g, K8.BOGIE/2, !cabF);
+  addBogie(g,-K8.BOGIE/2, !cabR, addFine);
+  addBogie(g, K8.BOGIE/2, !cabF, addFine);
   // 前頭部の部品
   for(const end of [{s:1,on:cabF},{s:-1,on:cabR}]){
     if(!end.on) continue;
