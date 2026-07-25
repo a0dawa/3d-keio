@@ -1120,337 +1120,480 @@ tag('仙川橋梁(架替)',BRIDGE.s,20,-60);
   scene.add(crown);scene.add(trunk);
 }
 
-/* ============ 9. 列車 ============ */
-// ===== 実車写真(正面)をシルエット対応で実寸展開したテクスチャ =====
-// 生成: front_px.py / 前面いっぱい(幅=車体幅2.845m, 高さ=床0.95m〜屋根3.64m)に対応
-// UV: u=(z+CW/2)/CW,  v=(y-C_FLOOR)/(C_ROOF-C_FLOOR)   ※上下は v=1 が屋根
-const FTEX={w:288, h:272, url:"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNoaGgAAAMEAYFL09IQAAAAAElFTkSuQmCC"}; // 前面写真は撮影者・権利の記録が無いので履歴から消した(1×1 の灰色に置き換え。2026-10-11)
+/* ============ 9. 列車(京王8000系) ============ */
+/* 【設計方針】旧実装からの全面作り直し
+   旧: 実車正面写真を1ドット単位で車体座標へ展開したPNGを前面に貼る「写真転写方式」。
+   新: 前面を含め、すべてジオメトリで構成する。
+       ただし写真の画素解析で得た"寸法"は実車由来の唯一の資産なので、諸元表
+       K8 / BANDS / WIN / FWIN に実測値として引き継ぎ、形状はそこからのみ生成する。
+       (数値を書き換えれば車体・窓・帯・前面がすべて追従する一方向のデータフロー)
 
-// 実車写真(シルエット対応で展開)をテクスチャ化
-const FRONT_TEX=(()=>{
-  const img=new Image();
-  const t=new THREE.Texture(img);
-  img.onload=()=>{ t.needsUpdate=true; };
-  img.src=FTEX.url;
-  t.magFilter=THREE.LinearFilter; t.minFilter=THREE.LinearFilter;
-  t.generateMipmaps=false; t.anisotropy=8;
-  return t;
+   旧実装の失敗要因(TEMPLATE.md §4)への構造的な対処:
+     - 窓を頂点カラーの条件式で"塗って"いた → 廃止。窓・扉は車体表面のわずか外側に
+       置く独立したパネルとして作る。ロフトの分割数と無関係に輪郭が鋭く出る。
+     - 帯の上下関係(紺線は赤帯の"上")を誤認   → BANDS 表に下から順に並べ、単調性を
+       生成時に検査する。境界には必ず頂点を置き二重化する。
+     - 前頭部が黒い塊になる                   → 前頭部の塗り分けはアイボリー地+帯のみ。
+       窓・灯具・表示器は独立メッシュなので地色を汚さない。
+     - 裏面カリングで面が消える               → パネル類の材質は DoubleSide で統一。
+     - 断面リングの頂点数が場所により変わる   → 帯の境界は固定、肩から上の埋め点だけを
+       個数固定で等分する(旧実装は先頭部でリング長が変化し接続が壊れていた)。 */
+
+/* ---- 9-1. 実車諸元(単一の真実の源) ----------------------------------------
+   出典の別:
+     [A] 公表諸元(Wikipedia 京王8000系電車 ほか)
+     [B] 本プロジェクトの実車写真 画素解析による実測値
+         ※元写真(reference/keio8000_*.png)は失われたが、測定値はここに残り検証基準であり続ける
+     [C] 20m級4扉車の標準値(出典未確認。実車資料が入手できたら要更新)          */
+const K8={
+  LEN:19.50,      // [C] 車体長[m]
+  PITCH:20.00,    // [C] 連結面間距離[m](編成内の車両間隔)
+  W:2.845,        // [B] 車体幅[m](正面シルエット幅=車体幅 として測定した基準値)
+  FLOOR:0.95,     // [B] 車体裾(床面)高さ[m](レール面基準)
+  SHLD:3.15,      // [B] 肩(垂直な側面の上端)[m]
+  ROOF:3.64,      // [B] 屋根頂部[m]
+  NOSE:0.72,      // 前頭部を平面視・側面視で絞り込む長さ[m]
+  CAB:1.95,       // [B] 乗務員室(普通鋼・アイボリー塗装)の範囲[m]
+  RAKE:0.34,      // 前面の後傾(上に行くほど後退)[m/m]
+  RAKE_Y:2.15,    // 後傾が始まる高さ[m]
+  BOGIE:13.60,    // [C] 台車中心間距離[m]
+  WBASE:2.20,     // [C] 固定軸距[m]
+  WHEEL:0.43,     // [C] 車輪半径[m](径860mm)
+  DOORW:1.30,     // [A] 客用扉の幅[m](片側4扉)
+  DOORX:[-7.05,-2.35,2.35,7.05],   // [C] 客用扉の中心位置[m]
+};
+// 前頭部の絞り(形状の調整つまみはこの3つだけ。実車写真との突き合わせはここを触る)
+const NOSE_PLAN=t=>1-0.10*t*t*t;   // 平面視:先端で幅90%(角の丸み)
+const NOSE_SHLD=3.44;              // 先端での肩の高さ[m](前面窓が上まで回り込む)
+const NOSE_DROP=0.05;              // 先端での屋根の下がり[m]
+
+/* ---- 9-2. 配色 ------------------------------------------------------------
+   [A] 車体は軽量ステンレス。前頭部〜乗務員扉のみ普通鋼でアイボリー塗装。
+       帯は京王レッドと京王ブルー。                                            */
+const PAL={
+  stl  :[0.66,0.69,0.72],   // 軽量ステンレス(ヘアライン)
+  roof :[0.57,0.60,0.63],   // 屋根(灰色塗り屋根)
+  door :[0.72,0.75,0.78],   // 客用扉(無塗装ステンレス。地よりわずかに明るい)
+  red  :[0.80,0.05,0.29],   // 京王レッド
+  navy :[0.09,0.15,0.38],   // 京王ブルー
+  ivory:[0.94,0.91,0.83],   // 前頭部(普通鋼・アイボリー塗装)
+  glass:[0.13,0.16,0.21],   // 窓(下端側)
+  glassT:[0.20,0.25,0.32],  // 窓(上端側。上下でわずかに明度差をつけ平板に見せない)
+  sash :[0.78,0.81,0.84],   // 窓框・戸当り
+  dark :[0.09,0.10,0.11],   // 表示器・戸当り・幌の黒(ガラス色と混同しない明度に離す)
+};
+
+/* ---- 9-3. 側面の帯(下から順。境界には必ず頂点を置き二重化する) --------------
+   [B] 赤帯 1.43〜1.66m / 紺の細線 1.83〜1.87m / 側窓 2.27〜3.05m
+   ※紺線は赤帯の"上"。ここを取り違えたのが旧実装で最も長く残ったバグだった。   */
+const BANDS=[
+  {y0:0.00, y1:1.43, c:'stl' },   // 腰板(ステンレス地)
+  {y0:1.43, y1:1.66, c:'red' },   // 京王レッド
+  {y0:1.66, y1:1.83, c:'stl' },
+  {y0:1.83, y1:1.87, c:'navy'},   // 京王ブルーの細線
+  {y0:1.87, y1:3.15, c:'stl' },   // 幕板
+  {y0:3.15, y1:9.99, c:'roof'},   // 肩から上=屋根
+];
+const WIN ={B:2.27, T:3.05};      // [B] 側窓の上下端[m]
+const FWIN={B:1.95, T:3.42};      // [B] 前面窓の上下端[m]
+const BAND_RISE=0.26;             // 前頭部で帯が跳ね上がる量[m]
+// BANDS の健全性検査(下から順に連続していること)。壊れた表で描き始めない。
+(function(){
+  for(let i=0;i<BANDS.length;i++){
+    if(!(BANDS[i].y1>BANDS[i].y0)) throw new Error('BANDS: y1<=y0 at '+i);
+    if(i&&Math.abs(BANDS[i].y0-BANDS[i-1].y1)>1e-9) throw new Error('BANDS: 不連続 at '+i);
+  }
+  if(!(WIN.B>1.87&&WIN.T>WIN.B)) throw new Error('WIN: 側窓が帯と干渉');
 })();
-const FACEMAT=new THREE.MeshLambertMaterial({map:FRONT_TEX, emissive:0x3a3a3a, emissiveMap:FRONT_TEX, side:THREE.DoubleSide});
+function bandAt(y){ for(const b of BANDS) if(y>=b.y0&&y<b.y1) return b.c; return 'stl'; }
 
-// ===== 京王8000系:高解像度ロフト車体(断面スイープ+頂点カラー) =====
-// 断面(丸屋根)を車長方向に 0.10m 刻みでスイープし、先頭部は平面視・側面視ともに
-// 曲面で絞り込む。塗り分けは頂点カラー(ステンレス/赤帯/紺帯/窓/扉/アイボリー/黒色前面)。
-const CL=19.5, CW=2.845, C_FLOOR=0.95, C_SHLD=3.15, C_ROOF=3.64;   // 肩3.15(実測:側面は3.15付近まで垂直)
-const NOSE=0.70;     // 先頭部の丸み(小さく:前面をほぼ全幅の平面にする)
-const IVL=1.95;      // 前頭部(アイボリー塗装)の範囲
-const RAKE=0.34;     // 前面の後傾(上に行くほど後退)
-// 断面分割/長手刻み:HI=高精細(近景) LO=簡素(遠景)。LODで自動切替する
-const LODP={hi:{roof:44, fine:{mid:0.10, nose:0.025}, face:0.05, faceC:44},
-            lo:{roof:12, fine:{mid:0.60, nose:0.20},  face:0.30, faceC:10}};
-// 帯・窓の高さ(レール面基準)
-// ▼ 実車写真の画素解析による実測値(車体幅2.845mを基準に換算)
-// ▼ 正面写真(シルエット=車体幅2.845m)を基準に測り直した実測値
-const WINB=2.27, WINT=3.05;      // 側窓 (下端2.27m)
-const REDB=1.43, REDT=1.66;      // 京王レッド帯 (厚み0.23m)
-const NVB=1.74, NVT=1.78;        // 紺の細線 (赤帯の"上"。正面1.70-1.74と側面1.87の中間で較正)
-const DOORW=1.30, DOORX=[-7.05,-2.35,2.35,7.05];
-const CC={ stl:[0.66,0.69,0.72], stlD:[0.57,0.60,0.63], door:[0.74,0.77,0.80],
-           glass:[0.20,0.24,0.29], frame:[0.80,0.83,0.86], red:[0.83,0.02,0.42],
-           navy:[0.11,0.17,0.42], ivory:[0.94,0.91,0.82],
-           roof:[0.60,0.63,0.66] };
-function nosePlan(t){ return 1-0.03*t*t*t; }   // 先端でも幅97%(丸みは角だけ)
-function noseTop(t){ return 1-0.045*t*t; }    // 側面視のわずかな絞り
-// 断面(y,z)の生成。
-// 重要:帯(赤/紺/窓)の境界に頂点を"正確に"置き、境界の直前・直後で頂点を二重化する。
-// これにより頂点カラーの補間がにじまず、帯の輪郭が鋭く出る(ポリゴン数を増やすだけでは直らない)。
+/* ---- 9-4. 断面と車体ロフト -------------------------------------------------
+   ストレート車体(裾絞りなし)+丸屋根。断面を車長方向にスイープする。          */
 const EPS=0.004;
-function sideYs(yb, ys){
-  const keys=[NVB,NVT,REDB,REDT,WINB,WINT];      // 帯・窓の境界(実測値)
-  const out=[yb];
-  for(const k of keys){ if(k>yb+0.02&&k<ys-0.02){ out.push(k-EPS); out.push(k+EPS); } }
-  for(let y=yb+0.08;y<ys;y+=0.08) out.push(y);   // 補間用の中間点
-  out.push(ys);
-  out.sort((p,q)=>p-q);
-  const uniq=[out[0]];
-  for(const v of out) if(v-uniq[uniq.length-1]>0.0015) uniq.push(v);
-  return uniq;
+function uniqSorted(a,tol){
+  const s=a.slice().sort((p,q)=>p-q), o=[s[0]];
+  for(const v of s) if(v-o[o.length-1]>(tol||0.0015)) o.push(v);
+  return o;
 }
-function section(hw, yb, ys, yt, nRoof){
-  const pts=[], R=((hw*hw)+((yt-ys)*(yt-ys)))/(2*(yt-ys)), cy=yt-R;
-  const a0=Math.atan2(ys-cy,hw);
-  const YS=sideYs(yb,ys);
-  for(const y of YS) pts.push([y, hw]);                       // 右側面(下→上)
-  for(let i=1;i<nRoof;i++){ const t=a0+(Math.PI-2*a0)*i/nRoof;// 丸屋根(右→左)
-    pts.push([cy+Math.sin(t)*R, Math.cos(t)*R]); }
-  for(let i=YS.length-1;i>=0;i--) pts.push([YS[i], -hw]);     // 左側面(上→下)
+// 側面の高さ方向の頂点列。帯の境界は"固定"、肩から上の埋め点だけを個数固定で等分する。
+// → 先頭部で肩が上がってもリングの頂点数が変わらない(接続が壊れない)。
+const BAND_YS=(function(){
+  const f=[K8.FLOOR];
+  for(const b of BANDS) for(const k of [b.y0,b.y1])
+    if(k>K8.FLOOR+0.02&&k<K8.SHLD-0.02){ f.push(k-EPS); f.push(k+EPS); }
+  return uniqSorted(f);
+})();
+function sideYs(ys,nFill){
+  const out=BAND_YS.slice(), top=BAND_YS[BAND_YS.length-1];
+  for(let i=1;i<=nFill;i++) out.push(top+(ys-top)*i/nFill);
+  return out;
+}
+// x位置における断面の形(先頭部の絞りを含む)
+function shapeAt(x,cabF,cabR){
+  const half=K8.LEN/2;
+  let t=0;
+  if(cabF&&x>half-K8.NOSE)  t=(x-(half-K8.NOSE))/K8.NOSE;
+  if(cabR&&x<-half+K8.NOSE) t=((-half+K8.NOSE)-x)/K8.NOSE;
+  const hw=(K8.W/2)*(t>0?NOSE_PLAN(t):1);
+  const ys=K8.SHLD+(NOSE_SHLD-K8.SHLD)*t;
+  const yt=K8.ROOF-NOSE_DROP*t;
+  let cab=0;
+  if(cabF&&x> half-K8.CAB) cab= 1;
+  if(cabR&&x<-half+K8.CAB) cab=-1;
+  return {x:x, hw:hw, ys:ys, yt:yt, cab:cab, t:t};
+}
+// 断面の点列(右側面 下→上 → 丸屋根 右→左 → 左側面 上→下)
+function sectionPts(s,nRoof,nFill){
+  const pts=[], dy=s.yt-s.ys;
+  const R=((s.hw*s.hw)+dy*dy)/(2*dy), cy=s.yt-R, a0=Math.atan2(s.ys-cy,s.hw);
+  const YS=sideYs(s.ys,nFill);
+  for(const y of YS) pts.push([y, s.hw]);
+  for(let i=1;i<nRoof;i++){ const th=a0+(Math.PI-2*a0)*i/nRoof;
+    pts.push([cy+Math.sin(th)*R, Math.cos(th)*R]); }
+  for(let i=YS.length-1;i>=0;i--) pts.push([YS[i], -s.hw]);
   return pts;
 }
-// 車長方向のstation:扉・窓の境界と先頭部を細かく刻む
-function stations(cabF,cabR,fine){
-  const set=[-CL/2, CL/2];
-  for(const dx of DOORX){                                     // 客用扉の縁(二重化)
-    for(const e of [dx-DOORW/2, dx+DOORW/2]){ set.push(e-EPS); set.push(e+EPS); }
-    for(const e of [dx-DOORW/2+0.16, dx+DOORW/2-0.16]){ set.push(e-EPS); set.push(e+EPS); }
-  }
-  const cabStart=CL/2-IVL;
-  set.push(cabStart-EPS); set.push(cabStart+EPS);
-  set.push(-cabStart-EPS); set.push(-cabStart+EPS);
-  for(let x=-CL/2;x<=CL/2;x+=fine.mid) set.push(x);           // 中間部
-  for(let x=CL/2-NOSE-0.2;x<=CL/2;x+=fine.nose) set.push(x);  // 先頭部(細かく)
-  for(let x=-CL/2;x<=-CL/2+NOSE+0.2;x+=fine.nose) set.push(x);
-  const arr=set.filter(v=>v>=-CL/2-1e-6&&v<=CL/2+1e-6).sort((p,q)=>p-q);
-  const uniq=[arr[0]];
-  for(const v of arr) if(v-uniq[uniq.length-1]>0.0015) uniq.push(v);
-  return uniq;
+// 車長方向のstation(扉の縁・乗務員室境界・先頭部を細かく刻む)
+function stationXs(cabF,cabR,LP){
+  const half=K8.LEN/2, set=[-half,half];
+  for(const dx of K8.DOORX) for(const e of [dx-K8.DOORW/2, dx+K8.DOORW/2]){ set.push(e-EPS); set.push(e+EPS); }
+  if(cabF){ set.push(half-K8.CAB-EPS); set.push(half-K8.CAB+EPS); }
+  if(cabR){ set.push(-half+K8.CAB-EPS); set.push(-half+K8.CAB+EPS); }
+  for(let x=-half;x<=half;x+=LP.mid) set.push(x);
+  if(cabF) for(let x=half-K8.NOSE-0.2;x<=half;x+=LP.nose) set.push(x);
+  if(cabR) for(let x=-half;x<=-half+K8.NOSE+0.2;x+=LP.nose) set.push(x);
+  return uniqSorted(set.filter(v=>v>=-half-1e-6&&v<=half+1e-6));
 }
-// 頂点カラー:位置(x,y,z)から配色を決める(帯・窓・扉・前頭部)
-function carColor(x,y,z,inCab,cabSgn,hw){
-  const ax=Math.abs(x);
-  if(inCab){
-    // 前頭部:前面は実車写真のテクスチャ面に委ねる(旧来の条件式による窓・帯の描画は撤去)。
-    // ここでは"側面"の塗り分けだけを行う:アイボリー地に、前方で跳ね上がる赤帯と紺線。
-    const d=CL/2-ax;                    // 先端からの距離[m]
-    const zr=hw>0.05?Math.abs(z)/hw:0;  // 断面内の左右位置(0=中央/1=側端)
-    if(y>WINB&&y<WINT&&d>1.05&&d<1.85&&zr>0.82) return CC.glass;   // 乗務員室の側窓
-    const rise=0.26*zr*Math.max(0,Math.min(1,(IVL-d)/IVL));
-    if(y>REDB+rise&&y<REDT+rise) return CC.red;
-    if(y>NVB+rise&&y<NVT+rise) return CC.navy;
-    return CC.ivory;
+// 車体地色。前頭部はアイボリー地に、前方へ向かって跳ね上がる帯を乗せる。
+function bodyColor(x,y,z,s){
+  if(y>=s.ys-0.006) return PAL.roof;
+  if(s.cab){
+    const d=K8.LEN/2-Math.abs(x);                       // 先端からの距離[m]
+    const zr=s.hw>0.05?Math.abs(z)/s.hw:0;              // 断面内の左右位置(0=中央/1=側端)
+    const rise=BAND_RISE*zr*Math.max(0,Math.min(1,(K8.CAB-d)/K8.CAB));
+    const c=bandAt(y-rise);
+    return c==='red'?PAL.red : c==='navy'?PAL.navy : PAL.ivory;
   }
-  if(y>C_SHLD-0.02) return CC.roof;
-  if(y>NVB&&y<NVT) return CC.navy;      // 紺の細線(赤帯の上)
-  if(y>REDB&&y<REDT) return CC.red;     // 京王レッド帯
-  if(y>WINB&&y<WINT&&Math.abs(z)>CW/2-0.30){
-    for(const dx of DOORX){
-      if(Math.abs(x-dx)<DOORW/2-0.16) return CC.glass;     // 扉の窓
-      if(Math.abs(x-dx)<DOORW/2)      return CC.door;
-    }
-    if(ax<CL/2-0.45) return CC.glass;                       // 側窓
-    return CC.frame;
-  }
-  for(const dx of DOORX) if(Math.abs(x-dx)<DOORW/2) return CC.door;   // 扉本体
-  return CC.stl;
+  return PAL[bandAt(y)];
 }
-function buildCarGeo(cabF,cabR,LP){
-  const pos=[],col=[],idx=[];
-  const xs=stations(cabF,cabR,LP.fine);
-  const rings=[];
+// 前面(後傾した面)のx位置と、その高さでの半幅
+function frontX(y){ return K8.LEN/2-Math.max(0,y-K8.RAKE_Y)*K8.RAKE; }
+const FTIP=shapeAt(K8.LEN/2,true,false);
+function frontHalfAt(y){
+  if(y<=FTIP.ys) return FTIP.hw;
+  const dy=FTIP.yt-FTIP.ys, R=((FTIP.hw*FTIP.hw)+dy*dy)/(2*dy), cy=FTIP.yt-R;
+  const v=R*R-(y-cy)*(y-cy);
+  return v>0?Math.sqrt(v):0.02;
+}
+function buildBodyGeo(cabF,cabR,LP){
+  const P=[],C=[],I=[];
+  const vtx=(x,y,z,c)=>{ const i=P.length/3; P.push(x,y,z); C.push(c[0],c[1],c[2]); return i; };
+  const xs=stationXs(cabF,cabR,LP), rings=[];
   for(const x of xs){
-    let hw=CW/2, yt=C_ROOF, ys=C_SHLD, inCab=false, cabSgn=0;
-    if(cabF && x>CL/2-NOSE){ const t=(x-(CL/2-NOSE))/NOSE;
-      hw*=nosePlan(t); yt=C_ROOF-0.04*t; ys=C_SHLD+(3.47-C_SHLD)*t; }
-    if(cabR && x<-CL/2+NOSE){ const t=((-CL/2+NOSE)-x)/NOSE;
-      hw*=nosePlan(t); yt=C_ROOF-0.04*t; ys=C_SHLD+(3.47-C_SHLD)*t; }
-    if(cabF && x>CL/2-IVL){ inCab=true; cabSgn=1; }
-    if(cabR && x<-CL/2+IVL){ inCab=true; cabSgn=-1; }
-    const sec=section(hw,C_FLOOR,ys,yt,LP.roof), ring=[];
-    for(const [y,z] of sec){
-      ring.push(pos.length/3);
-      pos.push(x,y,z);
-      const c=carColor(x,y,z,inCab,cabSgn,hw);
-      col.push(c[0],c[1],c[2]);
-    }
+    const s=shapeAt(x,cabF,cabR), pts=sectionPts(s,LP.roof,LP.fill), ring=[];
+    for(const p of pts) ring.push(vtx(x,p[0],p[1],bodyColor(x,p[0],p[1],s)));
     rings.push(ring);
   }
   for(let i=0;i<rings.length-1;i++){
     const A=rings[i],B=rings[i+1];
-    for(let k=0;k<A.length-1;k++){
-      idx.push(A[k],B[k],B[k+1]); idx.push(A[k],B[k+1],A[k+1]);
-    }
+    for(let k=0;k<A.length-1;k++){ I.push(A[k],B[k],B[k+1]); I.push(A[k],B[k+1],A[k+1]); }
   }
-  // 妻面(下地):先頭部でも生成しておき、この外側に写真テクスチャ面を重ねる
-  for(const [endRing,sgn,isCab] of [[rings[rings.length-1],1,cabF],[rings[0],-1,cabR]]){
-    const tipX=pos[endRing[0]*3];
-    const prof=[];
-    for(const vi of endRing) prof.push([pos[vi*3+1], pos[vi*3+2]]);
-    let yMin=1e9,yMax=-1e9;
-    for(const[y0]of prof){ if(y0<yMin)yMin=y0; if(y0>yMax)yMax=y0; }
-    const halfAt=y=>{
-      let m=0;
-      for(let i=0;i<prof.length-1;i++){
-        const[y1,z1]=prof[i],[y2,z2]=prof[i+1];
-        if((y1-y)*(y2-y)<=0 && Math.abs(y2-y1)>1e-6){
-          const t=(y-y1)/(y2-y1), z=z1+(z2-z1)*t;
-          if(Math.abs(z)>m) m=Math.abs(z);
-        }
-      }
-      return m;
-    };
-    const rowsY=[yMin];
-    for(const k of [NVB,NVT,REDB,REDT]){                    // 帯の境界(前面窓は写真テクスチャ)
-      if(k>yMin+0.02&&k<yMax-0.02){ rowsY.push(k-EPS); rowsY.push(k+EPS); }
-    }
-    for(let y=yMin+LP.face;y<yMax;y+=LP.face) rowsY.push(y);
-    rowsY.push(yMax); rowsY.sort((p,q)=>p-q);
-    const RY=[rowsY[0]];
-    for(const v of rowsY) if(v-RY[RY.length-1]>0.0015) RY.push(v);
-    const NC=LP.faceC, grid=[];
+  // 両端を面で閉じる。先頭側は後傾した前面、連結側は平らな妻面。
+  for(const end of [{sgn:1,cab:cabF},{sgn:-1,cab:cabR}]){
+    const sgn=end.sgn, tip=shapeAt(sgn*K8.LEN/2,cabF,cabR);
+    const yTop=tip.yt, rows=[K8.FLOOR];
+    for(const b of BANDS) for(const k of [b.y0,b.y1])
+      if(k>K8.FLOOR+0.02&&k<yTop-0.02){ rows.push(k-EPS); rows.push(k+EPS); }
+    for(let y=K8.FLOOR+LP.face;y<yTop;y+=LP.face) rows.push(y);
+    rows.push(yTop);
+    const RY=uniqSorted(rows), NC=LP.faceC, grid=[];
     for(const y of RY){
-      const hwR=Math.max(0.02, halfAt(y));
-      const xr=tipX - sgn*(isCab?Math.max(0,y-2.15)*RAKE:0);
+      const hw=end.cab?Math.max(0.02,frontHalfAt(y))
+                      :Math.max(0.02,(y<=tip.ys?tip.hw:frontHalfAt(y)));
+      const x=sgn*(end.cab?frontX(y):K8.LEN/2);
       const row=[];
       for(let ci=0;ci<=NC;ci++){
-        const z=-hwR+2*hwR*ci/NC;
-        row.push(pos.length/3);
-        pos.push(xr,y,z);
-        const c=carColor(tipX,y,z,isCab,sgn,Math.max(0.05,hwR));
-        col.push(c[0],c[1],c[2]);
+        const z=-hw+2*hw*ci/NC;
+        const c=end.cab?bodyColor(sgn*K8.LEN/2,y,z,{hw:Math.max(0.05,hw),ys:tip.ys,cab:sgn})
+                       :(y>=tip.ys-0.006?PAL.roof:PAL.stl);
+        row.push(vtx(x,y,sgn*z,c));
       }
       grid.push(row);
     }
     for(let r=0;r<grid.length-1;r++){
       const A=grid[r],B=grid[r+1];
       for(let ci=0;ci<NC;ci++){
-        if(sgn>0){ idx.push(A[ci],B[ci],B[ci+1]); idx.push(A[ci],B[ci+1],A[ci+1]); }
-        else     { idx.push(A[ci],B[ci+1],B[ci]); idx.push(A[ci],A[ci+1],B[ci+1]); }
+        if(sgn>0){ I.push(A[ci],B[ci],B[ci+1]); I.push(A[ci],B[ci+1],A[ci+1]); }
+        else     { I.push(A[ci],B[ci+1],B[ci]); I.push(A[ci],A[ci+1],B[ci+1]); }
       }
     }
   }
   const g=new THREE.BufferGeometry();
-  g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
-  g.setAttribute('color',new THREE.Float32BufferAttribute(col,3));
-  g.setIndex(idx); g.computeVertexNormals();
+  g.setAttribute('position',new THREE.Float32BufferAttribute(P,3));
+  g.setAttribute('color',new THREE.Float32BufferAttribute(C,3));
+  g.setIndex(I); g.computeVertexNormals();
   return g;
 }
-// 先頭部の外皮(写真テクスチャ)。
-// 「平らな前面」だけでなく「丸みを帯びた周囲(ノーズの絞り部)」も含めて
-// 写真を x 方向へ平行投影して貼る。UVは車体座標(z,y)から作るので歪まない。
-function buildFaceGeo(sgn){
-  // 写真は「正面から見たシルエット」を車体座標へ対応づけて展開済み。
-  //   u = (z + CW/2)/CW,  v = (y - C_FLOOR)/(C_ROOF - C_FLOOR)
-  // という単純な平行投影で、前面いっぱいに歪みなく貼れる。
-  const pos=[],uv=[],idx=[];
-  const uvOf=(y,z)=>[
-    Math.min(1,Math.max(0,(z+CW/2)/CW)),
-    Math.min(1,Math.max(0,(y-C_FLOOR)/(C_ROOF-C_FLOOR)))
-  ];
-  const secAt=t=>{
-    const hw=(CW/2)*nosePlan(t)*1.004;
-    const ys=C_SHLD+(3.55-C_SHLD)*t, yt=C_ROOF-0.02*t;
-    return {hw:hw, ys:ys, yt:yt, x:(CL/2-NOSE)+t*NOSE};
-  };
-  const secPts=(hw,ys,yt,N)=>{
-    const p=[], R=((hw*hw)+((yt-ys)*(yt-ys)))/(2*(yt-ys)), cy=yt-R;
-    const a0=Math.atan2(ys-cy,hw), nS=Math.round(N*0.24), nR=N-2*nS;
-    for(let i=0;i<=nS;i++) p.push([C_FLOOR+(ys-C_FLOOR)*i/nS, hw]);
-    for(let i=1;i<nR;i++){ const th=a0+(Math.PI-2*a0)*i/nR; p.push([cy+Math.sin(th)*R, Math.cos(th)*R]); }
-    for(let i=nS;i>=0;i--) p.push([C_FLOOR+(ys-C_FLOOR)*i/nS, -hw]);
-    return p;
-  };
-  const NT=10, NP=72, rings=[];
-  for(let i=0;i<=NT;i++){                       // 先頭部の丸み(外皮)
-    const t=i/NT, s=secAt(t), pts=secPts(s.hw,s.ys,s.yt,NP), ring=[];
-    for(const [y,z] of pts){
-      const x=s.x+0.006-Math.max(0,y-2.2)*RAKE*t;
-      ring.push(pos.length/3);
-      pos.push(sgn*x, y, sgn*z);
-      const q=uvOf(y,z); uv.push(q[0],q[1]);
+
+/* ---- 9-5. 側面のレイアウト(扉配置から窓割りを自動生成) ----------------------
+   K8.DOORX / K8.DOORW を変えれば窓割りも自動で追従する。                      */
+const PIER_END=0.42, PIER_MID=0.26, WIN_MAX=1.45;   // 端の柱/窓間の柱/窓の最大幅[m]
+const CREW={ doorX:8.30, doorW:0.72, doorT:2.95,    // 乗務員扉(中心x/幅/上端)
+             winX:9.12, winW:0.66, winB:2.18, winT:2.98 };  // 乗務員室側窓
+function sideWindows(cabF,cabR){
+  const half=K8.LEN/2, hw=K8.DOORW/2, e=[-half];
+  for(const dx of K8.DOORX){ e.push(dx-hw); e.push(dx+hw); }
+  e.push(half);
+  const out=[];
+  for(let i=0;i<e.length-1;i+=2){
+    let a=e[i], b=e[i+1];
+    // 乗務員室にかかる区間は客用窓を置かず、乗務員扉+乗務員室側窓に置き換える
+    if(cabF&&b>half-K8.CAB) continue;
+    if(cabR&&a<-half+K8.CAB) continue;
+    const L=b-a;
+    const n=Math.max(1,Math.round((L-2*PIER_END+PIER_MID)/(WIN_MAX+PIER_MID)));
+    const w=(L-2*PIER_END-(n-1)*PIER_MID)/n;
+    if(w<0.35) continue;
+    for(let k=0;k<n;k++){ const x0=a+PIER_END+k*(w+PIER_MID); out.push([x0,x0+w]); }
+  }
+  return out;
+}
+/* ---- 9-6. 窓・扉パネル(車体表面のわずか外側に置く独立メッシュ) --------------
+   材質は DoubleSide。巻き順の反転で面が消える事故(TEMPLATE.md §6)を構造的に断つ。 */
+const OUT=0.006;   // 車体表面からの浮かせ量[m]
+function pushQuad(P,C,I,p0,p1,p2,p3,c0,c1){
+  const b=P.length/3;
+  const cs=[c0,c0,c1,c1];                       // 下2点=c0 / 上2点=c1(上下のグラデーション)
+  const ps=[p0,p1,p2,p3];
+  for(let i=0;i<4;i++){ P.push(ps[i][0],ps[i][1],ps[i][2]); C.push(cs[i][0],cs[i][1],cs[i][2]); }
+  I.push(b,b+1,b+2); I.push(b,b+2,b+3);
+}
+// 側面の矩形パネル。帯の境界で水平に切り、各段の色を帯に従わせる(帯が扉を横切る)。
+// z座標は関数 zf(x) で与える。先頭部で車体が絞れてもパネルが浮かない。
+function sidePanel(P,C,I,x0,x1,y0,y1,zf,baseKey){
+  const ys=[y0,y1];
+  for(const b of BANDS) for(const k of [b.y0,b.y1]) if(k>y0+0.005&&k<y1-0.005) ys.push(k);
+  const Y=uniqSorted(ys,0.003);
+  const za=zf(x0), zb=zf(x1);
+  for(let i=0;i<Y.length-1;i++){
+    const bk=bandAt((Y[i]+Y[i+1])/2);
+    const c=bk==='red'?PAL.red:bk==='navy'?PAL.navy:PAL[baseKey];
+    pushQuad(P,C,I,[x0,Y[i],za],[x1,Y[i],zb],[x1,Y[i+1],zb],[x0,Y[i+1],za],c,c);
+  }
+}
+// 窓(框で縁取り、ガラスは上下でわずかに明度差)
+function sideWindow(P,C,I,x0,x1,y0,y1,zf,zg){
+  const f=0.055;   // 框の幅[m]
+  pushQuad(P,C,I,[x0,y0,zf(x0)],[x1,y0,zf(x1)],[x1,y1,zf(x1)],[x0,y1,zf(x0)],PAL.sash,PAL.sash);
+  pushQuad(P,C,I,[x0+f,y0+f,zg(x0+f)],[x1-f,y0+f,zg(x1-f)],
+                 [x1-f,y1-f,zg(x1-f)],[x0+f,y1-f,zg(x0+f)],PAL.glass,PAL.glassT);
+}
+function buildTrimGeo(cabF,cabR){
+  const P=[],C=[],I=[];
+  const hwAt=x=>shapeAt(x,cabF,cabR).hw;      // その位置の車体半幅(先頭部の絞りを含む)
+  for(const sz of [1,-1]){
+    const zo=o=>(x=>sz*(hwAt(x)+o));          // 車体表面から o だけ浮かせた面
+    // 客用扉(戸当りを挟んだ2枚引戸)+扉窓
+    for(const dx of K8.DOORX){
+      const a=dx-K8.DOORW/2, b=dx+K8.DOORW/2;
+      sidePanel(P,C,I,a,b,K8.FLOOR+0.06,K8.SHLD-0.10,zo(OUT),'door');
+      sidePanel(P,C,I,dx-0.012,dx+0.012,K8.FLOOR+0.06,K8.SHLD-0.10,zo(OUT*1.6),'dark');
+      sideWindow(P,C,I,a+0.15,b-0.15,WIN.B-0.16,WIN.T,zo(OUT*2),zo(OUT*1.5));
     }
-    rings.push(ring);
-  }
-  for(let i=0;i<NT;i++){
-    const A=rings[i],B=rings[i+1];
-    for(let k=0;k<A.length-1;k++){ idx.push(A[k],B[k],B[k+1]); idx.push(A[k],B[k+1],A[k+1]); }
-  }
-  const s1=secAt(1), hwT=s1.hw;                 // 先端の平らな前面
-  const halfAt=y=>{
-    if(y<=s1.ys) return hwT;
-    const R=((hwT*hwT)+((s1.yt-s1.ys)*(s1.yt-s1.ys)))/(2*(s1.yt-s1.ys)), cy=s1.yt-R;
-    const v=R*R-(y-cy)*(y-cy);
-    return v>0?Math.sqrt(v):0.02;
-  };
-  const NY=104,NZ=72, base=pos.length/3;
-  for(let i=0;i<=NY;i++){
-    const y=C_FLOOR+(s1.yt-C_FLOOR)*i/NY, hw=halfAt(y);
-    const x=s1.x+0.010-Math.max(0,y-2.2)*RAKE;
-    for(let j=0;j<=NZ;j++){
-      const z=-hw+2*hw*j/NZ;
-      pos.push(sgn*x, y, sgn*z);
-      const q=uvOf(y,z); uv.push(q[0],q[1]);
+    // 客用窓(扉配置から自動生成)
+    for(const w of sideWindows(cabF,cabR))
+      sideWindow(P,C,I,w[0],w[1],WIN.B,WIN.T,zo(OUT),zo(OUT*0.5));
+    // 乗務員扉・乗務員室側窓
+    for(const end of [{s:1,on:cabF},{s:-1,on:cabR}]){
+      if(!end.on) continue;
+      const sg=end.s, dx=sg*CREW.doorX, wx=sg*CREW.winX;
+      const rng=(c,w)=>[Math.min(c-w/2,c+w/2), Math.max(c-w/2,c+w/2)];
+      const d=rng(dx,CREW.doorW), v=rng(wx,CREW.winW);
+      sidePanel(P,C,I,d[0],d[1],K8.FLOOR+0.06,CREW.doorT,zo(OUT),'ivory');
+      sideWindow(P,C,I,d[0]+0.08,d[1]-0.08,2.20,CREW.doorT-0.12,zo(OUT*2),zo(OUT*1.5));
+      sideWindow(P,C,I,v[0],v[1],CREW.winB,CREW.winT,zo(OUT),zo(OUT*0.5));
     }
-  }
-  const Wc=NZ+1;
-  for(let i=0;i<NY;i++)for(let j=0;j<NZ;j++){
-    const a2=base+i*Wc+j, b2=a2+1, c2=a2+Wc, d2=c2+1;
-    idx.push(a2,c2,d2); idx.push(a2,d2,b2);
   }
   const g=new THREE.BufferGeometry();
-  g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
-  g.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));
-  g.setIndex(idx); g.computeVertexNormals();
+  g.setAttribute('position',new THREE.Float32BufferAttribute(P,3));
+  g.setAttribute('color',new THREE.Float32BufferAttribute(C,3));
+  g.setIndex(I); g.computeVertexNormals();
   return g;
 }
-const FACEGEO={f:buildFaceGeo(1), r:buildFaceGeo(-1)};
-const CARMAT=new THREE.MeshLambertMaterial({vertexColors:true});
-const CARGEO={}, CARGEO_LO={};
-for(const k of ['mid','cf','cr']){
-  CARGEO[k]=buildCarGeo(k==='cf',k==='cr',LODP.hi);
-  CARGEO_LO[k]=buildCarGeo(k==='cf',k==='cr',LODP.lo);
+/* ---- 9-7. 前面(3次元曲面ガラス3分割・貫通扉・行先表示器) --------------------
+   [A] 前頭部は普通鋼のアイボリー塗装、前面窓は3分割の曲面ガラス、
+       分割編成用の貫通路(プラグドア)を中央に備える。                          */
+const FGLASS=[[-0.40,0.40],[0.54,1.20],[-1.20,-0.54]];   // 前面窓の左右範囲[m](中央=貫通扉窓)
+function buildFaceGeo(sgn){
+  const P=[],C=[],I=[];
+  const at=(y,z,o)=>[sgn*(frontX(y)+(o===undefined?OUT:o)), y, sgn*z];
+  // 前面窓(框+ガラス)。上下に分割してガラスに明度差をつける。
+  for(const g0 of FGLASS){
+    const z0=g0[0], z1=g0[1], f=0.05;
+    pushQuad(P,C,I,at(FWIN.B,z0),at(FWIN.B,z1),at(FWIN.T,z1),at(FWIN.T,z0),PAL.sash,PAL.sash);
+    const NY=6;
+    for(let i=0;i<NY;i++){
+      const ya=FWIN.B+f+(FWIN.T-FWIN.B-2*f)*i/NY, yb=FWIN.B+f+(FWIN.T-FWIN.B-2*f)*(i+1)/NY;
+      const mix=t=>[PAL.glass[0]+(PAL.glassT[0]-PAL.glass[0])*t,
+                    PAL.glass[1]+(PAL.glassT[1]-PAL.glass[1])*t,
+                    PAL.glass[2]+(PAL.glassT[2]-PAL.glass[2])*t];
+      pushQuad(P,C,I,at(ya,z0+f,OUT*2),at(ya,z1-f,OUT*2),at(yb,z1-f,OUT*2),at(yb,z0+f,OUT*2),
+               mix(i/NY),mix((i+1)/NY));
+    }
+  }
+  // 貫通扉の縁(中央窓の下、腰部まで)
+  pushQuad(P,C,I,at(K8.FLOOR+0.10,-0.44),at(K8.FLOOR+0.10,0.44),at(FWIN.B,0.44),at(FWIN.B,-0.44),
+           PAL.ivory,PAL.ivory);
+  for(const zz of [-0.44,0.44])
+    pushQuad(P,C,I,at(K8.FLOOR+0.10,zz-0.015,OUT*2),at(K8.FLOOR+0.10,zz+0.015,OUT*2),
+                   at(FWIN.T,zz+0.015,OUT*2),at(FWIN.T,zz-0.015,OUT*2),PAL.dark,PAL.dark);
+  // 行先表示器(前面窓の上・中央)
+  pushQuad(P,C,I,at(FWIN.T+0.03,-0.52,OUT*2),at(FWIN.T+0.03,0.52,OUT*2),
+                 at(FWIN.T+0.19,0.52,OUT*2),at(FWIN.T+0.19,-0.52,OUT*2),PAL.dark,PAL.dark);
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.Float32BufferAttribute(P,3));
+  g.setAttribute('color',new THREE.Float32BufferAttribute(C,3));
+  g.setIndex(I); g.computeVertexNormals();
+  return g;
 }
-{ const t=CARGEO.cf.index.count/3; console.log('car triangles (hi):',t); }
-// --- 屋根上機器・床下・台車・パンタ(円柱を多用して滑らかに) ---
-const M_AC=M(0x8e949a), M_GR=M(0x9aa0a6), M_BG=M(0x4a5058), M_WH=M(0x60666c),
-      M_PN=M(0x585f66), M_SH=M(0xb9bec4), M_IN=M(0xd9cfc0);
-const G_AC=new THREE.BoxGeometry(2.30,0.26,1.62), G_ACL=new THREE.BoxGeometry(1.95,0.10,1.36);
-const G_UND=new THREE.BoxGeometry(11.0,0.56,2.10);
-const G_BOG=new THREE.BoxGeometry(2.90,0.44,2.30);
-const G_WHL=new THREE.CylinderGeometry(0.43,0.43,0.14,24);
-const G_AXL=new THREE.CylinderGeometry(0.09,0.09,2.10,12);
-const G_PIN=new THREE.CylinderGeometry(0.085,0.085,0.30,12);
-const G_PBS=new THREE.BoxGeometry(2.30,0.12,1.90);
-const G_PA1=new THREE.BoxGeometry(1.55,0.10,0.10), G_PA2=new THREE.BoxGeometry(1.75,0.08,0.08);
-const G_PSH=new THREE.BoxGeometry(0.26,0.06,1.75);
-const G_HL=new THREE.BoxGeometry(0.10,0.22,0.42), G_TL=new THREE.BoxGeometry(0.10,0.12,0.30);
-const G_SK=new THREE.BoxGeometry(0.44,0.72,2.30);
-const M_HL=M(0xf4f5f6), M_TL=M(0xc0302e), M_IV=M(0xefe8d4);
+
+/* ---- 9-8. ジオメトリのLODと材質 -------------------------------------------- */
+const LODP={hi:{roof:40, mid:0.22, nose:0.030, fill:14, face:0.06, faceC:40},
+            lo:{roof:12, mid:0.90, nose:0.20,  fill:4,  face:0.30, faceC:12}};
+const CARMAT =new THREE.MeshLambertMaterial({vertexColors:true});
+const TRIMMAT=new THREE.MeshLambertMaterial({vertexColors:true, side:THREE.DoubleSide});
+const CARMAT_INO =new THREE.MeshLambertMaterial({vertexColors:true,color:0x9fd8ea});
+const CARMAT_SETA=new THREE.MeshLambertMaterial({vertexColors:true,color:0xa8d99a});
+const CARGEO={}, CARGEO_LO={}, TRIMGEO={};
+for(const k of ['mid','cf','cr']){
+  const cf=k==='cf', cr=k==='cr';
+  CARGEO[k]   =buildBodyGeo(cf,cr,LODP.hi);
+  CARGEO_LO[k]=buildBodyGeo(cf,cr,LODP.lo);
+  TRIMGEO[k]  =buildTrimGeo(cf,cr);
+}
+const FACEGEO={f:buildFaceGeo(1), r:buildFaceGeo(-1)};
+
+/* ---- 9-9. 屋根上・床下・台車 ------------------------------------------------
+   [A] 冷房は屋根上集中式 48.84kW(42,000kcal/h)を1両に"1基"。旧実装は3基載せて
+       いたが誤り。中央の1基からダクトカバーが前後へ伸びる形に改める。
+   [A] 台車は東急車輛製 TS-823A(電動)/TS-824(付随)。車体直結式空気ばね(ボルスタレス)。
+   [A] パンタグラフは東洋電機製 PT-4201(菱形)。                                */
+const M_AC =M(0x9199a0), M_ACL=M(0xa6adb3), M_DUCT=M(0x8b9299),
+      M_UND=M(0x474d55), M_BOG=M(0x3f444b), M_WHL=M(0x5d636a), M_DISC=M(0x8a9098),
+      M_AIR =M(0x2f343a), M_PN =M(0x565d64), M_SH=M(0xb9bec4), M_INS=M(0xd8cdbc),
+      M_HLC =M(0x2a2e33), M_HL =new THREE.MeshLambertMaterial({color:0xf6f7f8,emissive:0x9aa0a6}),
+      M_TL  =new THREE.MeshLambertMaterial({color:0xd23b36,emissive:0x521512}),
+      M_SKIRT=M(0x585e66), M_CPL=M(0x3a3f45), M_HOOD=M(0x23262a);
+// 屋根上
+const G_AC  =new THREE.BoxGeometry(2.40,0.34,1.86);      // 集中式冷房装置(1基)
+const G_ACL =new THREE.BoxGeometry(2.10,0.08,1.60);      // 天面のルーバー
+const G_DUCT=new THREE.BoxGeometry(6.20,0.11,1.16);      // 前後へ伸びるダクトカバー
+const G_VENT=new THREE.BoxGeometry(0.42,0.14,0.42);      // 通風器・ヒューズ箱
+// 床下(機器を個別に分けて"箱ひとつ"感をなくす)
+const G_VVVF=new THREE.BoxGeometry(3.10,0.62,2.06);      // 主制御器(VVVF)
+const G_SIV =new THREE.BoxGeometry(2.20,0.58,1.94);      // 静止形インバータ
+const G_CP  =new THREE.BoxGeometry(1.70,0.50,1.60);      // 空気圧縮機
+const G_BAT =new THREE.BoxGeometry(1.90,0.44,1.70);      // 蓄電池箱
+const G_TANK=new THREE.CylinderGeometry(0.24,0.24,1.70,14);
+// 台車
+const G_SIDE=new THREE.BoxGeometry(3.05,0.20,0.16);      // 側梁
+const G_XBM =new THREE.BoxGeometry(0.34,0.22,1.92);      // 横梁
+const G_ABX =new THREE.BoxGeometry(0.40,0.30,0.26);      // 軸箱
+const G_ASP =new THREE.CylinderGeometry(0.31,0.31,0.24,16); // 空気ばね(車体直結)
+const G_WHL =new THREE.CylinderGeometry(K8.WHEEL,K8.WHEEL,0.135,26);
+const G_DISC=new THREE.CylinderGeometry(0.31,0.31,0.05,20);  // ブレーキディスク
+const G_AXL =new THREE.CylinderGeometry(0.085,0.085,1.98,12);
+const G_MOT =new THREE.CylinderGeometry(0.24,0.24,0.70,14);  // 主電動機
+// パンタ(菱形 PT-4201)
+const G_PBS=new THREE.BoxGeometry(2.24,0.10,1.86);
+const G_PIN=new THREE.CylinderGeometry(0.085,0.085,0.28,12);
+const G_PA1=new THREE.BoxGeometry(1.52,0.09,0.09), G_PA2=new THREE.BoxGeometry(1.70,0.07,0.07);
+const G_PSH=new THREE.BoxGeometry(0.24,0.055,1.74);
+// 前頭部の部品
+const G_HLC=new THREE.BoxGeometry(0.16,0.28,0.62);       // 灯具ケース
+const G_HLL=new THREE.BoxGeometry(0.06,0.17,0.21);       // 前照灯レンズ
+const G_TLL=new THREE.BoxGeometry(0.06,0.14,0.17);       // 尾灯レンズ
+const G_SKT=new THREE.BoxGeometry(0.30,0.54,2.24);       // スカート(排障器)
+const G_CPL=new THREE.BoxGeometry(0.66,0.24,0.34);       // 連結器
+const G_HOOD=new THREE.BoxGeometry(0.10,1.90,1.02);      // 連結部の幌
+
+function addBogie(g,bx,motored){
+  for(const sz of [-1,1]){
+    const sd=new THREE.Mesh(G_SIDE,M_BOG); sd.position.set(bx,0.62,sz*0.99); g.add(sd);
+    const ap=new THREE.Mesh(G_ASP,M_AIR);  ap.position.set(bx,0.86,sz*0.86); g.add(ap);
+  }
+  const xb=new THREE.Mesh(G_XBM,M_BOG); xb.position.set(bx,0.62,0); g.add(xb);
+  for(const wx of [-K8.WBASE/2, K8.WBASE/2]){
+    const ax=new THREE.Mesh(G_AXL,M_WHL); ax.rotation.x=Math.PI/2; ax.position.set(bx+wx,K8.WHEEL,0); g.add(ax);
+    for(const wz of [-1.06,1.06]){
+      const w=new THREE.Mesh(G_WHL,M_WHL); w.rotation.x=Math.PI/2; w.position.set(bx+wx,K8.WHEEL,wz); g.add(w);
+      const d=new THREE.Mesh(G_DISC,M_DISC); d.rotation.x=Math.PI/2; d.position.set(bx+wx,K8.WHEEL,wz*0.68); g.add(d);
+      const ab=new THREE.Mesh(G_ABX,M_BOG); ab.position.set(bx+wx,K8.WHEEL+0.10,wz*0.86); g.add(ab);
+    }
+    if(motored){
+      const mt=new THREE.Mesh(G_MOT,M_BOG); mt.rotation.x=Math.PI/2;
+      mt.position.set(bx+wx*0.35,K8.WHEEL+0.06,0); g.add(mt);
+    }
+  }
+}
 function makeCar(livery,panto,cabF,cabR){
   const g=new THREE.Group();
   const key=cabF?'cf':(cabR?'cr':'mid');
-  const body=new THREE.Mesh(CARGEO[key],CARMAT);g.add(body);
-  g.userData.body=body; g.userData.key=key; g.userData.hi=true;   // LOD切替用
-  if(livery!=='ino'&&livery!=='seta'){                            // 実車写真の前面を貼る
-    if(cabF) g.add(new THREE.Mesh(FACEGEO.f,FACEMAT));
-    if(cabR) g.add(new THREE.Mesh(FACEGEO.r,FACEMAT));
+  const body=new THREE.Mesh(CARGEO[key],CARMAT); g.add(body);
+  const trim=new THREE.Mesh(TRIMGEO[key],TRIMMAT); g.add(trim);
+  g.userData.body=body; g.userData.key=key; g.userData.hi=true;
+  const fine=[];                        // 遠景で消す細部(LOD)
+  const addFine=m=>{ g.add(m); fine.push(m); return m; };
+  if(cabF) g.add(new THREE.Mesh(FACEGEO.f,TRIMMAT));
+  if(cabR) g.add(new THREE.Mesh(FACEGEO.r,TRIMMAT));
+  // 屋根上:集中式冷房1基+前後のダクトカバー
+  const ac=new THREE.Mesh(G_AC,M_AC);  ac.position.set(0,K8.ROOF+0.14,0); g.add(ac);
+  const al=new THREE.Mesh(G_ACL,M_ACL);al.position.set(0,K8.ROOF+0.33,0); addFine(al);
+  for(const dx of [-4.60,4.60]){
+    const du=new THREE.Mesh(G_DUCT,M_DUCT); du.position.set(dx,K8.ROOF+0.03,0); g.add(du);
   }
-  for(const ax of[-6.4,0.4,6.4]){
-    const ac=new THREE.Mesh(G_AC,M_AC);ac.position.set(ax,C_ROOF+0.11,0);g.add(ac);
-    const lv=new THREE.Mesh(G_ACL,M_GR);lv.position.set(ax,C_ROOF+0.27,0);g.add(lv);
-  }
-  const un=new THREE.Mesh(G_UND,M_BG);un.position.set(0,C_FLOOR-0.30,0);g.add(un);
-  for(const [cab,sgn] of [[cabF,1],[cabR,-1]]){          // 前照灯・尾灯・スカート
-    if(!cab)continue;
-    for(const sz of[-1,1]){
-      const hl=new THREE.Mesh(G_HL,M_HL);hl.position.set(sgn*(CL/2-0.02),1.44,sz*0.88);g.add(hl);
-      const tl=new THREE.Mesh(G_TL,M_TL);tl.position.set(sgn*(CL/2-0.02),1.44,sz*0.55);g.add(tl);
+  for(const vx of [-8.2,8.2]) addFine(new THREE.Mesh(G_VENT,M_ACL)).position.set(vx,K8.ROOF+0.06,0.62);
+  // 床下機器
+  const vv=new THREE.Mesh(G_VVVF,M_UND); vv.position.set(-3.30,K8.FLOOR-0.36,0); g.add(vv);
+  const sv=new THREE.Mesh(G_SIV ,M_UND); sv.position.set( 0.40,K8.FLOOR-0.34,0); g.add(sv);
+  const cp=new THREE.Mesh(G_CP  ,M_UND); cp.position.set( 3.40,K8.FLOOR-0.31,-0.20); addFine(cp);
+  const bt=new THREE.Mesh(G_BAT ,M_UND); bt.position.set(-6.20,K8.FLOOR-0.28,0.10); addFine(bt);
+  const tk=new THREE.Mesh(G_TANK,M_UND); tk.rotation.z=Math.PI/2; tk.position.set(5.40,K8.FLOOR-0.30,0.55); addFine(tk);
+  // 台車(先頭台車は付随、他は電動という簡略。編成の見た目には十分)
+  addBogie(g,-K8.BOGIE/2, !cabR);
+  addBogie(g, K8.BOGIE/2, !cabF);
+  // 前頭部の部品
+  for(const end of [{s:1,on:cabF},{s:-1,on:cabR}]){
+    if(!end.on) continue;
+    const sg=end.s, xf=sg*(frontX(1.30)+0.02);
+    for(const sz of [-1,1]){
+      const cs=new THREE.Mesh(G_HLC,M_HLC); cs.position.set(xf,1.30,sz*0.96); g.add(cs);
+      const hl=new THREE.Mesh(G_HLL,M_HL);  hl.position.set(xf+sg*0.07,1.30,sz*1.10); addFine(hl);
+      const tl=new THREE.Mesh(G_TLL,M_TL);  tl.position.set(xf+sg*0.07,1.30,sz*0.82); addFine(tl);
     }
-    const sk=new THREE.Mesh(G_SK,M_IV);sk.position.set(sgn*(CL/2-0.18),0.70,0);g.add(sk);
+    const sk=new THREE.Mesh(G_SKT,M_SKIRT); sk.position.set(sg*(K8.LEN/2-0.14),0.70,0); g.add(sk);
+    const cp2=new THREE.Mesh(G_CPL,M_CPL);  cp2.position.set(sg*(K8.LEN/2+0.22),0.66,0); addFine(cp2);
   }
-  for(const bx of[-6.8,6.8]){
-    const bg=new THREE.Mesh(G_BOG,M_BG);bg.position.set(bx,0.74,0);g.add(bg);
-    for(const wx of[-1.12,1.12]){
-      const axl=new THREE.Mesh(G_AXL,M_WH);axl.rotation.x=Math.PI/2;axl.position.set(bx+wx,0.45,0);g.add(axl);
-      for(const wz of[-1.10,1.10]){
-        const w=new THREE.Mesh(G_WHL,M_WH);w.rotation.x=Math.PI/2;w.position.set(bx+wx,0.45,wz);g.add(w);
-      }
-    }
+  // 連結面の幌(先頭でない側)
+  for(const end of [{s:1,on:!cabF},{s:-1,on:!cabR}]){
+    if(!end.on) continue;
+    addFine(new THREE.Mesh(G_HOOD,M_HOOD)).position.set(end.s*(K8.LEN/2+0.06),2.05,0);
   }
   if(panto){
-    const bs=new THREE.Mesh(G_PBS,M_PN);bs.position.set(-1.0,C_ROOF+0.06,0);g.add(bs);
-    for(const zz of[-0.72,0.72])for(const xx of[-1.7,-0.3]){
-      const ins=new THREE.Mesh(G_PIN,M_IN);ins.position.set(xx,C_ROOF+0.24,zz);g.add(ins);
-    }
-    const a1=new THREE.Mesh(G_PA1,M_PN);a1.position.set(-1.55,C_ROOF+0.62,0);a1.rotation.z=0.78;g.add(a1);
-    const a2=new THREE.Mesh(G_PA2,M_PN);a2.position.set(-0.35,C_ROOF+1.00,0);a2.rotation.z=-0.30;g.add(a2);
-    const sh=new THREE.Mesh(G_PSH,M_SH);sh.position.set(0.35,4.74,0);g.add(sh);
+    const bs=new THREE.Mesh(G_PBS,M_PN); bs.position.set(-1.0,K8.ROOF+0.06,0); g.add(bs);
+    for(const zz of [-0.70,0.70]) for(const xx of [-1.66,-0.34])
+      addFine(new THREE.Mesh(G_PIN,M_INS)).position.set(xx,K8.ROOF+0.22,zz);
+    const a1=new THREE.Mesh(G_PA1,M_PN); a1.position.set(-1.52,K8.ROOF+0.60,0); a1.rotation.z=0.78; g.add(a1);
+    const a2=new THREE.Mesh(G_PA2,M_PN); a2.position.set(-0.34,K8.ROOF+0.98,0); a2.rotation.z=-0.30; g.add(a2);
+    const sh=new THREE.Mesh(G_PSH,M_SH); sh.position.set(0.34,K8.ROOF+1.10,0); g.add(sh);
   }
+  g.userData.fine=fine;
   if(livery==='ino'||livery==='seta'){   // 井の頭線・世田谷線は色替え(簡易)
     body.material=(livery==='ino')?CARMAT_INO:CARMAT_SETA;
+    trim.material=(livery==='ino')?CARMAT_INO:CARMAT_SETA;
   }
-  scene.add(g);return g;
+  scene.add(g); return g;
 }
-const CARMAT_INO=new THREE.MeshLambertMaterial({vertexColors:true,color:0x9fd8ea});
-const CARMAT_SETA=new THREE.MeshLambertMaterial({vertexColors:true,color:0xa8d99a});
 
 /* ---- 走行列車(3本)。各駅停車のダイヤを自動運転で再現する ----
    加速=P4(3.3km/h/s), 上限=60km/h, 減速=B5(3.0km/h/s), 停車時間=25秒。
@@ -1503,7 +1646,7 @@ function driveTrain(t,dt){
 }
 
 // 車両は「前後の車端2点を結ぶ弦」に沿って配置する(曲線でも必ず線路方向を向く)
-const CAR_HALF=9.75;
+const CAR_HALF=K8.LEN/2;
 // 車端2点の実位置から姿勢(ヨー+ピッチ)を決める。勾配区間でも車体が線路に沿う
 let LOD_NEAR=420;   // この距離までは高精細モデル(スマホでは短縮)
 const _UP=new THREE.Vector3(0,1,0), _F=new THREE.Vector3(), _R=new THREE.Vector3(),
@@ -1523,14 +1666,18 @@ function seatCar(c,s,zf,dir){
   const ud=c.userData;                                   // LOD:近景=高精細/遠景=簡素
   if(ud&&ud.body){
     const d=camera.position.distanceTo(c.position), hi=d<LOD_NEAR;
-    if(hi!==ud.hi){ ud.hi=hi; ud.body.geometry=(hi?CARGEO:CARGEO_LO)[ud.key]; }
+    if(hi!==ud.hi){
+      ud.hi=hi;
+      ud.body.geometry=(hi?CARGEO:CARGEO_LO)[ud.key];
+      if(ud.fine) for(const m of ud.fine) m.visible=hi;   // 灯具・幌・配管等は遠景で省く
+    }
   }
 }
 // 編成の各車両を配置する。範囲外の車両は非表示にし、姿勢計算もスキップして軽量化。
 function placeTrain(t){
   const zf=t.dir>0?zDown:zUp;
   for(let j=0;j<t.cars.length;j++){
-    const s=t.x-t.dir*j*20, c=t.cars[j];
+    const s=t.x-t.dir*j*K8.PITCH, c=t.cars[j];
     const inside=(s>DOM.x0+CAR_HALF && s<DOM.x1-CAR_HALF);
     c.visible = inside && trainsOn;
     if(inside) seatCar(c, s, zf, t.dir);      // 見えている車両だけ弦法で姿勢決定
@@ -1544,12 +1691,12 @@ const parkedCars=[];
 { // 滞泊編成:留置線の実測有効長に応じ両数を自動決定
   const nE=Math.max(2,Math.min(10,Math.floor((YE1e-YE0e-14)/20)));
   for(let j=0;j<nE;j++){const c=makeCar('keio',(j===1||j===nE-2),j===0,j===nE-1);
-    const sx=YE0e+12+j*20+9.7;
+    const sx=YE0e+12+j*K8.PITCH+K8.LEN/2;
     seatCar(c,sx,()=>10.1,1);
     KOUKU[3].VGn.add(c);parkedCars.push(c);}
   const nW=Math.max(2,Math.min(4,Math.floor((YW1e-YW0e-14)/20)));
   for(let j=0;j<nW;j++){const c=makeCar('keio',(j===0||j===nW-1),j===0,j===nW-1);
-    const sx=YW0e+12+j*20+9.7;
+    const sx=YW0e+12+j*K8.PITCH+K8.LEN/2;
     seatCar(c,sx,()=>13.3,1);
     KOUKU[3].VGn.add(c);parkedCars.push(c);}
 }
