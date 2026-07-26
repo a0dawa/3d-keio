@@ -436,33 +436,40 @@ const GAUGE_SETA=1.372;                  // 東急世田谷線
 const BUMPS=[{c:STA[0].x,a:8.1,h:260,t:180},{c:STA[1].x,a:3.05},{c:STA[5].x,a:3.05},
              {c:STA[6].x,a:6.35},{c:STA[9].x,a:2.55}];
 function mainOff(x){let o=2.0;for(const b of BUMPS)o+=b.a*plateau(x,b.c,b.h||112,b.t||160);return o;}
-// 桁半幅表:[中心s, 半幅m, 一定半長m]。桜上水は留置線範囲まで自動拡張
-const SAKU_HALF=Math.max(Math.abs(YE0e-STA[4].x),Math.abs(YW1e-STA[4].x))+45;
-// 笹塚:東側既存4線〜西側留置線終端・本線振り出しまで(コメントは行末に置かない=配列要素の無効化防止)
-// 桁半幅:各駅で「最外軌道+2.45m」または「ホーム外縁+0.6m」の大きい方まで。余白は持たない
-const WIDE=[
-  [STA[0].x-20,12.6,360],       // 笹塚(本線±10.1)
-  [STA[1].x, 7.6,150],          // 代田橋(島式1面2線・本線±5.05)
-  [STA[2].x,12.6,118],          // 明大前(2面4線・副本線±10.1。分岐短縮に合わせ半長圧縮)
-  [STA[3].x, 8.7,140],          // 下高井戸(相対式・ホーム外縁8.1)
-  [STA[4].x,15.8,SAKU_HALF],    // 桜上水(2面4線+留置線±13.3)
-  [STA[5].x, 7.6,140],          // 上北沢(島式1面2線)
-  [STA[6].x,10.8,132],          // 八幡山(通過線±8.35)
-  [STA[7].x, 8.7,140],          // 芦花公園(相対式)
-  [STA[8].x,12.6,118]];         // 千歳烏山(2面4線。分岐短縮に合わせ半長圧縮)
+// --- ホームの範囲と外縁(桁幅の算出と停止位置の双方が参照する) ---
+const PLAT_HALF=105, STOP_BACK=3;         // ホーム長210m(半長105m)
+// ホームの占める範囲[s0,s1]。笹塚の既設ホームは駅中心より西へ50mずれている。
+function platRange(st){
+  return (st===STA[0]) ? [st.x-155, st.x+55]
+                       : [st.x-PLAT_HALF, st.x+PLAT_HALF];
+}
+// 駅種別ごとのホーム外縁[m](7章の PLT と同じ値。片方だけ変えないこと)
+const PLAT_EDGE={isl:3.50, hachi:3.00, side:8.10, quad:8.55, ctx:8.55, gnd:9.55};
+function platOuter(x){                     // その地点のホーム外縁(駅を外れれば0)
+  let e=0;
+  for(const st of STA){
+    const r=platRange(st), c=(r[0]+r[1])/2, h=(r[1]-r[0])/2+8;
+    e=Math.max(e,(PLAT_EDGE[st.t]||0)*plateau(x,c,h,60));
+  }
+  return e;
+}
 function outerOff(x){   // その地点で最も外側にある軌道中心のオフセット
   let o=mainOff(x);
   for(const c of[STA[2].x,STA[4].x,STA[8].x])o=Math.max(o,2.0+8.1*plateau(x,c,118,110));   // 2面4線副本線
   o=Math.max(o,2.0+2.55*plateau(x,STA[6].x,118,150));                                       // 八幡山停車線
-  if((x>YE0e-2&&x<YE1e+2)||(x>YW0e-2&&x<YW1e+2))o=Math.max(o,13.3);                         // 桜上水留置線
+  // 桜上水留置線:線路のある範囲だけ13.3m、外側は90mで擦り付ける(桁幅を急変させない)
+  const yard=(a,b)=>plateau(x,(a+b)/2,(b-a)/2+2,90);
+  o=Math.max(o, 2.0+11.3*yard(YE0e,YE1e));
+  o=Math.max(o, 2.0+11.3*yard(YW0e,YW1e));
   return o;
 }
-// 桁半幅:駅部はホーム分だけ広く、駅間は「最外軌道+建築限界余裕(2.35m)」に絞る
-const DECK_MIN=2.0+2.45;                  // 複線区間の標準半幅(≒4.45m):線路+最小限の余裕
+// 桁半幅は「その地点に何があるか」だけで決める。幅の表は持たない。
+//   ①最外軌道+2.45m(建築限界+柱)  ②ホーム外縁+0.6m  ③複線区間の標準4.45m
+// のうち最大。線路もホームも無い区間は自動的に③まで細くなるので、
+// かつて桜上水の前後で幅15.8mの桁が留置線の無い区間まで続いていた種の無駄が生じない。
+const DECK_MIN=2.0+2.45;                  // 複線区間の標準半幅(≒4.45m)
 function deckHalf(x){
-  let h=DECK_MIN;
-  for(const[c,w,hf]of WIDE)h=Math.max(h,DECK_MIN+(w-DECK_MIN)*plateau(x,c,hf,155));
-  return Math.max(h, outerOff(x)+2.45);   // 最外軌道から2.45m(建築限界+柱)
+  return Math.max(DECK_MIN, outerOff(x)+2.45, platOuter(x)+0.6);
 }
 // 曲率[1/m]:曲線部では架線柱スパンを詰める(直線50m / 曲線25m)
 function curvAt(x){
@@ -1916,14 +1923,9 @@ function togglePanel(panel,btn,dir){
 $('navTog').onclick=()=>togglePanel($('nav'),$('navTog'),'top');
 $('toolTog').onclick=()=>togglePanel($('tools'),$('toolTog'),'right');
 
-// 停止位置は「ホームの実範囲の先端から3m手前」。駅中心から一律に測ってはいけない
-// (笹塚の既設ホームは駅中心より西へ50mずれており、これが停止位置ずれの主因だった)。
-const PLAT_HALF=105, STOP_BACK=3;   // ホーム長210m(半長105m)
-// ホームの占める範囲[s0,s1]。描画側(7章)と必ず同じ値を使う。
-function platRange(st){
-  return (st===STA[0]) ? [st.x-155, st.x+55]        // 笹塚:既設ホーム(駅中心から西へ50m)
-                       : [st.x-PLAT_HALF, st.x+PLAT_HALF];
-}
+// 停止位置は「ホームの実範囲(platRange:2b章)の先端から3m手前」。
+// 駅中心から一律に測ってはいけない(笹塚の既設ホームは駅中心より西へ50mずれており、
+// これが停止位置ずれの主因だった)。
 // 駅別の停止位置補正[m](実地確認による微調整)
 const STOP_ADJ={'笹塚':-4};
 // 進行方向ごとの停止位置。dir>0(下り)は西端に、dir<0(上り)は東端に先頭を着ける。
