@@ -26,10 +26,21 @@ REF_VAL = {
     '軌間(レール内面間)': 1.372,   # 京王線は馬車軌間1372mm(公表値)
 }
 REF_RANGE = {
-    '京王レッド帯': (1.43, 1.66),
-    '京王ブルー細線': (1.83, 1.87),
-    '側窓': (2.27, 3.05),
-    '前面窓': (1.95, 3.42),
+    '側窓': (2.27, 3.05),          # [B] 実車写真の実測
+}
+# 利用者提供の前面プロポーション仕様書[D]の値[mm]。HTMLにも同じmm値が書かれている
+# はずなので、そのまま突き合わせる(実寸への換算を挟まないので誤差が入らない)。
+REF_SPEC_MM = {
+    '京王ブルー帯 下端': 900,
+    '京王ブルー帯 上端': 950,
+    '京王レッド帯 上端': 1100,
+    '前面窓 下端': 1200,
+    '前面窓 上端': 2500,
+    'ガラス半幅': 1350,
+    '貫通扉 半幅': 400,
+    'ライトケース幅': 300,
+    'ランプ直径': 80,
+    '排障器 下端': -500,
 }
 
 
@@ -41,18 +52,13 @@ def read(src):
             sys.exit(1)
         return float(m.group(1))
 
-    bands = [(float(a), float(b), c) for a, b, c
-             in re.findall(r"\{y0:([\d.]+),\s*y1:([\d.]+),\s*c:'(\w+)'\s*\}", src)]
+    # BANDS は仕様書の値を fy() で写した式(BLU[0] 等)を含むので、
+    # 数値ではなく"式のまま"読み取り、隣り合う段の境界が同じ式かどうかで連続性を見る。
+    bands = [(a.strip(), b.strip(), c) for a, b, c
+             in re.findall(r"\{y0:([^,]+),\s*y1:([^,]+),\s*c:'(\w+)'\s*\}", src)]
     if not bands:
         print('NG: BANDS 表が見つからない')
         sys.exit(1)
-
-    def band(color):
-        hit = [b for b in bands if b[2] == color]
-        if not hit:
-            print('NG: BANDS に %s が無い' % color)
-            sys.exit(1)
-        return (min(b[0] for b in hit), max(b[1] for b in hit))
 
     return {
         'vals': {
@@ -63,12 +69,20 @@ def read(src):
             '軌間(レール内面間)': num(r'const GAUGE=([\d.]+);', '軌間'),
         },
         'ranges': {
-            '京王レッド帯': band('red'),
-            '京王ブルー細線': band('navy'),
             '側窓': (num(r'const WIN\s*=\{B:([\d.]+),', '側窓下端'),
                      num(r'const WIN\s*=\{B:[\d.]+,\s*T:([\d.]+)\}', '側窓上端')),
-            '前面窓': (num(r'const FWIN=\{B:([\d.]+),', '前面窓下端'),
-                       num(r'const FWIN=\{B:[\d.]+,\s*T:([\d.]+)\}', '前面窓上端')),
+        },
+        'spec': {
+            '京王ブルー帯 下端': num(r'const BLU=\[fy\((-?[\d.]+)\)', 'BLU下端'),
+            '京王ブルー帯 上端': num(r'const BLU=\[fy\(-?[\d.]+\),fy\((-?[\d.]+)\)\]', 'BLU上端'),
+            '京王レッド帯 上端': num(r'RED=\[fy\(-?[\d.]+\),fy\((-?[\d.]+)\)\]', 'RED上端'),
+            '前面窓 下端': num(r'const FWIN=\{B:fy\((-?[\d.]+)\)', 'FWIN下端'),
+            '前面窓 上端': num(r'const FWIN=\{B:fy\(-?[\d.]+\),\s*T:fy\((-?[\d.]+)\)\}', 'FWIN上端'),
+            'ガラス半幅': num(r'const GZ=fz\((-?[\d.]+)\)', 'GZ'),
+            '貫通扉 半幅': num(r'const DZ=fz\((-?[\d.]+)\)', 'DZ'),
+            'ライトケース幅': num(r'G_LCASE=new THREE\.BoxGeometry\([\d.]+,fh\([\d.]+\),fz\((-?[\d.]+)\)\)', 'ケース幅'),
+            'ランプ直径': num(r'G_LAMP\s*=new THREE\.CylinderGeometry\(fz\((-?[\d.]+)\)/2', 'ランプ径'),
+            '排障器 下端': num(r'const SK_BOT=fy\((-?[\d.]+)\)', 'SK_BOT'),
         },
         'bands': bands,
     }
@@ -94,21 +108,37 @@ def main():
         print('%-18s %14s %14s %8.3f  %s'
               % (k, '%.2f-%.2f' % (lo, hi), '%.2f-%.2f' % g, d, 'OK' if ok else 'NG'))
 
-    # 帯の並び:紺の細線は赤帯の"上"。ここを取り違えたのが旧実装で最も長く残ったバグ。
-    red, navy = mdl['ranges']['京王レッド帯'], mdl['ranges']['京王ブルー細線']
-    ok = navy[0] > red[1]
-    ng += 0 if ok else 1
-    print('%-18s %14s %14s %8s  %s' % ('帯の上下', '紺が上', '紺が上' if ok else '逆転', '-',
-                                       'OK' if ok else 'NG'))
+    # 前面プロポーション仕様書[D]との照合(mmのまま比べる)
+    print()
+    print('%-18s %14s %14s %8s  %s' % ('項目([D] mm)', '仕様書', 'モデル', '差', '判定'))
+    for k, v in REF_SPEC_MM.items():
+        g = mdl['spec'][k]
+        okk = abs(g - v) < 0.5
+        ng += 0 if okk else 1
+        print('%-18s %14.0f %14.0f %8.0f  %s' % (k, v, g, g - v, 'OK' if okk else 'NG'))
 
-    # BANDS 表が下から順に隙間なく並んでいること
+    # 帯の並び:[D] §6 では青が下の細帯、赤が上の太帯で、隙間なく接する。
+    blu = (mdl['spec']['京王ブルー帯 下端'], mdl['spec']['京王ブルー帯 上端'])
+    red_t = mdl['spec']['京王レッド帯 上端']
+    ok = red_t > blu[1] and (red_t - blu[1]) > (blu[1] - blu[0])
+    ng += 0 if ok else 1
+    print('%-18s %14s %14s %8s  %s' % ('帯の上下', '赤が上で太い', '赤が上で太い' if ok else '不一致',
+                                       '-', 'OK' if ok else 'NG'))
+
+    # BANDS 表が下から順に隙間なく並んでいること(境界が同じ式で書かれているか)
     bands = mdl['bands']
-    gap = [i for i in range(1, len(bands)) if abs(bands[i][0] - bands[i - 1][1]) > 1e-9]
+    gap = [i for i in range(1, len(bands)) if bands[i][0] != bands[i - 1][1]]
     ok = not gap
     ng += 0 if ok else 1
     print('%-18s %14s %14s %8s  %s' % ('BANDSの連続性', '隙間なし',
                                        '隙間なし' if ok else '段%s で不連続' % gap, '-',
                                        'OK' if ok else 'NG'))
+    # 帯の色の並び(下から):ステンレス→青→赤→ステンレス→屋根
+    seq = [b[2] for b in bands]
+    ok = seq == ['stl', 'navy', 'red', 'stl', 'roof']
+    ng += 0 if ok else 1
+    print('%-18s %14s %14s %8s  %s' % ('帯の並び順', 'stl/navy/red/stl/roof',
+                                       '/'.join(seq), '-', 'OK' if ok else 'NG'))
 
     # 旧「写真転写方式」の残骸が無いこと
     dead = [s for s in ('FTEX', 'FRONT_TEX', 'FACEMAT', 'buildCarGeo', 'carColor') if s in src]
