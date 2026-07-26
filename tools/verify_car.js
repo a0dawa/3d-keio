@@ -7,115 +7,13 @@
 //   → AIが描画結果を見られなくても、モデルが実測値どおりかを機械的に判定できる。
 //
 //   使い方: node tools/verify_car.js [keio_elevated_3d.html]
-const fs = require('fs');
 const path = process.argv[2] || 'keio_elevated_3d.html';
-const html = fs.readFileSync(path, 'utf8');
-const m = html.match(/<script>([\s\S]*?)<\/script>/);
-if (!m) { console.error('NO_SCRIPT'); process.exit(1); }
 
-/* ---- 何でも受け止めるProxy(測定に関係しないブラウザ/描画APIはこれで潰す) ---- */
-const anything = new Proxy(function () {}, {
-  get: (t, k) => (k === Symbol.toPrimitive ? () => 0 : k === 'length' ? 0 : anything),
-  apply: () => anything, construct: () => anything, set: () => true,
-});
-// 実体クラスに「知らないプロパティは anything」を足す薄いラッパ
-const soft = (o) => new Proxy(o, {
-  get: (t, k) => (typeof k === 'symbol' || k in t ? t[k] : anything),
-  set: (t, k, v) => { t[k] = v; return true; },
-});
-
-/* ---- 測定に必要なぶんだけ本物として実装した THREE ---- */
-class V3 {
-  constructor(x, y, z) { this.x = x || 0; this.y = y || 0; this.z = z || 0; }
-  set(x, y, z) { this.x = x; this.y = y; this.z = z; return this; }
-  copy(v) { this.x = v.x; this.y = v.y; this.z = v.z; return this; }
-  clone() { return new V3(this.x, this.y, this.z); }
-  add(v) { this.x += v.x; this.y += v.y; this.z += v.z; return this; }
-  sub(v) { this.x -= v.x; this.y -= v.y; this.z -= v.z; return this; }
-  multiplyScalar(s) { this.x *= s; this.y *= s; this.z *= s; return this; }
-  length() { return Math.hypot(this.x, this.y, this.z); }
-  normalize() { const l = this.length() || 1; return this.multiplyScalar(1 / l); }
-  distanceTo(v) { return Math.hypot(this.x - v.x, this.y - v.y, this.z - v.z); }
-  crossVectors(a, b) {
-    return this.set(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x);
-  }
-  applyQuaternion() { return this; }
-  applyMatrix4() { return this; }
-}
-class Obj3D {
-  constructor() {
-    this.children = []; this.position = new V3(); this.rotation = new V3();
-    this.scale = new V3(1, 1, 1); this.quaternion = soft({ setFromRotationMatrix() {} });
-    this.userData = {}; this.visible = true;
-    return soft(this);
-  }
-  add(...o) { for (const c of o) this.children.push(c); return this; }
-  remove() { return this; }
-  traverse(f) { f(this); for (const c of this.children) if (c && c.traverse) c.traverse(f); }
-}
-class Group extends Obj3D {}
-class Mesh extends Obj3D { constructor(g, mat) { super(); this.geometry = g; this.material = mat; } }
-class Attr {
-  constructor(a, is) { this.array = a; this.itemSize = is; this.count = a.length / is; return soft(this); }
-}
-class BufGeo {
-  constructor() { this.attributes = {}; this.index = null; return soft(this); }
-  setAttribute(n, a) { this.attributes[n] = a; return this; }
-  setIndex(a) { this.index = soft({ array: a, count: a.length }); return this; }
-  computeVertexNormals() {} dispose() {}
-  translate() { return this; } rotateX() { return this; } rotateY() { return this; } scale() { return this; }
-}
-const param = (type) => class extends BufGeo {
-  constructor(...a) { super(); this.type = type; this.p = a; return soft(this); }
-};
-const Mat = (type) => class {
-  constructor(o) { Object.assign(this, o || {}); this.type = type; return soft(this); }
-};
-
-const REAL = {
-  Vector3: V3, Object3D: Obj3D, Group, Mesh, BufferGeometry: BufGeo,
-  Float32BufferAttribute: Attr, BufferAttribute: Attr,
-  BoxGeometry: param('Box'), CylinderGeometry: param('Cyl'), PlaneGeometry: param('Plane'),
-  SphereGeometry: param('Sph'), ConeGeometry: param('Cone'), CircleGeometry: param('Cir'),
-  MeshLambertMaterial: Mat('lambert'), MeshBasicMaterial: Mat('basic'),
-  MeshPhongMaterial: Mat('phong'), LineBasicMaterial: Mat('line'),
-  DoubleSide: 2, FrontSide: 0, BackSide: 1,
-};
-global.THREE = new Proxy(REAL, { get: (t, k) => (k in t ? t[k] : anything) });
-
-/* ---- ブラウザ環境のスタブ(harness.js と同じ) ---- */
-global.Image = class { constructor() { this.onload = null; } set src(v) { if (this.onload) this.onload(); } };
-global.document = new Proxy({}, {
-  get: (t, k) => {
-    if (k === 'getElementById' || k === 'querySelector') return () => anything;
-    if (k === 'createElement') return () => ({
-      getContext: () => anything, appendChild: () => {}, style: {},
-      classList: { add() {}, remove() {}, toggle() {} }, setAttribute() {}, width: 0, height: 0,
-    });
-    if (k === 'addEventListener') return () => {};
-    return anything;
-  },
-});
-global.window = global;
-global.navigator = { userAgent: 'node', maxTouchPoints: 0 };
-global.screen = { width: 1920, height: 1080, orientation: { lock: () => Promise.resolve() } };
-global.performance = { now: () => 0 };
-global.devicePixelRatio = 1; global.innerWidth = 1920; global.innerHeight = 1080;
-global.requestAnimationFrame = () => 0; global.addEventListener = () => {};
-global.localStorage = anything;
-
-/* ---- 実行して車両モジュールの中身を取り出す ---- */
-const EXPORT = ';globalThis.__X={K8:K8,PAL:PAL,BANDS:BANDS,WIN:WIN,FWIN:FWIN,' +
+const X = require('./stub_three')(path,
+  'K8:K8,PAL:PAL,BANDS:BANDS,WIN:WIN,FWIN:FWIN,' +
   'CARGEO:CARGEO,TRIMGEO:TRIMGEO,FACEGEO:FACEGEO,makeCar:makeCar,sideWindows:sideWindows,' +
-  'shapeAt:shapeAt,frontX:frontX,frontHalfAt:frontHalfAt};';
-try {
-  eval(m[1] + '\n' + EXPORT);
-} catch (e) {
-  console.error('RUNTIME_ERROR: ' + e.constructor.name + ' ' + e.message);
-  console.error(e.stack.split('\n').slice(0, 5).join('\n'));
-  process.exit(1);
-}
-const X = globalThis.__X;
+  'shapeAt:shapeAt,frontX:frontX,frontHalfAt:frontHalfAt,' +
+  'GAUGE:GAUGE,RAIL_W:RAIL_W,RAIL_OFF:RAIL_OFF');
 
 /* ---- 測定ユーティリティ ---- */
 const near = (a, b, t) => Math.abs(a - b) <= t;
@@ -151,6 +49,7 @@ const REF = {
   SIDEWIN: [2.27, 3.05],  // 側窓
   FRONTWIN: [1.95, 3.42], // 前面窓
   BOGIE: 13.60, WBASE: 2.20, WHEELD: 0.86,
+  GAUGE: 1.372,           // 軌間(レール内面間距離)。京王線は馬車軌間1372mm
 };
 
 /* ---- 検査項目 ---- */
@@ -211,6 +110,17 @@ check('車輪の枚数', 8, wheels.length, 0, '枚');
 check('台車中心間距離', REF.BOGIE, wx.length === 4 ? (wx[2] + wx[3]) / 2 - (wx[0] + wx[1]) / 2 : null, 0.02);
 check('固定軸距', REF.WBASE, wx.length === 4 ? wx[1] - wx[0] : null, 0.02);
 check('車輪径', REF.WHEELD, K.WHEEL * 2, 0.001);
+// 軌間と車輪の整合。車両側が軌道側と別の値を持つと脱線した見た目になる
+// (実際に車輪間隔2.12mに対しレール間隔1.44mというずれがあった)。
+check('軌間(レール内面間)', REF.GAUGE, X.GAUGE, 0.001);
+{
+  const wz = [...new Set(wheels.map((q) => +Math.abs(q.z).toFixed(4)))];
+  check('車輪の左右位置', X.RAIL_OFF, wz.length === 1 ? wz[0] : null, 0.001);
+  const inner = wz.length === 1 ? 2 * wz[0] - 0.135 : null;   // 車輪内面間(踏面幅135mm)
+  rows.push(['車輪がレール上にあるか', '軌間±70mm', inner === null ? '-' : inner.toFixed(3),
+    '-', 'm', inner !== null && Math.abs(inner - REF.GAUGE) < 0.07 ? 'OK' : 'NG']);
+  if (!(inner !== null && Math.abs(inner - REF.GAUGE) < 0.07)) ng++;
+}
 
 // (6) 屋根上 — 冷房装置は集中式1基(旧実装は3基で誤りだった)
 let ac = 0;
@@ -219,7 +129,7 @@ check('冷房装置の数', 1, ac, 0, '基');
 
 // (7) 旧「写真転写方式」の残骸が無いこと
 const dead = ['FTEX', 'FRONT_TEX', 'FACEMAT', 'buildCarGeo', 'carColor']
-  .filter((s) => html.includes(s));
+  .filter((s) => X.__html.includes(s));
 rows.push(['旧写真転写方式の残存', 'なし', dead.length ? dead.join(',') : 'なし', '-', '', dead.length ? 'NG' : 'OK']);
 if (dead.length) ng++;
 
