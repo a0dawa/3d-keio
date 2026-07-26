@@ -46,6 +46,8 @@ function bbox(geo) { return span(geo, () => true); }
    ※どちらも HTML 側の定数から読んではいけない(モデルを直せば基準も動く循環になる)。 */
 const SPEC = { X: 1400, Y: 2800 };        // [D] の全幅・全高[mm]
 const BAND_DROP = 364;                    // 実地確認による帯の下げ量[mm](0.350m相当)
+const FRED_DROP = 0.40;                   // 前/後面の赤帯を側面よりさらに下げる量[m]
+const WIN_TRIM = 0.30;                    // 側窓を上下から切り詰める量[m]
 const LAMP_K = 1.30;                      // 実地確認による灯具の拡大率
 const REF = {
   LEN: 19.50, W: 2.845, FLOOR: 0.95, ROOF: 3.64,   // [B]
@@ -64,7 +66,9 @@ REF.GLASS_Z = dz(1350);               // [D] §3 ガラスの半幅
 REF.DOOR_Z = dz(400);                 // [D] §4 貫通扉の半幅
 REF.LAMP_D = dz(80 * LAMP_K);         // [D] §7 ランプの直径(一回り大きく)
 REF.LCASE = [dz(300 * LAMP_K), dh(120 * LAMP_K)];   // [D] §7 ライトケース
-REF.SIDEWIN[0] = REF.RED[1] + 0.10;   // 側窓は帯の上10cmから
+REF.SIDEWIN = [REF.RED[1] + 0.10 + WIN_TRIM, 3.05 - WIN_TRIM];   // 帯の上10cm→上下30cm切詰
+REF.FRED = [REF.RED[0] - FRED_DROP, REF.RED[1] - FRED_DROP];     // 前/後面の赤帯
+REF.LAMP_Y = dy(200);                 // 灯具の高さ:床面(車体底面)から200mm
 REF.SKIRT_BOT = dy(-500);             // [D] §8 排障器の下端
 REF.NOSE_BULGE = dy(900);             // [D] §2 最も手前へ出る高さ
 
@@ -120,13 +124,37 @@ const fw = span(X.FACEGEO.f, (p, c) => isWin(c));
 checkRange('前面窓', REF.FRONTWIN, fw.n ? fw.y : null, 0.02);
 // [D] §3 ガラスの左右幅(一枚の大きな面。側面へ回り込む)
 check('前面ガラスの半幅', REF.GLASS_Z, fw.n ? Math.max(Math.abs(fw.z[0]), fw.z[1]) : null, 0.03);
-// [D] §6 帯は前頭部でも"水平に"貫通する(斜めに跳ね上げない)
+// 帯は前頭部でも"水平に"貫通する(斜めに跳ね上げない)。
+// 前/後面(妻面)と側面では赤帯の高さが違うので、分けて測る。
+// 妻面のグリッドは中央(z≒0)まで頂点があり、側面は |z|=車体半幅にしか無い。
+// 妻面(前/後面)のグリッドだけが中央(|z|<1.0)まで頂点を持つので、そこで前面の帯を測る。
+// 側面の帯は中間車(CARGEO.mid)で測る=上の '京王レッド帯' / '京王ブルー細線'。
 {
-  const rf = span(X.CARGEO.cf, (p, c) => colorIn(c, [PAL.red]) && p[0] > 8.0);
-  const flat = rf.n && (rf.y[1] - rf.y[0]) < (REF.RED[1] - REF.RED[0]) + 0.03;
-  rows.push(['前頭部の帯が水平', '水平', flat ? '水平' : '斜め(幅' + (rf.y[1] - rf.y[0]).toFixed(2) + 'm)',
-    '-', '', flat ? 'OK' : 'NG']);
-  if (!flat) ng++;
+  const face = span(X.CARGEO.cf, (p, c) => colorIn(c, [PAL.red]) && Math.abs(p[2]) < 1.0);
+  const fnav = span(X.CARGEO.cf, (p, c) => colorIn(c, [PAL.navy]) && Math.abs(p[2]) < 1.0);
+  checkRange('前/後面の赤帯', REF.FRED, face.n ? face.y : null, 0.02);
+  // 青帯は前後・側面で同じ高さ(REF.NAVYは側面の値)
+  checkRange('前/後面の青帯', REF.NAVY, fnav.n ? fnav.y : null, 0.02);
+  // 帯は水平に貫通する(斜めに跳ね上げない)=帯の厚み以上に高さが広がらない
+  const flatF = face.n && (face.y[1] - face.y[0]) < (REF.FRED[1] - REF.FRED[0]) + 0.03;
+  const flatS = red.n && (red.y[1] - red.y[0]) < (REF.RED[1] - REF.RED[0]) + 0.03;
+  rows.push(['帯が水平(前面/側面)', '水平', flatF && flatS ? '水平' : '斜め', '-', '',
+    flatF && flatS ? 'OK' : 'NG']);
+  if (!(flatF && flatS)) ng++;
+  // 前面の赤帯は側面より低い(指示による差)
+  const lower = face.n && red.n && (red.y[0] - face.y[0]) > 0.30;
+  rows.push(['前面の赤帯が側面より低い', '約0.40m低い',
+    face.n && red.n ? (red.y[0] - face.y[0]).toFixed(2) + 'm低い' : '-', '-', '',
+    lower ? 'OK' : 'NG']);
+  if (!lower) ng++;
+}
+// 乗務員室は屋根の高さまでアイボリー(灰色の屋根にしない)
+{
+  const iv = span(X.CARGEO.cf, (p, c) => colorIn(c, [PAL.ivory]));
+  const ok2 = iv.n && iv.y[1] > K.ROOF - 0.05;
+  rows.push(['乗務員室は屋根までクリーム', '屋根まで',
+    iv.n ? '上端' + iv.y[1].toFixed(2) + 'm' : '-', '-', '', ok2 ? 'OK' : 'NG']);
+  if (!ok2) ng++;
 }
 // [D] §2 最も手前へ出るのは腰の高さ(Y=900)であること
 {
@@ -164,14 +192,18 @@ check('軌間(レール内面間)', REF.GAUGE, X.GAUGE, 0.001);
 // (5b) 前頭部の部品 — [D] §7 灯具 / §8 排障器
 {
   const cab = X.makeCar('keio', false, true, false);
-  let lamps = 0, cases = 0, skirtLow = 1e9;
+  let lamps = 0, skirtLow = 1e9; const lampY = [];
   cab.traverse((o) => {
     const g = o.geometry;
     if (!g || !g.p) return;
-    if (g.type === 'Cyl' && near(g.p[0] * 2, REF.LAMP_D, 0.002)) lamps++;
+    if (g.type === 'Cyl' && near(g.p[0] * 2, REF.LAMP_D, 0.002)) { lamps++; lampY.push(o.position.y); }
   });
   check('ランプの数(前照灯+尾灯)', 4, lamps, 0, '個');
   check('ランプの直径', REF.LAMP_D, REF.LAMP_D, 0.001);
+  {   // 灯具の高さは床面(車体底面)から200mm
+    const ys = [...new Set(lampY.map((v) => +v.toFixed(4)))];
+    check('灯具の高さ', REF.LAMP_Y, ys.length === 1 ? ys[0] : null, 0.005);
+  }
   // 灯具ケース・表示器は前面の曲面に沿うパネル。幅と「面から浮いていないか」を測る。
   {
     const bb2 = (g) => {
@@ -235,6 +267,23 @@ function pass(name, ok, detail) {
     }
   }
   pass('側面トリムの位置', worstAt === null, worstAt ? worstAt.join('/') + 'm' : '');
+}
+// 8-1b 戸袋の開口は必ず車体表面より"外側"にあること。
+//      内側にあると手前の車体シェル(帯を含む)に隠れ、扉が開いても帯がそのまま見えて
+//      「扉が開いていない」ように見える(実際に2度そう見えていた)。
+{
+  const g = X.TRIMGEO.mid, P = g.attributes.position.array, C = g.attributes.color.array;
+  let mn = 1e9, n = 0;
+  for (let i = 0; i < P.length; i += 3) {
+    if (!colorIn([C[i], C[i + 1], C[i + 2]], [PAL.void])) continue;
+    n++;
+    const d = Math.abs(P[i + 2]) - K.W / 2;
+    if (d < mn) mn = d;
+  }
+  const okv = n > 0 && mn > 0;
+  rows.push(['戸袋の開口が車体の外側', '>0m', n ? mn.toFixed(3) + 'm' : '開口が無い',
+    '-', '', okv ? 'OK' : 'NG']);
+  if (!okv) ng++;
 }
 // 8-2 前面の部品(窓・貫通扉・表示器)が前面の輪郭からはみ出していないか
 {
