@@ -109,10 +109,29 @@ def main():
         print('%-18s %14.3f %14.3f %8.3f  %s' % (k, v, mdl_val[k], d, 'OK' if ok else 'NG'))
 
     # 側窓は[B]の実測ではなく「帯の上10cm」という関係で決まるので、式の形で確認する
-    ok = 'const WIN ={B:RED[1]+0.10' in src
+    ok = 'const WIN ={B:RED[1]+0.10+WIN_TRIM' in src
     ng += 0 if ok else 1
-    print('%-18s %14s %14s %8s  %s' % ('側窓の下端', '帯の上10cm',
-                                       '帯の上10cm' if ok else '別の決め方', '-',
+    print('%-18s %14s %14s %8s  %s' % ('側窓の下端', '帯の上10cm+切詰',
+                                       '帯の上10cm+切詰' if ok else '別の決め方', '-',
+                                       'OK' if ok else 'NG'))
+    # 前/後面の赤帯は側面よりさらに下げる。青帯は同じ高さ。
+    m2 = re.search(r'const FRED_DROP=([\d.]+);', src)
+    ok = bool(m2) and abs(float(m2.group(1)) - 0.40) < 1e-9
+    ng += 0 if ok else 1
+    print('%-18s %14s %14s %8s  %s' % ('前面の赤帯の追加下げ', '0.40m',
+                                       (m2.group(1) + 'm') if m2 else 'なし', '-',
+                                       'OK' if ok else 'NG'))
+    # 灯具の高さは床面から200mm
+    ok = 'const LY=fy(200)' in src
+    ng += 0 if ok else 1
+    print('%-18s %14s %14s %8s  %s' % ('灯具の高さ', '床面+200mm',
+                                       '床面+200mm' if ok else '別の値', '-',
+                                       'OK' if ok else 'NG'))
+    # パンタグラフはシングルアーム型
+    ok = 'シングルアーム' in src and 'PIVX:-' in src
+    ng += 0 if ok else 1
+    print('%-18s %14s %14s %8s  %s' % ('パンタグラフ', 'シングルアーム',
+                                       'シングルアーム' if ok else '菱形', '-',
                                        'OK' if ok else 'NG'))
 
     print()

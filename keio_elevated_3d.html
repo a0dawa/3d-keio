@@ -881,18 +881,6 @@ CUR=KOUKU[3].VGn;
 layTrack('留置線東A',YE0e,YE1e,()=>10.1);layTrack('留置線東B',YE0e,YE1e,()=>13.3);
 layTrack('留置線西A',YW0e,YW1e,()=>10.1);layTrack('留置線西B',YW0e,YW1e,()=>13.3);
 CUR=null;
-// 分岐器(ポイント):転てつ機を各分岐点に配置
-{
-  const KKof=s=>{for(const K of KOUKU)if(s>=K.s0&&s<K.s1)return K;return null;};
-  const pm=M(0xd9b23a),pmDefs=[];
-  for(const cx of[X(5.2),X(7.0),X(9.9)])for(const e of[-282,282])for(const sd of[-1,1])pmDefs.push([cx+e,sd*4.2]);
-  for(const cx of[X(4.4),X(7.8),X(8.4)])for(const e of[-272,272])for(const sd of[-1,1])pmDefs.push([cx+e,sd*4.2]);
-  pmDefs.push([YE1,12.3]);pmDefs.push([YW0,12.3]);
-  for(const d of pmDefs){const K=KKof(d[0]);
-    CUR=K?(d[1]<0?K.VGa:(d[1]>7&&K.quad?K.VGn:K.VGb)):null;
-    box(1.1,.55,.8,pm,d[0],railY(d[0])-.27,d[1]);}
-  CUR=null;
-}
 // 交差鉄道(井の頭線・世田谷線):実測の交点・軸方向(RAW.rail)に沿って配置
 function xGroup(A){const g=new THREE.Group();g.position.set(A.x,0,A.z);g.rotation.y=-A.phi;scene.add(g);return g;}
 function xMk(g,u0,u1,off,w,mat,y,h){
@@ -1312,7 +1300,12 @@ const BANDS=[
   {y0:K8.SHLD, y1:9.99,    c:'roof'},   // 肩から上=屋根
 ];
 // 側窓は「帯の上10cmから上」。帯を下げたぶん下端も下がり、上端はそのまま。
-const WIN ={B:RED[1]+0.10, T:3.05};
+// 前/後面の赤帯は側面よりさらに下げる(青帯の高さは前後・側面で同じ)。
+const FRED_DROP=0.40;
+const FRED=[RED[0]-FRED_DROP, RED[1]-FRED_DROP];
+// 側窓。「帯の上10cm」を下端とし、そこから上下を30cmずつ切り詰める(中心位置は不変)。
+const WIN_TRIM=0.30;
+const WIN ={B:RED[1]+0.10+WIN_TRIM, T:3.05-WIN_TRIM};
 // 前面窓は帯を下げたぶん下へ広げる(上端はそのまま=窓が大きくなる)
 const FWIN={B:fy(1200-BAND_DROP), T:fy(2500)};
 // 扉窓の下端。帯の上に必ず出るようにする(帯を下げても窓が帯へ食い込まない)
@@ -1326,6 +1319,12 @@ const DWIN_B=Math.max(WIN.B-0.16, RED[1]+0.02);
   if(!(WIN.B>RED[1]&&WIN.T>WIN.B)) throw new Error('WIN: 側窓が帯と干渉');
 })();
 function bandAt(y){ for(const b of BANDS) if(y>=b.y0&&y<b.y1) return b.c; return 'stl'; }
+// 前/後面の帯。赤だけ FRED_DROP ぶん低い位置にある。
+function bandAtFront(y){
+  if(y>=FRED[0]&&y<FRED[1]) return 'red';
+  if(y>=BLU[0] &&y<BLU[1] ) return 'navy';
+  return 'stl';
+}
 
 /* ---- 9-4. 断面と車体ロフト -------------------------------------------------
    ストレート車体(裾絞りなし)+丸屋根。断面を車長方向にスイープする。          */
@@ -1380,13 +1379,16 @@ function stationXs(cabF,cabR,LP){
   return uniqSorted(set.filter(v=>v>=-half-1e-6&&v<=half+1e-6));
 }
 // 車体地色。前頭部はアイボリー地に、前方へ向かって跳ね上がる帯を乗せる。
-// 車体地色。前頭部は普通鋼のアイボリー塗装で、帯は"水平に"左右を貫通する
-// ([D] §6。以前は前方で跳ね上げていたが斜めに見えるため取りやめた)。
-function bodyColor(x,y,z,s){
+// 車体地色。前頭部は普通鋼のアイボリー塗装で、帯は"水平に"左右を貫通する。
+// 乗務員室は乗務員扉の直後まで、屋根の高さまで含めてアイボリー(灰色の屋根にしない)。
+// front=true のときは前/後面用の帯(赤だけ低い)を使う。
+function bodyColor(x,y,z,s,front){
+  if(s.cab){
+    const c=front?bandAtFront(y):bandAt(y);
+    return c==='red'?PAL.red : c==='navy'?PAL.navy : PAL.ivory;
+  }
   if(y>=s.ys-0.006) return PAL.roof;
-  const c=bandAt(y);
-  if(s.cab) return c==='red'?PAL.red : c==='navy'?PAL.navy : PAL.ivory;
-  return PAL[c];
+  return PAL[bandAt(y)];
 }
 // 前面の輪郭(その高さでの半幅)と、前面上の点のx位置
 function frontHalfAt(y){
@@ -1440,7 +1442,7 @@ function buildBodyGeo(cabF,cabR,LP){
       for(let ci=0;ci<=NC;ci++){
         const z=-hw+2*hw*ci/NC;
         const x=sgn*(end.cab?frontXAt(y,z):K8.LEN/2);
-        const c=end.cab?bodyColor(sgn*K8.LEN/2,y,z,{hw:hw,ys:tip.ys,cab:sgn})
+        const c=end.cab?bodyColor(sgn*K8.LEN/2,y,z,{hw:hw,ys:tip.ys,cab:sgn},true)
                        :(y>=tip.ys-0.006?PAL.roof:PAL.stl);
         row.push(vtx(x,y,sgn*z,c));
       }
@@ -1488,6 +1490,20 @@ function sideWindows(cabF,cabR){
   }
   return out;
 }
+// 戸袋窓:客用扉の両脇(戸袋の上)に置く小窓。
+// 端の柱=戸袋なので、扉が開くとこの窓の前を通る(車体の外を滑る簡略化のため)。
+function pocketWindows(cabF,cabR){
+  const out=[], half=K8.LEN/2, hw=K8.DOORW/2;
+  for(const dx of K8.DOORX) for(const sg of [-1,1]){
+    const a=dx+sg*hw, b=a+sg*PIER_END;
+    const lo=Math.min(a,b)+0.07, hi=Math.max(a,b)-0.07;
+    if(hi-lo<0.25) continue;
+    if(cabF&&hi> half-K8.CAB) continue;      // 乗務員室側には置かない
+    if(cabR&&lo<-half+K8.CAB) continue;
+    out.push([lo,hi]);
+  }
+  return out;
+}
 /* ---- 9-6. 窓・扉パネル(車体表面のわずか外側に置く独立メッシュ) --------------
    材質は DoubleSide。巻き順の反転で面が消える事故(TEMPLATE.md §6)を構造的に断つ。 */
 const OUT=0.006;   // 車体表面からの浮かせ量[m]
@@ -1524,15 +1540,19 @@ function buildTrimGeo(cabF,cabR){
   for(const sz of [1,-1]){
     const zo=o=>(x=>sz*(hwAt(x)+o));          // 車体表面から o だけ浮かせた面
     // 客用扉の"開口"(戸袋の奥)。扉そのものは開閉するので別メッシュ(9-7b節)。
-    // ここは車内なので一様に暗くする。帯の色で塗ると、扉が開いても帯が続いて見えて
-    // しまい「扉が開いていない」ように見える(実際にそう見えていた)。
+    // 車内なので一様に暗くする。かつ、必ず車体表面より"外側"に置くこと。
+    // 内側に置くと手前の車体シェル(帯を含む)に隠れてしまい、扉が開いても
+    // 帯がそのまま見えて「扉が開いていない」ように見える(実際にそうなっていた)。
     for(const dx of K8.DOORX){
       const a=dx-K8.DOORW/2, b=dx+K8.DOORW/2, y0=K8.FLOOR+0.06, y1=K8.SHLD-0.10;
-      const za=zo(-0.02)(a), zb=zo(-0.02)(b);
+      const za=zo(0.002)(a), zb=zo(0.002)(b);
       pushQuad(P,C,I,[a,y0,za],[b,y0,zb],[b,y1,zb],[a,y1,za],PAL.void,PAL.void);
     }
     // 客用窓(扉配置から自動生成)
     for(const w of sideWindows(cabF,cabR))
+      sideWindow(P,C,I,w[0],w[1],WIN.B,WIN.T,zo(OUT),zo(OUT*0.5));
+    // 戸袋窓
+    for(const w of pocketWindows(cabF,cabR))
       sideWindow(P,C,I,w[0],w[1],WIN.B,WIN.T,zo(OUT),zo(OUT*0.5));
     // 乗務員扉・乗務員室側窓
     for(const end of [{s:1,on:cabF},{s:-1,on:cabR}]){
@@ -1706,7 +1726,6 @@ const M_AC =M(0x9199a0), M_ACL=M(0xa6adb3), M_DUCT=M(0x8b9299),
 const G_AC  =new THREE.BoxGeometry(2.40,0.34,1.86);      // 集中式冷房装置(1基)
 const G_ACL =new THREE.BoxGeometry(2.10,0.08,1.60);      // 天面のルーバー
 const G_DUCT=new THREE.BoxGeometry(6.20,0.11,1.16);      // 前後へ伸びるダクトカバー
-const G_VENT=new THREE.BoxGeometry(0.42,0.14,0.42);      // 通風器・ヒューズ箱
 // 床下(機器を個別に分けて"箱ひとつ"感をなくす)
 const G_VVVF=new THREE.BoxGeometry(3.10,0.62,2.06);      // 主制御器(VVVF)
 const G_SIV =new THREE.BoxGeometry(2.20,0.58,1.94);      // 静止形インバータ
@@ -1722,76 +1741,82 @@ const G_WHL =new THREE.CylinderGeometry(K8.WHEEL,K8.WHEEL,0.135,26);
 const G_DISC=new THREE.CylinderGeometry(0.31,0.31,0.05,20);  // ブレーキディスク
 const G_AXL =new THREE.CylinderGeometry(0.085,0.085,RAIL_OFF*2+0.46,12);   // 軸箱を貫く長さ
 const G_MOT =new THREE.CylinderGeometry(0.24,0.24,0.70,14);  // 主電動機
-/* パンタグラフ(東洋電機 PT-4201 相当の菱形)。側面から見て◇になるよう、
-   前後の軸から立ち上がる下枠と、中央の舟体へ収束する上枠で構成する。 */
+/* パンタグラフ(シングルアーム型)。
+   菱形と違い、下枠は後方の軸からのみ立ち上がり、膝で折れて上枠が舟体へ戻る。
+   側面から見て「く」の字になるのが特徴。台枠は碍子4個で屋根に載る。 */
 const PT={
   BASE:0.06,      // 台枠の高さ(屋根面から)
   INS :0.30,      // 碍子の高さ
-  PIVX:1.12,      // 下枠の軸の前後位置(±)
-  KNEX:0.34,      // 下枠と上枠の継ぎ目(膝)の前後位置(±)
-  KNEY:0.74,      // 膝の高さ(台枠から)
-  TOPY:1.16,      // 舟体の高さ(台枠から)
-  ZARM:0.62,      // 枠の左右位置(±)
-  ZBAS:0.86,      // 台枠の左右位置(±)
+  PIVX:-0.92,     // 下枠の軸(後方寄り。シングルアームなので片側だけ)
+  KNEX: 0.46,     // 膝(下枠と上枠の継ぎ目)
+  KNEY: 0.94,     // 膝の高さ(台枠から)
+  TOPX:-0.16,     // 舟体の前後位置
+  TOPY: 1.44,     // 舟体の高さ(台枠から)
+  ZLOW:0.13,      // 下枠の左右位置(±)
+  ZUPP:0.09,      // 上枠の左右位置(±)
+  ZBAS:0.84,      // 台枠の左右位置(±)
   SHOEZ:1.90,     // 舟体の幅
 };
-const G_PFR =new THREE.BoxGeometry(2.36,0.07,0.10);   // 台枠(縦部材)
-const G_PFX =new THREE.BoxGeometry(0.10,0.07,1.80);   // 台枠(横部材)
+const G_PFR =new THREE.BoxGeometry(2.30,0.07,0.10);   // 台枠(縦部材)
+const G_PFX =new THREE.BoxGeometry(0.10,0.07,1.76);   // 台枠(横部材)
 const G_PINS=new THREE.CylinderGeometry(0.075,0.085,PT.INS,10);   // 碍子
-const G_PLOW=new THREE.BoxGeometry(1,0.075,0.075);    // 下枠(長さは配置時に伸縮)
-const G_PUPP=new THREE.BoxGeometry(1,0.055,0.055);    // 上枠
+const G_PLOW=new THREE.BoxGeometry(1,0.11,0.075);     // 下枠(太い。長さは配置時に伸縮)
+const G_PUPP=new THREE.BoxGeometry(1,0.06,0.05);      // 上枠(細い)
 const G_PROD=new THREE.BoxGeometry(1,0.035,0.035);    // つりあい棒
+const G_PBRC=new THREE.BoxGeometry(0.09,0.05,0.22);   // 下枠の補強(左右をつなぐ)
 const G_PSHO=new THREE.BoxGeometry(0.26,0.05,PT.SHOEZ);           // 舟体
 const G_PSTR=new THREE.BoxGeometry(0.09,0.025,PT.SHOEZ-0.18);     // すり板(2本)
 const G_PHRN=new THREE.BoxGeometry(0.07,0.05,0.30);               // ホーン
-const G_PSPR=new THREE.CylinderGeometry(0.055,0.055,0.22,8);      // 復元ばね
+const G_PSPR=new THREE.CylinderGeometry(0.06,0.06,0.24,8);        // 復元ばね
 const M_PANS=M(0x9aa1a8);                              // すり板(銅系のため明るめ)
-// 2点を結ぶ棒を置く(長さと傾きを配置時に決める)
+// 2点を結ぶ棒を置く(長さと傾きは配置時に決める)
 function putRod(g,geo,mat,x0,y0,x1,y1,z,addFine){
-  const dx=x1-x0, dy=y1-y0, L=Math.hypot(dx,dy);
+  const dx=x1-x0, dy=y1-y0;
   const m=new THREE.Mesh(geo,mat);
-  m.scale.x=L; m.rotation.z=Math.atan2(dy,dx);
+  m.scale.x=Math.hypot(dx,dy);
+  m.rotation.z=Math.atan2(dy,dx);
   m.position.set((x0+x1)/2,(y0+y1)/2,z);
-  (addFine?addFine(m):g.add(m));
-  if(addFine) g.add(m);
+  if(addFine) addFine(m); else g.add(m);   // addFine は内部で g.add する
   return m;
 }
 function addPanto(g,px,addFine){
   const y0=K8.ROOF+PT.BASE, yf=y0+PT.INS;              // 台枠の高さ
-  for(const sz of [-1,1]){                             // 台枠(縦)
-    const b=new THREE.Mesh(G_PFR,M_PN); b.position.set(px,yf,sz*PT.ZBAS); g.add(b);
+  // g.add() は Group を返すので、g.add(mesh).position.set(..) と書くと
+  // メッシュではなく"車両グループ全体"が動いてしまう。必ずメッシュを受け取って置く。
+  const put=(geo,mat,x,y,z)=>{const m=new THREE.Mesh(geo,mat);m.position.set(x,y,z);g.add(m);return m;};
+  for(const sz of [-1,1]) put(G_PFR,M_PN,px,yf,sz*PT.ZBAS);            // 台枠(縦)
+  for(const sx of [-1,1]){
+    put(G_PFX,M_PN,px+sx*1.11,yf,0);                                   // 台枠(横)
+    for(const sz of [-1,1])                                            // 碍子
+      addFine(new THREE.Mesh(G_PINS,M_INS)).position.set(px+sx*1.02,y0+PT.INS/2,sz*0.78);
   }
-  for(const sx of [-1,1]){                             // 台枠(横)
-    const b=new THREE.Mesh(G_PFX,M_PN); b.position.set(px+sx*1.14,yf,0); g.add(b);
-    for(const sz of [-1,1])                            // 碍子
-      addFine(new THREE.Mesh(G_PINS,M_INS)).position.set(px+sx*1.05,y0+PT.INS/2,sz*0.80);
+  const pv=px+PT.PIVX, kn=px+PT.KNEX, tp=px+PT.TOPX, ys=yf+PT.TOPY;
+  for(const sz of [-1,1]){
+    putRod(g,G_PLOW,M_PN, pv,yf, kn,yf+PT.KNEY, sz*PT.ZLOW);           // 下枠
+    putRod(g,G_PUPP,M_PN, kn,yf+PT.KNEY, tp,ys, sz*PT.ZUPP);           // 上枠
+    addFine(new THREE.Mesh(G_PSPR,M_PN)).position.set(pv,yf+0.13,sz*PT.ZLOW);   // 復元ばね
   }
-  for(const sx of [-1,1]) for(const sz of [-1,1]){
-    const zz=sz*PT.ZARM;
-    // 下枠:前後の軸から膝へ
-    putRod(g,G_PLOW,M_PN, px+sx*PT.PIVX, yf, px+sx*PT.KNEX, yf+PT.KNEY, zz);
-    // 上枠:膝から舟体へ収束
-    putRod(g,G_PUPP,M_PN, px+sx*PT.KNEX, yf+PT.KNEY, px, yf+PT.TOPY, zz);
-    // つりあい棒(下枠と平行に一段内側)
-    putRod(g,G_PROD,M_PN, px+sx*(PT.PIVX-0.22), yf+0.10, px+sx*(PT.KNEX-0.05), yf+PT.KNEY-0.02, zz*0.72, addFine);
-    addFine(new THREE.Mesh(G_PSPR,M_PN)).position.set(px+sx*PT.PIVX,yf+0.12,zz);   // 復元ばね
-  }
-  const ys=yf+PT.TOPY;
-  const sh=new THREE.Mesh(G_PSHO,M_SH); sh.position.set(px,ys,0); g.add(sh);       // 舟体
-  for(const sx of [-1,1])                                                          // すり板2本
-    addFine(new THREE.Mesh(G_PSTR,M_PANS)).position.set(px+sx*0.085,ys+0.04,0);
-  for(const sx of [-1,1]) for(const sz of [-1,1]){                                 // ホーン
+  for(const t of [0.30,0.70])                          // 下枠の補強(左右をつなぐ)
+    addFine(new THREE.Mesh(G_PBRC,M_PN)).position.set(pv+(kn-pv)*t, yf+PT.KNEY*t, 0);
+  // つりあい棒:台枠から舟体へ。舟体を水平に保つ役目
+  putRod(g,G_PROD,M_PN, pv+0.34,yf+0.09, tp+0.06,ys-0.10, 0, addFine);
+  put(G_PSHO,M_SH,tp,ys,0);                                            // 舟体
+  for(const sx of [-1,1])                                              // すり板2本
+    addFine(new THREE.Mesh(G_PSTR,M_PANS)).position.set(tp+sx*0.085,ys+0.04,0);
+  for(const sx of [-1,1]) for(const sz of [-1,1]){                     // ホーン
     const h=addFine(new THREE.Mesh(G_PHRN,M_SH));
-    h.position.set(px+sx*0.06,ys-0.06,sz*(PT.SHOEZ/2+0.10));
+    h.position.set(tp+sx*0.06,ys-0.06,sz*(PT.SHOEZ/2+0.10));
     h.rotation.x=sz*0.55;
   }
 }
+
 // 前頭部の部品
 /* 前頭部の部品([D] §5 §7)。
    仕様書は ケース300×120 / ランプØ80 / ランプ中心間120 だが、実地確認により
    灯具は一回り大きくする(LAMP_K倍)。表示器と灯具ケースは前面の曲面に沿わせる。 */
 const LAMP_K=1.30;
-const LY=fy(1025), LZ=fz(950), LGAP=fz(60*LAMP_K);     // 灯具の高さ・左右位置・ランプ間隔
+// 灯具の高さは指示により床面(車体底面)から200mm。左右位置と間隔は仕様書どおり。
+const LY=fy(200), LZ=fz(950), LGAP=fz(60*LAMP_K);
 const SGY=fy(2350);                                     // 表示器の高さ
 const G_LCASE={}, G_SIGNT={}, G_SIGND={};
 for(const k of [['f',1],['r',-1]]){
@@ -1850,7 +1875,6 @@ function makeCar(livery,panto,cabF,cabR){
   for(const dx of [-4.60,4.60]){
     const du=new THREE.Mesh(G_DUCT,M_DUCT); du.position.set(dx,K8.ROOF+0.03,0); g.add(du);
   }
-  for(const vx of [-8.2,8.2]) addFine(new THREE.Mesh(G_VENT,M_ACL)).position.set(vx,K8.ROOF+0.06,0.62);
   // 床下機器
   const vv=new THREE.Mesh(G_VVVF,M_UND); vv.position.set(-3.30,K8.FLOOR-0.36,0); g.add(vv);
   const sv=new THREE.Mesh(G_SIV ,M_UND); sv.position.set( 0.40,K8.FLOOR-0.34,0); g.add(sv);
@@ -1995,13 +2019,15 @@ const setaCars=[];for(let j=0;j<2;j++){const c=makeCar('seta',(j===0),j===0,j===
 let setaZ=-360,setaDir=1;
 const parkedCars=[];
 { // 滞泊編成:留置線の実測有効長に応じ両数を自動決定
+  // 留置線は sx が j とともに増える(走行列車と逆)。cabF/cabR をそのまま使うと
+  // 両端の運転台が編成の内側を向いてしまうので、前後を入れ替える。
   const nE=Math.max(2,Math.min(10,Math.floor((YE1e-YE0e-14)/20)));
-  for(let j=0;j<nE;j++){const c=makeCar('keio',(j===1||j===nE-2),j===0,j===nE-1);
+  for(let j=0;j<nE;j++){const c=makeCar('keio',(j===1||j===nE-2),j===nE-1,j===0);
     const sx=YE0e+12+j*K8.PITCH+K8.LEN/2;
     seatCar(c,sx,()=>10.1,1);
     KOUKU[3].VGn.add(c);parkedCars.push(c);}
   const nW=Math.max(2,Math.min(4,Math.floor((YW1e-YW0e-14)/20)));
-  for(let j=0;j<nW;j++){const c=makeCar('keio',(j===0||j===nW-1),j===0,j===nW-1);
+  for(let j=0;j<nW;j++){const c=makeCar('keio',(j===0||j===nW-1),j===nW-1,j===0);
     const sx=YW0e+12+j*K8.PITCH+K8.LEN/2;
     seatCar(c,sx,()=>13.3,1);
     KOUKU[3].VGn.add(c);parkedCars.push(c);}
