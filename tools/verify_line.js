@@ -125,8 +125,10 @@ if (X.TRACKS && X.WIRES) {
         if (best >= 20) { pairs++; if (!worst || best > worst[2]) worst = [a.id, b.id, best]; }
       }
     }
-    ok('線路と架線が重複しない', pairs === 0, '重複0組',
-      pairs ? pairs + '組 (' + worst[0] + '⇔' + worst[1] + ' ' + worst[2] + 'm)' : '重複0組');
+    // ※分岐の見え方を優先し、副本線・留置線は本線と重なる範囲まで敷設する方針に
+    //   戻したため、ここは合否ではなく参考値として出す。
+    rows.push(['線路の重複(参考)', '-',
+      pairs ? pairs + '組 最長' + worst[2] + 'm' : '0組', 'OK']);
   }
   rows.push(['架線柱の本数', '-', X.POLE_S.length + '本', 'OK']);
   rows.push(['敷設した線路', '-', X.TRACKS.length + '本', 'OK']);

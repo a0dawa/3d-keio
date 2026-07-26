@@ -10,7 +10,8 @@ const X = require('./stub_three')(path,
   'STA:STA,platRange:platRange,stopPosOf:stopPosOf,nextStopFor:nextStopFor,' +
   'driveTrain:driveTrain,DRIVE:DRIVE,DWELL_OF:DWELL_OF,CAR_HALF:CAR_HALF,K8:K8,' +
   'mainOff:mainOff,runOff:runOff,DOM:DOM,STOP_BACK:STOP_BACK,' +
-  'PSD:PSD,stepPSD:stepPSD,trains:trains,stepCarDoors:stepCarDoors,setCarDoors:setCarDoors');
+  'PSD:PSD,stepPSD:stepPSD,trains:trains,stepCarDoors:stepCarDoors,setCarDoors:setCarDoors,' +
+  'sideWindows:sideWindows,DOOR_HW:DOOR_HW,DOOR_SLIDE:DOOR_SLIDE');
 
 /* ---- 期待値(検証側が独立して持つ) ---------------------------------------- */
 const REF = {
@@ -223,6 +224,27 @@ ok('上限速度を超えない', vmax <= REF.VMAX_KMH + 0.5, '≤' + REF.VMAX_K
     ok('ホーム側の扉が動く', slid, '8枚とも移動', nearSide.filter((v) => v > 0.3).length + '/8枚');
     ok('反対側の扉は動かない', still, '8枚とも静止', farSide.filter((v) => v < 1e-9).length + '/8枚');
     X.setCarDoors(c, 0, 1);
+  }
+  // 7-5 扉が全開したとき、隣の客用窓に被らないか(戸袋の幅が足りているか)
+  {
+    const win = X.sideWindows(false, false);
+    let over = 0, minGap = 9;
+    for (const dx of X.K8.DOORX) {
+      for (const sg of [-1, 1]) {
+        const c = dx + sg * (X.DOOR_HW + X.DOOR_SLIDE);
+        const a = c - X.DOOR_HW, b = c + X.DOOR_HW;
+        for (const q of win) {
+          const ov = Math.min(b, q[1]) - Math.max(a, q[0]);
+          if (ov > 0) over++;
+          const gap = a > q[1] ? a - q[1] : b < q[0] ? q[0] - b : -ov;
+          if (gap < minGap) minGap = gap;
+        }
+      }
+    }
+    ok('全開の扉が窓に被らない', over === 0, '重なり0枚',
+      over ? over + '枚 重なる' : 'すき間' + minGap.toFixed(3) + 'm');
+    ok('扉が全開できる', Math.abs(X.DOOR_SLIDE - X.K8.DOORW / 2) < 1e-9,
+      '片開き1枚ぶん', X.DOOR_SLIDE.toFixed(3) + 'm');
   }
 }
 
