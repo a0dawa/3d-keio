@@ -484,6 +484,12 @@ function poleXs(r0,r1){
   return xs;
 }
 function poleOff(x){return outerOff(x)+1.95;}            // 柱は最外軌道から1.95m外側
+// 架線の高さ(レール面基準)。柱の高さもここから決めるので、両者がずれない。
+const WIRE_CAT=5.90;   // ちょう架線(吊り点での高さ)
+const WIRE_TRO=4.95;   // トロリ線(接触線)
+const WIRE_SAG=0.32;   // 柱間中央での垂れ
+const POLE_TOP=7.00;   // 架線柱の頂部(ビーム上弦)。下弦は -0.80
+const BEAM_LOW=POLE_TOP-0.80;   // ビーム下弦。ちょう架線はここから碍子で吊る
 // 橋脚を省略する横断部(道路・鉄道・河川の直上に柱を立てない)
 const ROAD_SKIP=[[INOKASHIRA_X,12],[SETAGAYA_X,8],[BRIDGE.s,12],[KAN7_X,16],[KYU_INOKA_X,9],
   [HOSHA23_X,11],[H154_X,10],[H128_X,9],[H133_X,9],[H215_X,9],[KANPACHI_X,18],[H216_X,9],[H217_X,10]];
@@ -500,6 +506,21 @@ const KOUKU=[
  {no:7,s0:mid2(STA[7].x,STA[8].x),s1:mid2(STA[8].x,RAMP_T),sh:'千歳烏山',name:'第7工区 千歳烏山駅付近',jv:'安藤・間・淺沼JV',m:'A',note:'2面4線化。補助217号線を跨ぐ橋脚、駅前広場整備を含む。'},
  {no:8,s0:mid2(STA[8].x,RAMP_T),s1:DECK_END,sh:'仙川方',name:'第8工区 仙川方取付部',jv:'戸田・錢高JV',m:'C',note:'STRUM工法:営業線直上に仮上り線高架を構築。仙川橋梁を架替。'},
 ];
+// --- 架線柱のs座標(全線) ---------------------------------------------------
+// 柱の建植・架線の吊り点・ブラケットは、すべてこの配列だけを見る。
+// 以前は場所ごとに poleXs() を呼び直しており、副本線や留置線では吊り点が
+// 柱の真下から外れていた。出所を1つに固定してそれを起こらなくする。
+const POLE_S=(function(){
+  const out=[];
+  const add=(r0,r1)=>{for(let x=r0+22;x<r1-8;x+=poleStep(x))out.push(x);};
+  add(DOM.x0,PS0);
+  for(const K of KOUKU)add(K.s0,K.s1);
+  for(let x=DECK_END+15;x<DOM.x1-8;x+=poleStep(x))out.push(x);
+  return out.sort((a,b)=>a-b);
+})();
+const polesIn=(x0,x1)=>POLE_S.filter(v=>v>=Math.min(x0,x1)-0.01&&v<=Math.max(x0,x1)+0.01);
+function kkOf(s){for(const K of KOUKU)if(s>=K.s0&&s<K.s1)return K;return null;}
+
 /* ============ 3. シーン基盤・材質・テクスチャ・工区グループ ============ */
 const canvas=document.getElementById('c');
 const renderer=new THREE.WebGLRenderer({canvas,antialias:true,powerPreference:'high-performance'});
@@ -677,6 +698,43 @@ function deckPart(x0,x1,mat,o0,o1,edge){   // 桁の帯 o0..o1(±99=桁端)。ed
     strip(x0,x1,12,x=>[x,yTop(x),deckHalf(x)-.25],x=>[x,railY(x)+2.1,deckHalf(x)-.25],MAT.barrier);
   }
 }
+// 架線柱を建てる。門型(ビーム式)。柱はテーパー付きの鋼管、ビームは上下弦を前後
+// 2本ずつ持つ立体トラスにして、真横から見ても正面から見ても骨組みが見えるようにする。
+function buildPoles(xs){
+  if(!xs.length)return;
+  const N=xs.length;
+  const iB=new THREE.InstancedMesh(new THREE.BoxGeometry(1,1,1),MAT.pole,N*24);
+  const iC=new THREE.InstancedMesh(new THREE.CylinderGeometry(.5,.5,1,12),MAT.pole,N*2);
+  const m4=new THREE.Matrix4(),q=new THREE.Quaternion(),e=new THREE.Euler();
+  let ib=0,ic=0;
+  const put=(inst,idx,s,y,off,sx,sy,sz,rx)=>{const p=frame(s,off);
+    e.set(rx||0,-p.a,0,'YXZ');q.setFromEuler(e);
+    m4.compose(new THREE.Vector3(p.x,y,p.z),q,new THREE.Vector3(sx,sy,sz));inst.setMatrixAt(idx,m4);};
+  for(const x of xs){
+    const onDeck=railY(x)>3.4&&x<DECK_END;
+    const hw=onDeck?Math.min(deckHalf(x)-.55,poleOff(x)):poleOff(x), base=onDeck?yTop(x):0;
+    const top=railY(x)+POLE_TOP, h=top-base;
+    for(const sg of[-1,1]){
+      put(iC,ic++,x,base+h/2,sg*hw,.40,h,.40);            // 鋼管柱
+      put(iB,ib++,x,base+.06,sg*hw,.78,.12,.78);          // ベースプレート
+      put(iB,ib++,x,base+.34,sg*hw,.30,.56,.30);          // 柱脚(根巻き)
+      put(iB,ib++,x,top-1.7,sg*(hw-.42),.13,.13,.98,0.0); // 柱頭のブレース
+    }
+    for(const dx of[-.12,.12]){                            // 上下弦を前後2本ずつ=立体トラス
+      put(iB,ib++,x+dx,top+.05,0,.13,.13,hw*2);
+      put(iB,ib++,x+dx,top-.80,0,.12,.12,hw*2);
+    }
+    for(let k=0;k<5;k++){                                  // 垂直材
+      const ox=-hw+.55+(hw*2-1.1)*k/4;
+      put(iB,ib++,x,top-.38,ox,.09,.85,.09);
+    }
+    for(let k=0;k<8;k++){                                  // 斜材
+      const ox=-hw+.55+(hw*2-1.1)*(k+.5)/8;
+      put(iB,ib++,x,top-.38,ox,.08,1.02,.08,(k%2?1:-1)*0.58);
+    }
+  }
+  iB.count=ib;iC.count=ic;add(iB);add(iC);
+}
 const RANGES=[[DOM.x0,Math.round(PS0),null]];   // 事業起点以東=既存高架(常時表示)
 for(const K of KOUKU)RANGES.push([K.s0,K.s1,K]);
 for(const R of RANGES){
@@ -713,65 +771,30 @@ for(const R of RANGES){
     CUR=K?K.VGb:null;add(iB);
     CUR=K?(K.quad?K.VGn:K.VGb):null;add(iC);
   }
-  // 架線柱:鋼管柱+トラスビーム(上下弦+斜材)+碍子。下り線部(VGa)に帰属
+  // 架線柱:鋼管柱2本+立体トラスビーム(上下弦各2本・垂直材・斜材)+柱脚。
+  // 碍子と可動ブラケットは線路が出揃う6章で付ける(線路ごとに必要なため)。
   CUR=R[2]?R[2].VGa:null;
-  const cx=poleXs(r0,R[1]);   // 架線柱の位置(直線50m/曲線25m)
-  if(cx.length){
-    const N=cx.length;
-    const iP=new THREE.InstancedMesh(new THREE.BoxGeometry(1,1,1),MAT.pole,N*20);   // 柱(H形鋼)・弦材・斜材・ブラケット
-    const iI=new THREE.InstancedMesh(new THREE.CylinderGeometry(.13,.13,.5,6),
-      new THREE.MeshLambertMaterial({color:0xd9cfc0}),N*4);                          // 碍子
-    const m4=new THREE.Matrix4(),q=new THREE.Quaternion(),e=new THREE.Euler();
-    let ip=0,ii=0;
-    const put=(inst,idx,s,y,off,sx,sy,sz,rz)=>{const p=frame(s,off);
-      e.set(rz||0,-p.a,0,'YXZ');q.setFromEuler(e);
-      m4.compose(new THREE.Vector3(p.x,y,p.z),q,new THREE.Vector3(sx,sy,sz));inst.setMatrixAt(idx,m4);};
-    for(const x of cx){
-      const onDeck=railY(x)>3.4&&x<DECK_END;
-      const hw=onDeck?Math.min(deckHalf(x)-.55,poleOff(x)):poleOff(x), base=onDeck?yTop(x):0;
-      const top=railY(x)+6.5, h=top-base;
-      for(const sg of[-1,1]){                       // H形鋼柱(フランジ2枚+ウェブ)+基部
-        put(iP,ip++,x,base+h/2,sg*hw-.16,.34,h,.10);   // フランジ(内)
-        put(iP,ip++,x,base+h/2,sg*hw+.16,.34,h,.10);   // フランジ(外)
-        put(iP,ip++,x,base+h/2,sg*hw,.10,h,.22);       // ウェブ
-        put(iP,ip++,x,base+.45,sg*hw,.52,.9,.52);      // 柱脚(ベースプレート)
-      }
-      put(iP,ip++,x,top+.06,0,.16,.16,hw*2);        // ビーム上弦
-      put(iP,ip++,x,top-.74,0,.14,.14,hw*2);        // ビーム下弦
-      for(let k=0;k<6;k++){                          // 斜材(トラス)
-        const ox=-hw+.6+(hw*2-1.2)*k/5;
-        put(iP,ip++,x,top-.34,ox,.09,.95,.09,(k%2?1:-1)*0.62);
-      }
-      for(const sgn of[-1,1]){                       // 碍子+可動ブラケット(mainOffで軌道位置を算出)
-        const zo=sgn*mainOff(x);
-        put(iI,ii++,x,top-1.05,zo,1,1,1);
-        put(iP,ip++,x,top-1.3,zo,.10,.10,1.5);
-      }
-    }
-    iP.count=ip;iI.count=ii;add(iP);add(iI);
-  }
+  buildPoles(polesIn(r0,R[1]));
 }
 CUR=null;
-// 仙川方地上部の架線柱
-{
-  const cx=[];for(let x=DECK_END+15;x<DOM.x1-8;x+=poleStep(x))cx.push(x);
-  const inst=new THREE.InstancedMesh(new THREE.BoxGeometry(1,1,1),MAT.pole,cx.length*3);
-  const m4=new THREE.Matrix4(),q=new THREE.Quaternion(),e=new THREE.Euler();let i=0;
-  for(const x of cx){
-    const top=railY(x)+6.6;
-    const hw2=(Math.abs(x-STA[9].x)<130)?10.6:poleOff(x);   // 仙川駅部は北側ホームの外へ
-    const pw=(s,y,off,sx,sy,sz)=>{const p=frame(s,off);e.set(0,-p.a,0);q.setFromEuler(e);
-      m4.compose(new THREE.Vector3(p.x,y,p.z),q,new THREE.Vector3(sx,sy,sz));inst.setMatrixAt(i++,m4);};
-    pw(x,top/2,-hw2,.34,top,.34);pw(x,top/2,hw2,.34,top,.34);pw(x,top-.15,0,.26,.3,hw2*2);
-  }
-  scene.add(inst);
-}
+buildPoles(polesIn(DECK_END,DOM.x1));   // 仙川方の地上部
 
 /* ============ 6. 軌道・架線・交差鉄道・地上線/仮線 ============ */
 function track(x0,x1,zf,yf){
   strip(x0,x1,10,x=>[x,yf(x)-.12,zf(x)-1.5],x=>[x,yf(x)-.12,zf(x)+1.5],MAT.slab);
   for(const o of[-RAIL_OFF,RAIL_OFF])   // レール:内面間=GAUGE(1372mm)になる位置に置く
     strip(x0,x1,10,x=>[x,yf(x)+.06,zf(x)+o-RAIL_W/2],x=>[x,yf(x)+.06,zf(x)+o+RAIL_W/2],MAT.rail);
+}
+// 敷設した軌道と、張った架線の登録簿。
+// 「線路はあるのに架線が無い」「架線が線路の真上に無い」を構造的に防ぐため、
+// 軌道と架線は必ず layTrack() で対にして作り、ここへ記録する(検証はこれを見る)。
+const TRACKS=[], WIRES=[];
+function layTrack(id,x0,x1,zf,yf){
+  const y=yf||railY;
+  track(x0,x1,zf,y);
+  TRACKS.push({id:id,x0:Math.min(x0,x1),x1:Math.max(x0,x1),zf:zf});
+  wires(x0,x1,zf,id);
+  return id;
 }
 const zDown=x=>-mainOff(x), zUp=x=>mainOff(x);       // 本線(八幡山では外側の通過線)
 // 八幡山は島式ホームの外側に通過線がある。停車する列車はホーム横の停車線(内側)を走る。
@@ -781,75 +804,69 @@ const hachiT=x=>plateau(x,HACHI_C,118,150);
 const hachiStopOff=x=>2.0+2.55*hachiT(x);           // 停車線(6章で敷設しているものと同一)
 function runOff(x){const w=hachiT(x);return mainOff(x)*(1-w)+hachiStopOff(x)*w;}
 const zRunDown=x=>-runOff(x), zRunUp=x=>runOff(x);  // 停車列車・運転モードが走る位置
-// 架線:ちょう架線(架線柱スパンで垂れる)+トロリ線(その真下)+ハンガー。
-// 吊り点(垂れが0になる点)を架線柱の真下に一致させるため、柱位置 poleXs を基準にする。
-function wires(r0,r1,zf){
-  const TH=5.9, TR=4.9;                       // ちょう架線/トロリ線の高さ(レール面から)
-  const poles=poleXs(r0,r1);
-  if(poles.length<2) return;
-  const p0=poles[0], p1=poles[poles.length-1];
-  // 直近の柱スパン内での垂れ(両端=柱の位置で0、中間で最大0.32m)
-  const sag=x=>{
-    let a=p0,b=p1;
-    for(let i=0;i<poles.length-1;i++){ if(x>=poles[i]&&x<=poles[i+1]){a=poles[i];b=poles[i+1];break;} }
-    const t=(b>a)?(x-a)/(b-a):0;
-    return 0.32*Math.sin(Math.PI*t);
+// 架線:ちょう架線(柱間で垂れる)+トロリ線(その真下)+ハンガー(吊り線)。
+// 横位置は必ず線路と同じ zf を使う=架線は線路の真上にしか張られない。
+// 垂れが0になる吊り点は POLE_S(架線柱の位置)に一致させる=柱の真下が吊り点。
+function wires(r0,r1,zf,id){
+  const x0=Math.min(r0,r1), x1=Math.max(r0,r1);
+  const poles=polesIn(x0,x1);
+  const sag=x=>{                              // 直近の柱スパン内での垂れ
+    if(poles.length<2||x<=poles[0]||x>=poles[poles.length-1])return 0;
+    for(let i=0;i<poles.length-1;i++)
+      if(x>=poles[i]&&x<=poles[i+1])
+        return WIRE_SAG*Math.sin(Math.PI*(x-poles[i])/(poles[i+1]-poles[i]));
+    return 0;
   };
   const cat=[],tro=[];
-  for(let x=p0;x<=p1;x+=5){
-    const zo=zf(x);
-    const pc=frame(x,zo);
-    cat.push(new THREE.Vector3(pc.x,railY(x)+TH-sag(x),pc.z));
-    tro.push(new THREE.Vector3(pc.x,railY(x)+TR,pc.z));
+  for(let x=x0;x<=x1+1e-6;x+=Math.min(5,x1-x0)||1){
+    const q=frame(x,zf(x));
+    cat.push(new THREE.Vector3(q.x,railY(x)+WIRE_CAT-sag(x),q.z));
+    tro.push(new THREE.Vector3(q.x,railY(x)+WIRE_TRO,q.z));
+    if(x+5>x1&&x<x1){x=x1-Math.min(5,x1-x0);}   // 端点を必ず含める
   }
   add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(cat),wireMat));
   add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(tro),wireMat));
-  const hp=[];                                 // ハンガー(吊り線):柱の真下に配置
+  const hp=[];                                 // ハンガー:柱の真下(垂れ0の点)から吊る
   for(const x of poles){
-    const zo=zf(x),pc=frame(x,zo);
-    hp.push(new THREE.Vector3(pc.x,railY(x)+TH,pc.z));   // 柱位置では垂れ0
-    hp.push(new THREE.Vector3(pc.x,railY(x)+TR,pc.z));
+    const q=frame(x,zf(x));
+    hp.push(new THREE.Vector3(q.x,railY(x)+WIRE_CAT,q.z));
+    hp.push(new THREE.Vector3(q.x,railY(x)+WIRE_TRO,q.z));
   }
-  add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(hp),wireMat));
-  if(zf===zUp){                                        // 饋電線(き電線):ビーム上を1本通す
-    const fd=[];
-    for(let x=r0;x<=r1;x+=15){const p=frame(x,deckHalf(x)-1.6);
-      fd.push(new THREE.Vector3(p.x,railY(x)+6.9,p.z));}
-    add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(fd),wireMat));
-  }
+  if(hp.length)add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(hp),wireMat));
+  WIRES.push({id:id,x0:x0,x1:x1,zf:zf,hangers:poles.slice()});
+}
+// き電線:ビームの上を通す(架線ではないので線路とは対応しない)
+function feeder(x0,x1){
+  const fd=[];
+  for(let x=x0;x<=x1;x+=15){const q=frame(x,deckHalf(x)-1.6);
+    fd.push(new THREE.Vector3(q.x,railY(x)+POLE_TOP+0.30,q.z));}
+  if(fd.length>1)add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(fd),wireMat));
 }
 CUR=null;
-track(DOM.x0,PS0,zDown,railY);track(DOM.x0,PS0,zUp,railY);
-wires(DOM.x0,PS0,zDown);wires(DOM.x0,PS0,zUp);
+layTrack('本線下り-東',DOM.x0,PS0,zDown);layTrack('本線上り-東',DOM.x0,PS0,zUp);
 for(const K of KOUKU){
-  CUR=K.VGa;track(K.s0,K.s1,zDown,railY);wires(K.s0,K.s1,zDown);
-  CUR=K.VGb;track(K.s0,K.s1,zUp,railY);wires(K.s0,K.s1,zUp);
+  CUR=K.VGa;layTrack('本線下り-'+K.no,K.s0,K.s1,zDown);
+  CUR=K.VGb;layTrack('本線上り-'+K.no,K.s0,K.s1,zUp);
+  CUR=K.VGb;feeder(K.s0,K.s1);
 }
 CUR=null;
-track(DECK_END,DOM.x1,zDown,railY);track(DECK_END,DOM.x1,zUp,railY);
-wires(DECK_END,DOM.x1,zDown);wires(DECK_END,DOM.x1,zUp);
-// 副本線(2面4線)・八幡山停車線:南北で帰属を分離
-function loopSide(cx,sgn){
-  const f=x=>sgn*(2.0+8.1*plateau(x,cx,118,110));   // 分岐部を短く(遷移170m→110m)
-  track(cx-300,cx+300,f,railY);
-}
+layTrack('本線下り-西',DECK_END,DOM.x1,zDown);layTrack('本線上り-西',DECK_END,DOM.x1,zUp);
+// 副本線(2面4線):南北で帰属を分離。架線は layTrack が自動で張る。
 for(const cx of[X(5.2),X(7.0),X(9.9)]){
   const K=(cx<KOUKU[1].s1)?KOUKU[1]:(cx<KOUKU[3].s1)?KOUKU[3]:KOUKU[6];
-  const zf=sgn=>x=>sgn*(2.0+8.1*plateau(x,cx,118,110));
-  CUR=K.VGa;loopSide(cx,-1);wires(cx-300,cx+300,zf(-1));   // 副本線の架線
-  CUR=K.VGn;loopSide(cx,1); wires(cx-300,cx+300,zf(1));    // 北側副本線=第3段階(VGn)
+  const zf=sgn=>x=>sgn*(2.0+8.1*plateau(x,cx,118,110));   // 分岐部を短く(遷移170m→110m)
+  CUR=K.VGa;layTrack('副本線南-'+K.no,cx-300,cx+300,zf(-1));
+  CUR=K.VGn;layTrack('副本線北-'+K.no,cx-300,cx+300,zf(1));
 }
-{ // 八幡山:停車線(内側)+架線
+{ // 八幡山:ホーム横の停車線(内側)
   const f=sgn=>x=>sgn*(2.0+2.55*plateau(x,X(8.4),118,150));
-  CUR=KOUKU[4].VGa;track(X(8.4)-300,X(8.4)+300,f(-1),railY);wires(X(8.4)-300,X(8.4)+300,f(-1));
-  CUR=KOUKU[4].VGb;track(X(8.4)-300,X(8.4)+300,f(1),railY); wires(X(8.4)-300,X(8.4)+300,f(1));
+  CUR=KOUKU[4].VGa;layTrack('八幡山停車線南',X(8.4)-300,X(8.4)+300,f(-1));
+  CUR=KOUKU[4].VGb;layTrack('八幡山停車線北',X(8.4)-300,X(8.4)+300,f(1));
 }
 // 桜上水 留置線:上り方・下り方とも2本併設(±10.1/±13.3)
-CUR=KOUKU[3].VGn;   // 桜上水留置線(第3段階=北側):実測範囲±50m延伸・各2線併設
-track(YE0e,YE1e,()=>10.1,railY);track(YE0e,YE1e,()=>13.3,railY);
-track(YW0e,YW1e,()=>10.1,railY);track(YW0e,YW1e,()=>13.3,railY);
-wires(YE0e,YE1e,()=>10.1);wires(YE0e,YE1e,()=>13.3);   // 留置線の架線
-wires(YW0e,YW1e,()=>10.1);wires(YW0e,YW1e,()=>13.3);
+CUR=KOUKU[3].VGn;
+layTrack('留置線東A',YE0e,YE1e,()=>10.1);layTrack('留置線東B',YE0e,YE1e,()=>13.3);
+layTrack('留置線西A',YW0e,YW1e,()=>10.1);layTrack('留置線西B',YW0e,YW1e,()=>13.3);
 CUR=null;
 // 分岐器(ポイント):転てつ機を各分岐点に配置
 {
@@ -954,18 +971,21 @@ for(const s of STA){
       cbox(c0-154,c0+54,g,2.8,y+4.9,y+5.4,MAT.canopy);}
     for(const d of[-3.67,3.67,-8.43,8.43])cbox(c0-153,c0+53,d,.06,y+1.1,y+2.32,MAT.hdoor);
     // 配線図準拠:本線=外側±10.1(BUMPS)/内側±2=新宿方から続く留置線(西端は車止め・200m収容)
-    track(DOM.x0+8,c0+355,()=>-2,railY);track(DOM.x0+8,c0+355,()=>2,railY);
-    wires(DOM.x0+8,c0+355,()=>-2);wires(DOM.x0+8,c0+355,()=>2);   // 留置線の架線
+    layTrack('笹塚留置線南',DOM.x0+8,c0+355,()=>-2);
+    layTrack('笹塚留置線北',DOM.x0+8,c0+355,()=>2);
     box(1.4,1.4,3.2,M(0x8a4a42),c0+355,railY(c0+355)+.7,-2);   // 車止め(南留置線・西端355m)
     box(1.4,1.4,3.2,M(0x8a4a42),c0+355,railY(c0+355)+.7, 2);   // 車止め(北留置線)
     { // 両渡り分岐器×3:1組=50m。5次スムーズステップ(加加速度連続)で最も滑らかなS字に
       const s5=t=>{t=clamp(t,0,1);return t*t*t*(t*(t*6-15)+10);};
       // 分岐器の曲線は高密度サンプリング(2m刻み)で滑らかに
+      let xoN=0;
       const xo=(s0,s1,o1,o2)=>{const f=x=>o1+(o2-o1)*s5((x-s0)/(s1-s0));
         strip(s0,s1,2,x=>[x,railY(x)-.12,f(x)-1.5],x=>[x,railY(x)-.12,f(x)+1.5],MAT.slab);
         for(const o of[-RAIL_OFF,RAIL_OFF])
           strip(s0,s1,2,x=>[x,railY(x)+.06,f(x)+o-RAIL_W/2],x=>[x,railY(x)+.06,f(x)+o+RAIL_W/2],MAT.rail);
-        wires(s0,s1,f);};
+        const id='笹塚渡り'+(++xoN);
+        TRACKS.push({id:id,x0:Math.min(s0,s1),x1:Math.max(s0,s1),zf:f});
+        wires(s0,s1,f,id);};
       xo(c0+52,c0+162,10.1,2);  xo(c0+52,c0+162,2,10.1);   // 北本線⇔北留置線(110m)
       xo(c0+52,c0+162,-10.1,-2);xo(c0+52,c0+162,-2,-10.1); // 南本線⇔南留置線(110m)
       xo(c0+72,c0+122,2,-2);    xo(c0+72,c0+122,-2,2);     // 留置線間(50m・さらに東へ40m移動)
@@ -1080,6 +1100,42 @@ tag('桜上水留置線(下り方)',(YW0+YW1)/2,26,46);
 tag('事業起点(笹塚第3架道橋付近)',Math.round(PS0),30,-70);
 tag('事業終点(給田一三橋付近)・取付部',DECK_END,24,0);
 tag('仙川橋梁(架替)',BRIDGE.s,20,-60);
+
+/* ---- 架線の吊り金具:架線柱の真下を通る全ての線路へ碍子を下ろす ----
+   線路の登録(TRACKS)が出揃ってから実行する。線路を足せば支持も自動で増える。
+   「柱の真下が吊り点」であることを、金具の位置としても目に見える形にする。 */
+{
+  const byG=new Map();
+  for(const s of POLE_S){
+    const K=kkOf(s), g=K?K.VGa:null;
+    for(const t of TRACKS){
+      if(s<t.x0-0.01||s>t.x1+0.01) continue;
+      const zo=t.zf(s);
+      if(Math.abs(zo)>deckHalf(s)+1) continue;        // 桁の外は支持できない
+      if(!byG.has(g)) byG.set(g,[]);
+      byG.get(g).push([s,zo]);
+    }
+  }
+  const insMat=new THREE.MeshLambertMaterial({color:0xd9cfc0});
+  for(const [g,list] of byG){
+    if(!list.length) continue;
+    const iI=new THREE.InstancedMesh(new THREE.CylinderGeometry(.075,.075,1,8),insMat,list.length);
+    const iH=new THREE.InstancedMesh(new THREE.BoxGeometry(1,1,1),MAT.pole,list.length);
+    const m4=new THREE.Matrix4(),q=new THREE.Quaternion(),e=new THREE.Euler();
+    let i=0;
+    for(const [s,zo] of list){
+      const pc=frame(s,zo), yb=railY(s)+WIRE_CAT, yt=railY(s)+BEAM_LOW;
+      e.set(0,-pc.a,0);q.setFromEuler(e);
+      m4.compose(new THREE.Vector3(pc.x,(yb+yt)/2,pc.z),q,new THREE.Vector3(1,yt-yb,1));
+      iI.setMatrixAt(i,m4);                            // 碍子(ちょう架線⇄ビーム下弦)
+      m4.compose(new THREE.Vector3(pc.x,yb-0.04,pc.z),q,new THREE.Vector3(.20,.09,.20));
+      iH.setMatrixAt(i,m4);                            // 吊り金具(ちょう架線側の受け)
+      i++;
+    }
+    CUR=g;add(iI);add(iH);
+  }
+  CUR=null;
+}
 
 /* ============ 8. 街並み(街区整列・模式) ============ */
 {
