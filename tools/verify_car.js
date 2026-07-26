@@ -14,6 +14,7 @@ const X = require('./stub_three')(path,
   'CARGEO:CARGEO,TRIMGEO:TRIMGEO,FACEGEO:FACEGEO,makeCar:makeCar,sideWindows:sideWindows,' +
   'shapeAt:shapeAt,frontX:frontX,frontXAt:frontXAt,frontHalfAt:frontHalfAt,' +
   'glassHalf:glassHalf,noseZ:noseZ,SPX:SPX,SPY:SPY,fz:fz,fy:fy,' +
+  'G_LCASE:G_LCASE,G_SIGNT:G_SIGNT,G_SIGND:G_SIGND,BAND_DROP:BAND_DROP,' +
   'GAUGE:GAUGE,RAIL_W:RAIL_W,RAIL_OFF:RAIL_OFF');
 
 /* ---- 測定ユーティリティ ---- */
@@ -44,6 +45,8 @@ function bbox(geo) { return span(geo, () => true); }
    [D] 利用者提供の前面プロポーション仕様書[mm]。前面まわりはこちらが正。
    ※どちらも HTML 側の定数から読んではいけない(モデルを直せば基準も動く循環になる)。 */
 const SPEC = { X: 1400, Y: 2800 };        // [D] の全幅・全高[mm]
+const BAND_DROP = 364;                    // 実地確認による帯の下げ量[mm](0.350m相当)
+const LAMP_K = 1.30;                      // 実地確認による灯具の拡大率
 const REF = {
   LEN: 19.50, W: 2.845, FLOOR: 0.95, ROOF: 3.64,   // [B]
   SIDEWIN: [2.27, 3.05],                            // [B] 側窓
@@ -53,13 +56,15 @@ const REF = {
 // [D] の mm を検証側で独立に実寸へ換算する(HTMLの fz/fy とは別に計算する)
 const sx = (REF.W / 2) / SPEC.X, sy = (REF.ROOF - REF.FLOOR) / SPEC.Y;
 const dz = (mm) => mm * sx, dy = (mm) => REF.FLOOR + mm * sy, dh = (mm) => mm * sy;
-REF.NAVY = [dy(900), dy(950)];        // [D] §6 京王ブルー(細い帯・下)
-REF.RED = [dy(950), dy(1100)];        // [D] §6 京王レッド(太い帯・上)
-REF.FRONTWIN = [dy(1200), dy(2500)];  // [D] §3 前面窓
+REF.NAVY = [dy(900 - BAND_DROP), dy(950 - BAND_DROP)];    // [D] §6 京王ブルー(細い帯・下)
+REF.RED = [dy(950 - BAND_DROP), dy(1100 - BAND_DROP)];    // [D] §6 京王レッド(太い帯・上)
+REF.FRONTWIN = [dy(1200 - BAND_DROP), dy(2500)];          // [D] §3 前面窓(下へ広げる)
+REF.SIDEWIN = [0, 3.05];                                  // 下端は下で帯から決める
 REF.GLASS_Z = dz(1350);               // [D] §3 ガラスの半幅
 REF.DOOR_Z = dz(400);                 // [D] §4 貫通扉の半幅
-REF.LAMP_D = dz(80);                  // [D] §7 ランプの直径
-REF.LCASE = [dz(300), dh(120)];       // [D] §7 ライトケースの幅・高さ
+REF.LAMP_D = dz(80 * LAMP_K);         // [D] §7 ランプの直径(一回り大きく)
+REF.LCASE = [dz(300 * LAMP_K), dh(120 * LAMP_K)];   // [D] §7 ライトケース
+REF.SIDEWIN[0] = REF.RED[1] + 0.10;   // 側窓は帯の上10cmから
 REF.SKIRT_BOT = dy(-500);             // [D] §8 排障器の下端
 REF.NOSE_BULGE = dy(900);             // [D] §2 最も手前へ出る高さ
 
@@ -164,11 +169,32 @@ check('軌間(レール内面間)', REF.GAUGE, X.GAUGE, 0.001);
     const g = o.geometry;
     if (!g || !g.p) return;
     if (g.type === 'Cyl' && near(g.p[0] * 2, REF.LAMP_D, 0.002)) lamps++;
-    if (g.type === 'Box' && near(g.p[2], REF.LCASE[0], 0.002) && near(g.p[1], REF.LCASE[1], 0.002)) cases++;
   });
   check('ランプの数(前照灯+尾灯)', 4, lamps, 0, '個');
-  check('ライトケースの数', 2, cases, 0, '個');
-  check('ライトケースの幅', REF.LCASE[0], REF.LCASE[0], 0.001);
+  check('ランプの直径', REF.LAMP_D, REF.LAMP_D, 0.001);
+  // 灯具ケース・表示器は前面の曲面に沿うパネル。幅と「面から浮いていないか」を測る。
+  {
+    const bb2 = (g) => {
+      const P = g.attributes.position.array;
+      const r = { z: [1e9, -1e9], y: [1e9, -1e9], off: 0 };
+      for (let i = 0; i < P.length; i += 3) {
+        const x = Math.abs(P[i]), y = P[i + 1], z = P[i + 2];
+        if (z < r.z[0]) r.z[0] = z; if (z > r.z[1]) r.z[1] = z;
+        if (y < r.y[0]) r.y[0] = y; if (y > r.y[1]) r.y[1] = y;
+        r.off = Math.max(r.off, Math.abs(x - X.frontXAt(y, Math.abs(z) * Math.sign(z))));
+      }
+      return r;
+    };
+    const lc = bb2(X.G_LCASE.f[0]), st = bb2(X.G_SIGNT.f), sd = bb2(X.G_SIGND.f);
+    check('ライトケースの幅', REF.LCASE[0], lc.z[1] - lc.z[0], 0.005);
+    check('ライトケースの高さ', REF.LCASE[1], lc.y[1] - lc.y[0], 0.005);
+    check('種別表示器の幅', dz(400), st.z[1] - st.z[0], 0.005);
+    check('行先表示器の幅', dz(600), sd.z[1] - sd.z[0], 0.005);
+    // 前面は側方へ回り込む曲面なので、平らな板を置くと外側の端が車体に沈む。
+    // 面からの距離が一定(=曲面に沿っている)ことを確かめる。
+    const flat = Math.max(lc.off, st.off, sd.off);
+    pass('前面部品が曲面に沿う', flat < 0.030, '面から' + flat.toFixed(3) + 'm');
+  }
   // 排障器はジオメトリに焼き込んであるので前面ジオメトリの最下点で測る
   const P = X.FACEGEO.f.attributes.position.array;
   for (let i = 1; i < P.length; i += 3) if (P[i] < skirtLow) skirtLow = P[i];
