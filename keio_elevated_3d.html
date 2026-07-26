@@ -424,6 +424,13 @@ function railY(x){
   if(x<RAMP_G)return RAIL_H-(RAIL_H-.8)*sstep((x-RAMP_T)/(RAMP_G-RAMP_T));
   return .8;
 }
+// 軌間(ゲージ)。京王線は1372mm(馬車軌間)。レールの内面間距離がこれに等しい。
+// 軌道の敷設(track)も車両の車輪位置も、必ずこの定数から導く(両者がずれないように)。
+const GAUGE=1.372;                       // レール内面間距離[m]
+const RAIL_W=0.072;                      // レール頭部の幅[m]
+const RAIL_OFF=(GAUGE+RAIL_W)/2;         // 軌道中心からレール中心までの距離[m]=0.722
+const GAUGE_INO=1.067;                   // 京王井の頭線
+const GAUGE_SETA=1.372;                  // 東急世田谷線
 // 島式駅等で本線が外側へ振れる量[m](基準±2.0mに加算)。h/t=一定半長/緩和長(省略時112/160)
 // 笹塚=配線図準拠:本線は外側±10.1(内側±2は留置線)。代田橋/上北沢=±5.05、八幡山=通過線±8.35、仙川=±4.55
 const BUMPS=[{c:STA[0].x,a:8.1,h:260,t:180},{c:STA[1].x,a:3.05},{c:STA[5].x,a:3.05},
@@ -756,10 +763,17 @@ CUR=null;
 /* ============ 6. 軌道・架線・交差鉄道・地上線/仮線 ============ */
 function track(x0,x1,zf,yf){
   strip(x0,x1,10,x=>[x,yf(x)-.12,zf(x)-1.5],x=>[x,yf(x)-.12,zf(x)+1.5],MAT.slab);
-  for(const o of[-.72,.72])
-    strip(x0,x1,10,x=>[x,yf(x)+.06,zf(x)+o-.09],x=>[x,yf(x)+.06,zf(x)+o+.09],MAT.rail);
+  for(const o of[-RAIL_OFF,RAIL_OFF])   // レール:内面間=GAUGE(1372mm)になる位置に置く
+    strip(x0,x1,10,x=>[x,yf(x)+.06,zf(x)+o-RAIL_W/2],x=>[x,yf(x)+.06,zf(x)+o+RAIL_W/2],MAT.rail);
 }
-const zDown=x=>-mainOff(x), zUp=x=>mainOff(x);
+const zDown=x=>-mainOff(x), zUp=x=>mainOff(x);       // 本線(八幡山では外側の通過線)
+// 八幡山は島式ホームの外側に通過線がある。停車する列車はホーム横の停車線(内側)を走る。
+// mainOff は八幡山で外側へ振れるので、停車列車の走行位置だけ内側へ寄せ直す。
+const HACHI_C=STA[6].x;
+const hachiT=x=>plateau(x,HACHI_C,118,150);
+const hachiStopOff=x=>2.0+2.55*hachiT(x);           // 停車線(6章で敷設しているものと同一)
+function runOff(x){const w=hachiT(x);return mainOff(x)*(1-w)+hachiStopOff(x)*w;}
+const zRunDown=x=>-runOff(x), zRunUp=x=>runOff(x);  // 停車列車・運転モードが走る位置
 // 架線:ちょう架線(架線柱スパンで垂れる)+トロリ線(その真下)+ハンガー。
 // 吊り点(垂れが0になる点)を架線柱の真下に一致させるため、柱位置 poleXs を基準にする。
 function wires(r0,r1,zf){
@@ -849,8 +863,9 @@ function xMk(g,u0,u1,off,w,mat,y,h){
   m.position.set((u0+u1)/2,y,off);g.add(m);}
 { // 京王井の頭線(複線・掘割擁壁・渋谷寄り=南側へ移設したホーム)。ローカルu+=a点側(北)
   const g=xGroup(INO);
+  const oI=(GAUGE_INO+RAIL_W)/2;                                        // 井の頭線は1067mm軌間
   for(const c of[-3,3]){xMk(g,-440,440,c,3.2,MAT.slab,.62,.30);          // 道床(厚みを持たせ地表と分離)
-    xMk(g,-440,440,c-.72,.18,MAT.rail,.83,.12);xMk(g,-440,440,c+.72,.18,MAT.rail,.83,.12);}
+    xMk(g,-440,440,c-oI,RAIL_W,MAT.rail,.83,.12);xMk(g,-440,440,c+oI,RAIL_W,MAT.rail,.83,.12);}
   xMk(g,-440,440,-9.4,.6,MAT.wall,.9,1.8);xMk(g,-440,440,9.4,.6,MAT.wall,.9,1.8);
   for(const c of[-3,3]){                                   // 井の頭線の架線(ちょう架線・トロリ線)
     xMk(g,-440,440,c,.05,MAT.pole,5.85,.05);xMk(g,-440,440,c,.05,MAT.pole,4.85,.05);
@@ -868,7 +883,8 @@ function xMk(g,u0,u1,off,w,mat,y,h){
 { // 東急世田谷線(単線・南=b点側から到着)
   const g=xGroup(SETA);
   xMk(g,-370,-10,0,3.0,MAT.slab,.62,.30);
-  xMk(g,-370,-10,-.72,.18,MAT.rail,.83,.12);xMk(g,-370,-10,.72,.18,MAT.rail,.83,.12);
+  const oS=(GAUGE_SETA+RAIL_W)/2;                                       // 世田谷線は1372mm軌間
+  xMk(g,-370,-10,-oS,RAIL_W,MAT.rail,.83,.12);xMk(g,-370,-10,oS,RAIL_W,MAT.rail,.83,.12);
   xMk(g,-370,-10,0,.05,MAT.pole,5.6,.05);xMk(g,-370,-10,0,.05,MAT.pole,4.75,.05);   // 世田谷線の架線
   for(let u=-360;u<-20;u+=40){xMk(g,u,u+.35,-3.4,.28,MAT.pole,2.9,5.8);
     xMk(g,u,u+.30,-1.7,.22,MAT.pole,5.7,3.4);}
@@ -940,8 +956,8 @@ for(const s of STA){
       // 分岐器の曲線は高密度サンプリング(2m刻み)で滑らかに
       const xo=(s0,s1,o1,o2)=>{const f=x=>o1+(o2-o1)*s5((x-s0)/(s1-s0));
         strip(s0,s1,2,x=>[x,railY(x)-.12,f(x)-1.5],x=>[x,railY(x)-.12,f(x)+1.5],MAT.slab);
-        for(const o of[-.72,.72])
-          strip(s0,s1,2,x=>[x,railY(x)+.06,f(x)+o-.09],x=>[x,railY(x)+.06,f(x)+o+.09],MAT.rail);
+        for(const o of[-RAIL_OFF,RAIL_OFF])
+          strip(s0,s1,2,x=>[x,railY(x)+.06,f(x)+o-RAIL_W/2],x=>[x,railY(x)+.06,f(x)+o+RAIL_W/2],MAT.rail);
         wires(s0,s1,f);};
       xo(c0+52,c0+162,10.1,2);  xo(c0+52,c0+162,2,10.1);   // 北本線⇔北留置線(110m)
       xo(c0+52,c0+162,-10.1,-2);xo(c0+52,c0+162,-2,-10.1); // 南本線⇔南留置線(110m)
@@ -1503,7 +1519,7 @@ const G_ABX =new THREE.BoxGeometry(0.40,0.30,0.26);      // 軸箱
 const G_ASP =new THREE.CylinderGeometry(0.31,0.31,0.24,16); // 空気ばね(車体直結)
 const G_WHL =new THREE.CylinderGeometry(K8.WHEEL,K8.WHEEL,0.135,26);
 const G_DISC=new THREE.CylinderGeometry(0.31,0.31,0.05,20);  // ブレーキディスク
-const G_AXL =new THREE.CylinderGeometry(0.085,0.085,1.98,12);
+const G_AXL =new THREE.CylinderGeometry(0.085,0.085,RAIL_OFF*2+0.46,12);   // 軸箱を貫く長さ
 const G_MOT =new THREE.CylinderGeometry(0.24,0.24,0.70,14);  // 主電動機
 // パンタ(菱形 PT-4201)
 const G_PBS=new THREE.BoxGeometry(2.24,0.10,1.86);
@@ -1530,10 +1546,10 @@ function addBogie(g,bx,motored,addFine){
   const xb=new THREE.Mesh(G_XBM,M_BOG); xb.position.set(bx,0.62,0); g.add(xb);
   for(const wx of [-K8.WBASE/2, K8.WBASE/2]){
     const ax=new THREE.Mesh(G_AXL,M_WHL); ax.rotation.x=Math.PI/2; ax.position.set(bx+wx,K8.WHEEL,0); g.add(ax);
-    for(const wz of [-1.06,1.06]){
+    for(const wz of [-RAIL_OFF,RAIL_OFF]){   // 車輪はレール中心の真上(軌間1372mm)
       const w=new THREE.Mesh(G_WHL,M_WHL); w.rotation.x=Math.PI/2; w.position.set(bx+wx,K8.WHEEL,wz); g.add(w);
-      const d=addFine(new THREE.Mesh(G_DISC,M_DISC)); d.rotation.x=Math.PI/2; d.position.set(bx+wx,K8.WHEEL,wz*0.68);
-      addFine(new THREE.Mesh(G_ABX,M_BOG)).position.set(bx+wx,K8.WHEEL+0.10,wz*0.86);
+      const d=addFine(new THREE.Mesh(G_DISC,M_DISC)); d.rotation.x=Math.PI/2; d.position.set(bx+wx,K8.WHEEL,wz*0.42);
+      addFine(new THREE.Mesh(G_ABX,M_BOG)).position.set(bx+wx,K8.WHEEL+0.10,wz*1.19);   // 軸箱は車輪の外側
     }
     if(motored){
       const mt=addFine(new THREE.Mesh(G_MOT,M_BOG)); mt.rotation.x=Math.PI/2;
@@ -1604,24 +1620,28 @@ function makeCar(livery,panto,cabF,cabR){
    加速=P4(3.3km/h/s), 上限=60km/h, 減速=B5(3.0km/h/s), 停車時間=25秒。
    状態機械: 'run'(駅間走行) → 'brake'(停止位置へ減速) → 'dwell'(25秒停車) → 'run' */
 const DRIVE={ACC:3.3, DEC:3.0, VMAX_KMH:60, DWELL:25};   // 自動運転パラメータ
+const DWELL_OF={'八幡山':60};   // 駅別の停車時間[秒](未記載の駅は DRIVE.DWELL)
 const trains=[];
 [[1, 300],[1, 3000],[-1, 5600]].forEach(function(a){
   const dir=a[0], xs=a[1], cars=[];
   for(let j=0;j<10;j++)cars.push(makeCar('keio',(j===1||j===7), j===0, j===9));   // 先頭部は編成の外側へ
   const reset=(dir>0)?(DOM.x0-210):(DOM.x1+210);
   // st=状態, v=速度[m/s], dwell=停車残り時間, target=次の停止位置s
-  trains.push({dir:dir, x:xs, x0:reset, v:0, st:'run', dwell:0, target:null, cars:cars});
+  trains.push({dir:dir, x:xs, x0:reset, v:0, st:'run', dwell:0, target:null, atSt:null, cars:cars});
 });
-// 進行方向の次の停止位置(駅ホーム先端-3m)を返す
+// 進行方向の次の停止位置を返す。停車時間の決定に使うので駅も一緒に持つ。
+// stopPosOf は「先頭(運転台)を着ける位置」を返すが、列車の t.x は先頭車の"中心"なので
+// 車体半長ぶん手前を目標にする。ここを取り違えると編成が車体半長だけホームからはみ出す。
 function nextStopFor(t){
   let best=null;
   for(const s of STA){
-    const sp=stopPosOf(s);
-    if(t.dir>0 && sp>t.x+1 && (best===null||sp<best)) best=sp;
-    if(t.dir<0 && sp<t.x-1 && (best===null||sp>best)) best=sp;
+    const sp=stopPosOf(s,t.dir)-t.dir*CAR_HALF;
+    if(t.dir>0 && sp>t.x+1 && (best===null||sp<best.s)) best={s:sp,st:s};
+    if(t.dir<0 && sp<t.x-1 && (best===null||sp>best.s)) best={s:sp,st:s};
   }
   return best;
 }
+function dwellOf(st){ return (st&&DWELL_OF[st.n])||DRIVE.DWELL; }
 // 1列車の自動運転を1フレーム進める
 function driveTrain(t,dt){
   const VMAX=DRIVE.VMAX_KMH/3.6;
@@ -1636,12 +1656,13 @@ function driveTrain(t,dt){
     if((t.dir>0&&t.x>DOM.x1-CAR_HALF)||(t.dir<0&&t.x<DOM.x0+CAR_HALF)){ t.x=t.x0; t.v=0; t.st='run'; t.target=null; }
     return;
   }
-  const dist=(t.target-t.x)*t.dir;          // 停止位置までの残距離[m](進行方向正)
+  const dist=(t.target.s-t.x)*t.dir;       // 停止位置までの残距離[m](進行方向正)
   const brakeDist=(t.v*t.v)/(2*DRIVE.DEC/3.6);   // 現速度から止まるのに要る距離
   if(dist<=brakeDist+0.2){                   // 減速フェーズ
     t.st='brake';
     t.v=Math.max(0, t.v-DRIVE.DEC/3.6*dt);
-    if(t.v<0.15 && dist<1.0){ t.x=t.target; t.v=0; t.st='dwell'; t.dwell=DRIVE.DWELL; }
+    if(t.v<0.15 && dist<1.0){ t.x=t.target.s; t.v=0; t.st='dwell';
+      t.dwell=dwellOf(t.target.st); t.atSt=t.target.st; }   // 停車時間は駅別(八幡山60秒)
     else t.x+=t.dir*t.v*dt;
   }else{                                     // 力行/惰行フェーズ(60km/h上限)
     t.st='run';
@@ -1680,7 +1701,7 @@ function seatCar(c,s,zf,dir){
 }
 // 編成の各車両を配置する。範囲外の車両は非表示にし、姿勢計算もスキップして軽量化。
 function placeTrain(t){
-  const zf=t.dir>0?zDown:zUp;
+  const zf=t.dir>0?zRunDown:zRunUp;   // 停車列車は八幡山で内側(停車線)へ
   for(let j=0;j<t.cars.length;j++){
     const s=t.x-t.dir*j*K8.PITCH, c=t.cars[j];
     const inside=(s>DOM.x0+CAR_HALF && s<DOM.x1-CAR_HALF);
@@ -1895,16 +1916,26 @@ function togglePanel(panel,btn,dir){
 $('navTog').onclick=()=>togglePanel($('nav'),$('navTog'),'top');
 $('toolTog').onclick=()=>togglePanel($('tools'),$('toolTog'),'right');
 
-// 次の停車駅:ホーム先端(駅中心+90m)を過ぎたら次駅へ切り替える。
-// 停止位置はホーム先端の3m手前(駅中心+87m)。
+// 停止位置は「ホームの実範囲の先端から3m手前」。駅中心から一律に測ってはいけない
+// (笹塚の既設ホームは駅中心より西へ50mずれており、これが停止位置ずれの主因だった)。
 const PLAT_HALF=105, STOP_BACK=3;   // ホーム長210m(半長105m)
-function stopPosOf(st){
-  // 停止位置=ホーム先端の3m手前。ただし笹塚は「先端から3m東」を0m起点とする特例。
-  return (st===STA[0]) ? st.x+PLAT_HALF+STOP_BACK : st.x+PLAT_HALF-STOP_BACK;
+// ホームの占める範囲[s0,s1]。描画側(7章)と必ず同じ値を使う。
+function platRange(st){
+  return (st===STA[0]) ? [st.x-155, st.x+55]        // 笹塚:既設ホーム(駅中心から西へ50m)
+                       : [st.x-PLAT_HALF, st.x+PLAT_HALF];
+}
+// 駅別の停止位置補正[m](実地確認による微調整)
+const STOP_ADJ={'笹塚':-4};
+// 進行方向ごとの停止位置。dir>0(下り)は西端に、dir<0(上り)は東端に先頭を着ける。
+// 補正は「進行方向に対して手前へ何m」なので、上りでは符号を反転する
+// (反転を忘れると上り列車だけホームからはみ出す)。
+function stopPosOf(st,dir){
+  const d=(dir||1)>0?1:-1, r=platRange(st), adj=(STOP_ADJ[st.n]||0)*d;
+  return (d>0 ? r[1]-STOP_BACK : r[0]+STOP_BACK) + adj;
 }
 function nextStop(s){
   for(const st of STA){
-    if(s <= st.x+PLAT_HALF) return {st:st, stop:stopPosOf(st)};
+    if(s <= platRange(st)[1]) return {st:st, stop:stopPosOf(st,1)};
   }
   return null;
 }
@@ -2008,7 +2039,7 @@ function loop(now){
     rideS+=(rideV/3.6)*dt;if(rideS>7950){rideS=-250;}            // 終端で笹塚方へ戻る
     // 視線=線路の接線方向(勾配も含む)。同じ軌道オフセット上の前後2点から方向を作るため、
     // 曲線でも画面中央が線路の正面を向く。
-    const off=zDown(rideS), p=frame(rideS,off);
+    const off=zRunDown(rideS), p=frame(rideS,off);
     const pa=frame(rideS-6,off), pb=frame(rideS+6,off);
     let tx=pb.x-pa.x, tz=pb.z-pa.z, ty=railY(rideS+6)-railY(rideS-6);
     const tl=Math.hypot(tx,ty,tz)||1; tx/=tl; ty/=tl; tz/=tl;
@@ -2022,7 +2053,7 @@ function loop(now){
     camera.lookAt(p.x+dx*200, railY(rideS)+EYE+dy*200, p.z+dz*200);
     cam.tx=p.x;cam.tz=p.z;
   }else if(chaseOn){   // 注視点=列車固定、視点=球面(CH)上をユーザー操作可
-    const t=trains[chaseIdx],zf=t.dir>0?zDown:zUp;
+    const t=trains[chaseIdx],zf=t.dir>0?zRunDown:zRunUp;
     const hx=t.x,ph2=frame(hx,zf(hx));
     const ty=railY(hx)+3;
     const ex=ph2.x+CH.r*Math.sin(CH.ph)*Math.cos(CH.th);
