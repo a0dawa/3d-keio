@@ -443,6 +443,15 @@ function platRange(st){
   return (st===STA[0]) ? [st.x-155, st.x+55]
                        : [st.x-PLAT_HALF, st.x+PLAT_HALF];
 }
+// 駅別の停止位置補正[m](実地確認による微調整)
+const STOP_ADJ={'笹塚':-4};
+// 進行方向ごとの停止位置(先頭=運転台を着ける位置)。
+// dir>0(下り)は西端に、dir<0(上り)は東端に着ける。補正は「進行方向に対して手前へ
+// 何m」なので上りでは符号を反転する(反転を忘れると上り列車だけホームからはみ出す)。
+function stopPosOf(st,dir){
+  const d=(dir||1)>0?1:-1, r=platRange(st), adj=(STOP_ADJ[st.n]||0)*d;
+  return (d>0 ? r[1]-STOP_BACK : r[0]+STOP_BACK) + adj;
+}
 // 駅種別ごとのホーム外縁[m](7章の PLT と同じ値。片方だけ変えないこと)
 const PLAT_EDGE={isl:3.50, hachi:3.00, side:8.10, quad:8.55, ctx:8.55, gnd:9.55};
 function platOuter(x){                     // その地点のホーム外縁(駅を外れれば0)
@@ -934,6 +943,8 @@ function textSprite(main,sub,big){
   sp.renderOrder=10;scene.add(sp);return sp;
 }
 const staLabels=[],tagLabels=[],xingLabels=[];
+// ホームドアの定義。実体は列車の諸元(扉配置・編成長)が要るので9章の後で組み立てる。
+const PSD_DEF=[];
 function tag(t,s,y,off,rd){const sp=textSprite(t,null,false);sp.scale.set(96,19,1);
   const p=frame(s,off);sp.position.set(p.x,y,p.z);
   if(rd){sp.visible=false;xingLabels.push(sp);}   // 道路系=「踏切名」トグルに連動
@@ -966,10 +977,11 @@ for(const s of STA){
     cbox(c0-105,c0+105,0,3.4,y+4.6,y+5.0,MAT.canopy);
     cbox(c0-105,c0+105,7.85,1.7,y,y+1.1,MAT.plat);
     cbox(c0-105,c0+105,7.85,2.1,y+4.6,y+5.0,MAT.canopy);
+    PSD_DEF.push({st:s,y:y,drs:[-3.2,3.2],x0:c0-103,x1:c0+103});
   }else if(s.t==='ctx'){                       // 笹塚:島式2面4線(既存)
     for(const g of[-6.05,6.05]){cbox(c0-155,c0+55,g,2.5,y,y+1.1,MAT.plat);   // 笹塚:既設210m
       cbox(c0-154,c0+54,g,2.8,y+4.9,y+5.4,MAT.canopy);}
-    for(const d of[-3.67,3.67,-8.43,8.43])cbox(c0-153,c0+53,d,.06,y+1.1,y+2.32,MAT.hdoor);
+    PSD_DEF.push({st:s,y:y,drs:[-3.67,3.67,-8.43,8.43],x0:c0-153,x1:c0+53});
     // 配線図準拠:本線=外側±10.1(BUMPS)/内側±2=新宿方から続く留置線(西端は車止め・200m収容)
     layTrack('笹塚留置線南',DOM.x0+8,c0+355,()=>-2);
     layTrack('笹塚留置線北',DOM.x0+8,c0+355,()=>2);
@@ -1002,7 +1014,7 @@ for(const s of STA){
       box(3,y+1,3,MAT.glass,c0+30,(y+1)/2,pp[0]);
       box(7,y+1,3.2,M(0xd9dbde),c0-30,(y+1)/2,pp[0]);
     }
-    for(const d of DRS)cbox(c0-103,c0+103,d,.06,y+1.1,y+2.32,MAT.hdoor);
+    PSD_DEF.push({st:s,y:y,drs:DRS,x0:c0-103,x1:c0+103});
     // 高架下駅舎+正面意匠(公式コンセプト2019の翻案)
     const hw=deckHalf(c0),hb=y-GIRDER;
     cbox(c0-23,c0+23,0,hw-1,0,hb,M(0xe9e7e2),8);
@@ -1790,6 +1802,83 @@ const parkedCars=[];
     KOUKU[3].VGn.add(c);parkedCars.push(c);}
 }
 
+/* ---- ホームドア(可動式ホーム柵) ------------------------------------------
+   開口は「列車の停止位置」と「車両の扉配置 K8.DOORX」から算出する。
+   1両4箇所×10両=40箇所。停止位置や扉配置を変えれば開口も自動で追従するので、
+   ホームドアと車両の扉がずれることが起こらない。
+   停車中(発車の3秒前まで)だけ開く。                                          */
+const PSD=[];
+const G_PSD_LEAF=new THREE.BoxGeometry(1,1.22,.07);
+const MAT_PSDL=M(0xdfe2e5);
+const PSD_OPEN=0.80;                      // 開口の半幅[m](開口1.60m)
+for(const d of PSD_DEF){
+  const st=d.st, ro=runOff(st.x);
+  for(const off of d.drs){
+    // その扉列がどの走行線に面しているか。停車列車は ±runOff を走る。
+    // (笹塚では内側が留置線、明大前などでは外側が副本線で、そちらは開かない)
+    let dir=0;
+    if(Math.abs(off+ro)<2.5) dir=1;        // 南側=下り
+    else if(Math.abs(off-ro)<2.5) dir=-1;  // 北側=上り
+    if(!dir){                              // 停車列車が来ない側は従来どおり連続した柵
+      CUR=st.kk?KOUKU[st.kk-1].VGs:null;
+      cbox(d.x0,d.x1,off,.06,d.y+1.1,d.y+2.32,MAT.hdoor);
+      continue;
+    }
+    const stop=stopPosOf(st,dir)-dir*CAR_HALF;          // 先頭車の中心
+    const open=[];
+    for(let j=0;j<10;j++){                              // 10両
+      const cs=stop-dir*j*K8.PITCH;
+      for(const dx of K8.DOORX) open.push(cs+dir*dx);   // 1両4箇所
+    }
+    open.sort((a,b)=>a-b);
+    CUR=st.kk?KOUKU[st.kk-1].VGs:null;
+    // 開口と開口の間の固定部
+    let prev=d.x0;
+    for(const c of open){
+      if(c-PSD_OPEN-prev>0.05) cbox(prev,c-PSD_OPEN,off,.06,d.y+1.1,d.y+2.32,MAT.hdoor);
+      prev=c+PSD_OPEN;
+    }
+    if(d.x1-prev>0.05) cbox(prev,d.x1,off,.06,d.y+1.1,d.y+2.32,MAT.hdoor);
+    // 扉(2枚引き)。曲線に追従させるためインスタンスで置き、開閉は行列を更新する
+    const inst=new THREE.InstancedMesh(G_PSD_LEAF,MAT_PSDL,open.length*2);
+    add(inst);
+    PSD.push({st:st,dir:dir,off:off,y:d.y+1.71,open:open,inst:inst,r:-1});
+  }
+}
+CUR=null;
+// 開度 r(0=閉/1=開)を反映する
+const _psdM=new THREE.Matrix4(),_psdQ=new THREE.Quaternion(),_psdE=new THREE.Euler(),
+      _psdV=new THREE.Vector3(),_psdS=new THREE.Vector3(PSD_OPEN,1,1);
+function setPSD(p,r){
+  let i=0;
+  for(const c of p.open){
+    for(const sg of[-1,1]){
+      const s=c+sg*(PSD_OPEN/2+PSD_OPEN*r);            // 閉=開口の内側/開=戸袋へ退避
+      const q=frame(s,p.off);
+      _psdE.set(0,-q.a,0);_psdQ.setFromEuler(_psdE);
+      _psdV.set(q.x,p.y,q.z);
+      _psdM.compose(_psdV,_psdQ,_psdS);
+      p.inst.setMatrixAt(i++,_psdM);
+    }
+  }
+  p.inst.instanceMatrix.needsUpdate=true;
+  p.r=r;
+}
+for(const p of PSD) setPSD(p,0);
+// 毎フレームの開閉。停車中(発車3秒前まで)だけ開く。
+function stepPSD(dt){
+  for(const p of PSD){
+    let want=0;
+    for(const t of trains){
+      if(t.dir===p.dir&&t.st==='dwell'&&t.atSt===p.st&&t.dwell>3){want=1;break;}
+    }
+    if(p.r===want) continue;                           // 開き切り/閉じ切りなら何もしない
+    let nr=p.r+(want-p.r)*Math.min(1,dt*3.5);          // 約0.9秒で開閉
+    if(Math.abs(want-nr)<0.005) nr=want;               // 端で止め切る(半開きのまま残らないように)
+    setPSD(p,nr);
+  }
+}
+
 /* ============ 10. カメラ・運転モード・列車追尾 ============ */
 const pA0=frame(300,0),pB0=frame(7100,0);
 // 初期視点=公式平面図と同じ「北が上・新宿方(笹塚)が右」。
@@ -1979,18 +2068,8 @@ function togglePanel(panel,btn,dir){
 $('navTog').onclick=()=>togglePanel($('nav'),$('navTog'),'top');
 $('toolTog').onclick=()=>togglePanel($('tools'),$('toolTog'),'right');
 
-// 停止位置は「ホームの実範囲(platRange:2b章)の先端から3m手前」。
-// 駅中心から一律に測ってはいけない(笹塚の既設ホームは駅中心より西へ50mずれており、
-// これが停止位置ずれの主因だった)。
-// 駅別の停止位置補正[m](実地確認による微調整)
-const STOP_ADJ={'笹塚':-4};
-// 進行方向ごとの停止位置。dir>0(下り)は西端に、dir<0(上り)は東端に先頭を着ける。
-// 補正は「進行方向に対して手前へ何m」なので、上りでは符号を反転する
-// (反転を忘れると上り列車だけホームからはみ出す)。
-function stopPosOf(st,dir){
-  const d=(dir||1)>0?1:-1, r=platRange(st), adj=(STOP_ADJ[st.n]||0)*d;
-  return (d>0 ? r[1]-STOP_BACK : r[0]+STOP_BACK) + adj;
-}
+// 停止位置 stopPosOf / ホーム範囲 platRange は 2b章で定義している
+// (ホームドアの開口位置の算出にも使うため)。
 function nextStop(s){
   for(const st of STA){
     if(s <= platRange(st)[1]) return {st:st, stop:stopPosOf(st,1)};
@@ -2072,6 +2151,7 @@ function loop(now){
       driveTrain(t,dt);   // 各駅停車の自動運転(加速P4/60km/h上限/減速B5/停車25秒)
       placeTrain(t);
     }
+    stepPSD(dt);          // ホームドア:停車中(発車3秒前まで)だけ開く
     inoZ+=inoDir*13*dt;if(inoZ>430||inoZ<-430)inoDir*=-1;
     for(let j=0;j<inoCars.length;j++){
       const u=inoZ-inoDir*j*20;   // 井の頭線の実測軸に沿って走行
