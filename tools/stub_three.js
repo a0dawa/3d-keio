@@ -51,6 +51,31 @@ class Obj3D {
 }
 class Group extends Obj3D {}
 class Mesh extends Obj3D { constructor(g, mat) { super(); this.geometry = g; this.material = mat; } }
+// 位置と拡大率だけを記録する Matrix4。インスタンスの配置を後から測れるようにする。
+class M4 {
+  constructor() { this.p = null; this.s = null; return soft(this); }
+  compose(pos, q, sc) {
+    this.p = { x: pos.x, y: pos.y, z: pos.z };
+    this.s = { x: sc.x, y: sc.y, z: sc.z };
+    return this;
+  }
+  makeBasis() { return this; }
+  identity() { return this; }
+}
+// InstancedMesh:setMatrixAt で渡された配置を配列 mats に保持する
+class Inst extends Mesh {
+  constructor(g, mat, n) {
+    super(g, mat);
+    this.count = n; this.mats = [];
+    this.instanceMatrix = soft({ needsUpdate: false });
+    return soft(this);
+  }
+  setMatrixAt(i, m) {
+    this.mats[i] = (m && m.p) ? { p: { x: m.p.x, y: m.p.y, z: m.p.z },
+                                  s: m.s ? { x: m.s.x, y: m.s.y, z: m.s.z } : null } : null;
+  }
+  getMatrixAt() {}
+}
 class Attr {
   constructor(a, is) { this.array = a; this.itemSize = is; this.count = a.length / is; return soft(this); }
 }
@@ -69,6 +94,7 @@ const Mat = (type) => class {
 };
 const REAL = {
   Vector3: V3, Object3D: Obj3D, Group, Mesh, BufferGeometry: BufGeo,
+  Matrix4: M4, InstancedMesh: Inst,
   Float32BufferAttribute: Attr, BufferAttribute: Attr,
   BoxGeometry: param('Box'), CylinderGeometry: param('Cyl'), PlaneGeometry: param('Plane'),
   SphereGeometry: param('Sph'), ConeGeometry: param('Cone'), CircleGeometry: param('Cir'),
