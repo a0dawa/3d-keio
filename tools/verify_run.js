@@ -9,7 +9,8 @@ const path = process.argv[2] || 'keio_elevated_3d.html';
 const X = require('./stub_three')(path,
   'STA:STA,platRange:platRange,stopPosOf:stopPosOf,nextStopFor:nextStopFor,' +
   'driveTrain:driveTrain,DRIVE:DRIVE,DWELL_OF:DWELL_OF,CAR_HALF:CAR_HALF,K8:K8,' +
-  'mainOff:mainOff,runOff:runOff,DOM:DOM,STOP_BACK:STOP_BACK');
+  'mainOff:mainOff,runOff:runOff,DOM:DOM,STOP_BACK:STOP_BACK,' +
+  'PSD:PSD,stepPSD:stepPSD,trains:trains');
 
 /* ---- 期待値(検証側が独立して持つ) ---------------------------------------- */
 const REF = {
@@ -111,6 +112,74 @@ ok('上限速度を超えない', vmax <= REF.VMAX_KMH + 0.5, '≤' + REF.VMAX_K
   // 駅から離れれば本線に戻る(乗り移りが局所的であること)
   const far = Math.abs(X.runOff(hx + 400) - X.mainOff(hx + 400));
   ok('駅を離れると本線へ戻る', far < 0.01, '一致', far.toFixed(3) + 'm差');
+}
+
+/* ---- 6. ホームドア ------------------------------------------------------- */
+{
+  const perCar = 4, cars = REF.TRAIN_CARS;
+  // 6-1 開口数=1両4箇所×10両
+  {
+    const bad = X.PSD.filter((p) => p.open.length !== perCar * cars);
+    ok('ホームドアの開口数', bad.length === 0, perCar * cars + '箇所/列',
+      bad.length ? bad[0].st.n + ' ' + bad[0].open.length + '箇所' : '全て' + perCar * cars + '箇所');
+    ok('ホームドアの列数', X.PSD.length === X.STA.length * 2, X.STA.length * 2 + '列(全駅×上下)',
+      X.PSD.length + '列');
+  }
+  // 6-2 開口がホームの範囲に収まる
+  {
+    let bad = null;
+    for (const p of X.PSD) {
+      const r = X.platRange(p.st);
+      for (const c of p.open) {
+        if ((c < r[0] - 1 || c > r[1] + 1) && !bad) bad = [p.st.n, c.toFixed(1)];
+      }
+    }
+    ok('開口がホーム内にある', bad === null, 'はみ出しなし', bad ? bad.join(' @s=') : 'はみ出しなし');
+  }
+  // 6-3 停車した列車の扉位置と開口が一致するか(シミュレーションで実際に停めて確かめる)
+  {
+    let bad = null, checked = 0;
+    for (const dir of [1, -1]) {
+      for (const st of X.STA) {
+        const p = X.PSD.find((q) => q.st === st && q.dir === dir);
+        if (!p) continue;
+        const center = X.stopPosOf(st, dir) - dir * X.CAR_HALF;   // 先頭車の中心
+        for (let j = 0; j < cars; j++) {
+          const cs = center - dir * j * X.K8.PITCH;               // placeTrain と同じ式
+          for (const dx of X.K8.DOORX) {
+            const doorS = cs + dir * dx;
+            const hit = p.open.some((c) => Math.abs(c - doorS) < 0.05);
+            checked++;
+            if (!hit && !bad) bad = [st.n, (dir > 0 ? '下り' : '上り'), doorS.toFixed(2)];
+          }
+        }
+      }
+    }
+    ok('車両の扉と開口が一致', bad === null, checked + '箇所すべて',
+      bad ? bad.join(' ') : checked + '箇所一致');
+  }
+  // 6-4 停車中は開き、走行中は閉じる
+  {
+    const p = X.PSD.find((q) => q.dir === 1);
+    const tr = X.trains[0];
+    const save = { st: tr.st, dwell: tr.dwell, atSt: tr.atSt, dir: tr.dir };
+    // 停車させる
+    tr.dir = 1; tr.st = 'dwell'; tr.dwell = 20; tr.atSt = p.st;
+    for (let i = 0; i < 120; i++) X.stepPSD(0.05);
+    const opened = p.r;
+    // 発車直前(残り2秒)にする
+    tr.dwell = 2;
+    for (let i = 0; i < 120; i++) X.stepPSD(0.05);
+    const closing = p.r;
+    // 走行に戻す
+    tr.st = 'run'; tr.atSt = null;
+    for (let i = 0; i < 120; i++) X.stepPSD(0.05);
+    const closed = p.r;
+    Object.assign(tr, save);
+    ok('停車中に開く', opened > 0.95, '開度>0.95', opened.toFixed(3));
+    ok('発車前に閉じ始める', closing < 0.05, '開度<0.05', closing.toFixed(3));
+    ok('走行中は閉じている', closed < 0.01, '開度<0.01', closed.toFixed(3));
+  }
 }
 
 /* ---- 出力 ---- */
