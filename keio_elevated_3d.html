@@ -546,7 +546,7 @@ const M=(c,o={})=>new THREE.MeshLambertMaterial(Object.assign({color:c},o));
 const DS={side:THREE.DoubleSide};
 const MAT={
   deckNew:M(0xc9cdd2,DS), deckOld:M(0x9aa0a6,DS), pier:M(0xbfc3c8), barrier:M(0xe8eaec,DS),
-  slab:M(0x686d74,DS), rail:M(0xe6e9ee,DS), ground:M(0xbfc1c4),   // 地表=薄いグレー road:M(0x8f949a), roadMajor:M(0x7c8187),
+  slab:M(0x686d74,DS), rail:M(0xe6e9ee,DS), ground:M(0xd6e6c8),   // 地表=薄緑 road:M(0x8f949a), roadMajor:M(0x7c8187),
   roadPlan:M(0xb4b9c0), sidewalk:M(0xb9c3a6,DS), green:M(0x9cb98a), plat:M(0xc7c8c3), canopy:M(0xdfdfd8),
   hdoor:M(0xcfd2cc), pole:M(0x7b828a), wall:M(0xa8adb3), water:M(0xa9c6c2),
   ballast:M(0x9a938a,DS), sleeper:M(0x6e675f,DS), gateW:M(0xf2f3f5), gateR:M(0xd93b3b),
@@ -812,7 +812,8 @@ const HACHI_C=STA[6].x;
 const hachiT=x=>plateau(x,HACHI_C,118,150);
 const hachiStopOff=x=>2.0+2.55*hachiT(x);           // 停車線(6章で敷設しているものと同一)
 function runOff(x){const w=hachiT(x);return mainOff(x)*(1-w)+hachiStopOff(x)*w;}
-const zRunDown=x=>-runOff(x), zRunUp=x=>runOff(x);  // 停車列車・運転モードが走る位置
+const zRunDown=x=>-runOff(x), zRunUp=x=>runOff(x);  // 自動運転の"停車列車"が走る位置
+// ※運転モード(手動)は自動運転ではないので、従来どおり本線(外側の通過線)を走る
 // 架線:ちょう架線(柱間で垂れる)+トロリ線(その真下)+ハンガー(吊り線)。
 // 横位置は必ず線路と同じ zf を使う=架線は線路の真上にしか張られない。
 // 垂れが0になる吊り点は POLE_S(架線柱の位置)に一致させる=柱の真下が吊り点。
@@ -861,21 +862,31 @@ for(const K of KOUKU){
 CUR=null;
 layTrack('本線下り-西',DECK_END,DOM.x1,zDown);layTrack('本線上り-西',DECK_END,DOM.x1,zUp);
 // 副本線(2面4線):南北で帰属を分離。架線は layTrack が自動で張る。
+// 分岐が終わって本線に合流したあとまで線路を伸ばすと、本線と同じ位置に線路と架線が
+// 二重にできる(不要な線に見える)。本線から0.3m以上離れている範囲だけを敷設する。
+const LOOP_HALF=215;      // 副本線が本線と分かれている範囲[m]
+const HACHI_HALF=250;     // 八幡山停車線が本線と分かれている範囲[m]
 for(const cx of[X(5.2),X(7.0),X(9.9)]){
   const K=(cx<KOUKU[1].s1)?KOUKU[1]:(cx<KOUKU[3].s1)?KOUKU[3]:KOUKU[6];
   const zf=sgn=>x=>sgn*(2.0+8.1*plateau(x,cx,118,110));   // 分岐部を短く(遷移170m→110m)
-  CUR=K.VGa;layTrack('副本線南-'+K.no,cx-300,cx+300,zf(-1));
-  CUR=K.VGn;layTrack('副本線北-'+K.no,cx-300,cx+300,zf(1));
+  CUR=K.VGa;layTrack('副本線南-'+K.no,cx-LOOP_HALF,cx+LOOP_HALF,zf(-1));
+  CUR=K.VGn;layTrack('副本線北-'+K.no,cx-LOOP_HALF,cx+LOOP_HALF,zf(1));
 }
 { // 八幡山:ホーム横の停車線(内側)
-  const f=sgn=>x=>sgn*(2.0+2.55*plateau(x,X(8.4),118,150));
-  CUR=KOUKU[4].VGa;layTrack('八幡山停車線南',X(8.4)-300,X(8.4)+300,f(-1));
-  CUR=KOUKU[4].VGb;layTrack('八幡山停車線北',X(8.4)-300,X(8.4)+300,f(1));
+  const cx=X(8.4), f=sgn=>x=>sgn*(2.0+2.55*plateau(x,cx,118,150));
+  CUR=KOUKU[4].VGa;layTrack('八幡山停車線南',cx-HACHI_HALF,cx+HACHI_HALF,f(-1));
+  CUR=KOUKU[4].VGb;layTrack('八幡山停車線北',cx-HACHI_HALF,cx+HACHI_HALF,f(1));
 }
-// 桜上水 留置線:上り方・下り方とも2本併設(±10.1/±13.3)
+// 桜上水 留置線:上り方・下り方とも2本併設(±10.1/±13.3)。
+// ±10.1の線は副本線の延長にあたるので、副本線を敷いた範囲とは重ねない。
 CUR=KOUKU[3].VGn;
-layTrack('留置線東A',YE0e,YE1e,()=>10.1);layTrack('留置線東B',YE0e,YE1e,()=>13.3);
-layTrack('留置線西A',YW0e,YW1e,()=>10.1);layTrack('留置線西B',YW0e,YW1e,()=>13.3);
+{
+  const cx=STA[4].x;
+  layTrack('留置線東A',YE0e,Math.min(YE1e,cx-LOOP_HALF),()=>10.1);
+  layTrack('留置線西A',Math.max(YW0e,cx+LOOP_HALF),YW1e,()=>10.1);
+  layTrack('留置線東B',YE0e,YE1e,()=>13.3);
+  layTrack('留置線西B',YW0e,YW1e,()=>13.3);
+}
 CUR=null;
 // 分岐器(ポイント):転てつ機を各分岐点に配置
 {
@@ -983,8 +994,10 @@ for(const s of STA){
       cbox(c0-154,c0+54,g,2.8,y+4.9,y+5.4,MAT.canopy);}
     PSD_DEF.push({st:s,y:y,drs:[-3.67,3.67,-8.43,8.43],x0:c0-153,x1:c0+53});
     // 配線図準拠:本線=外側±10.1(BUMPS)/内側±2=新宿方から続く留置線(西端は車止め・200m収容)
-    layTrack('笹塚留置線南',DOM.x0+8,c0+355,()=>-2);
-    layTrack('笹塚留置線北',DOM.x0+8,c0+355,()=>2);
+    // 本線が±2.0のまま(=留置線と重なる)西側には敷かない
+    const yz0=Math.max(DOM.x0+8, c0-415);
+    layTrack('笹塚留置線南',yz0,c0+355,()=>-2);
+    layTrack('笹塚留置線北',yz0,c0+355,()=>2);
     box(1.4,1.4,3.2,M(0x8a4a42),c0+355,railY(c0+355)+.7,-2);   // 車止め(南留置線・西端355m)
     box(1.4,1.4,3.2,M(0x8a4a42),c0+355,railY(c0+355)+.7, 2);   // 車止め(北留置線)
     { // 両渡り分岐器×3:1組=50m。5次スムーズステップ(加加速度連続)で最も滑らかなS字に
@@ -2177,7 +2190,7 @@ function loop(now){
     rideS+=(rideV/3.6)*dt;if(rideS>7950){rideS=-250;}            // 終端で笹塚方へ戻る
     // 視線=線路の接線方向(勾配も含む)。同じ軌道オフセット上の前後2点から方向を作るため、
     // 曲線でも画面中央が線路の正面を向く。
-    const off=zRunDown(rideS), p=frame(rideS,off);
+    const off=zDown(rideS), p=frame(rideS,off);   // 運転モードは本線(八幡山では外側の通過線)
     const pa=frame(rideS-6,off), pb=frame(rideS+6,off);
     let tx=pb.x-pa.x, tz=pb.z-pa.z, ty=railY(rideS+6)-railY(rideS-6);
     const tl=Math.hypot(tx,ty,tz)||1; tx/=tl; ty/=tl; tz/=tl;

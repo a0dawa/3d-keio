@@ -106,6 +106,28 @@ if (X.TRACKS && X.WIRES) {
     ok('架線とビームの高さ関係', good, 'トロリ<ちょう架<下弦<上弦',
       [X.WIRE_TRO, X.WIRE_CAT, X.BEAM_LOW, X.POLE_TOP].map((v) => v.toFixed(2)).join(' < '));
   }
+  // 2-6 同じ場所に線路(と架線)が二重に敷かれていないこと
+  //     副本線や留置線を分岐の終わりより先まで伸ばすと、本線と同じ位置に架線が重なり
+  //     「不要な線」として見える。実際にこの検査で12組の重複を検出・除去した。
+  {
+    const T = X.TRACKS;
+    let worst = null, pairs = 0;
+    for (let i = 0; i < T.length; i++) {
+      for (let j = i + 1; j < T.length; j++) {
+        const a = T[i], b = T[j];
+        const lo = Math.max(a.x0, b.x0), hi = Math.min(a.x1, b.x1);
+        if (hi - lo < 20) continue;
+        let run = 0, best = 0;
+        for (let s = lo; s <= hi; s += 5) {
+          if (Math.abs(a.zf(s) - b.zf(s)) < 0.15) { run += 5; if (run > best) best = run; }
+          else run = 0;
+        }
+        if (best >= 20) { pairs++; if (!worst || best > worst[2]) worst = [a.id, b.id, best]; }
+      }
+    }
+    ok('線路と架線が重複しない', pairs === 0, '重複0組',
+      pairs ? pairs + '組 (' + worst[0] + '⇔' + worst[1] + ' ' + worst[2] + 'm)' : '重複0組');
+  }
   rows.push(['架線柱の本数', '-', X.POLE_S.length + '本', 'OK']);
   rows.push(['敷設した線路', '-', X.TRACKS.length + '本', 'OK']);
 } else {
