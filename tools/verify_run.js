@@ -10,7 +10,7 @@ const X = require('./stub_three')(path,
   'STA:STA,platRange:platRange,stopPosOf:stopPosOf,nextStopFor:nextStopFor,' +
   'driveTrain:driveTrain,DRIVE:DRIVE,DWELL_OF:DWELL_OF,CAR_HALF:CAR_HALF,K8:K8,' +
   'mainOff:mainOff,runOff:runOff,DOM:DOM,STOP_BACK:STOP_BACK,' +
-  'PSD:PSD,stepPSD:stepPSD,trains:trains');
+  'PSD:PSD,stepPSD:stepPSD,trains:trains,stepCarDoors:stepCarDoors,setCarDoors:setCarDoors');
 
 /* ---- 期待値(検証側が独立して持つ) ---------------------------------------- */
 const REF = {
@@ -179,6 +179,50 @@ ok('上限速度を超えない', vmax <= REF.VMAX_KMH + 0.5, '≤' + REF.VMAX_K
     ok('停車中に開く', opened > 0.95, '開度>0.95', opened.toFixed(3));
     ok('発車前に閉じ始める', closing < 0.05, '開度<0.05', closing.toFixed(3));
     ok('走行中は閉じている', closed < 0.01, '開度<0.01', closed.toFixed(3));
+  }
+}
+
+/* ---- 7. 客用扉(車両側) --------------------------------------------------- */
+{
+  const tr = X.trains[0];
+  const p = X.PSD.find((q) => q.dir === tr.dir);
+  const save = { st: tr.st, dwell: tr.dwell, atSt: tr.atSt, dr: tr.dr };
+  // 7-1 停車中にホーム側だけ開く
+  tr.st = 'dwell'; tr.dwell = 20; tr.atSt = p.st;
+  for (let i = 0; i < 150; i++) X.stepCarDoors(tr, 0.05);
+  const opened = tr.dr, side = tr.dside;
+  tr.st = 'run'; tr.atSt = null;
+  for (let i = 0; i < 150; i++) X.stepCarDoors(tr, 0.05);
+  const closed = tr.dr;
+  Object.assign(tr, save);
+  ok('停車中に客用扉が開く', opened > 0.98, '開度>0.98', opened.toFixed(3));
+  ok('走行中は客用扉が閉じる', closed < 0.01, '開度<0.01', closed.toFixed(3));
+  ok('開くのはホーム側だけ', side === p.side, 'ホーム側(' + p.side + ')', String(side));
+  // 7-2 全ての駅・方向でホーム側の判定が付いているか
+  {
+    const bad = X.PSD.filter((q) => q.side !== 1 && q.side !== -1);
+    ok('全扉列でホーム側が定まる', bad.length === 0, '20列すべて',
+      bad.length ? bad[0].st.n + ' 未定' : '20列すべて');
+  }
+  // 7-3 各車両に16枚(4箇所×2枚×左右)の扉があるか
+  {
+    const c = X.trains[0].cars[0];
+    const n = c.userData.doors ? c.userData.doors.inst.count : 0;
+    ok('1両あたりの扉の枚数', n === 16, '16枚(4箇所×2枚×左右)', n + '枚');
+  }
+  // 7-4 開いたとき、ホーム側の扉だけが実際に動いているか(配置行列を測る)
+  {
+    const c = X.trains[0].cars[0];
+    X.setCarDoors(c, 0, 1);
+    const closed = c.userData.doors.inst.mats.map((m) => m.p.x);
+    X.setCarDoors(c, 1, 1);
+    const open = c.userData.doors.inst.mats.map((m) => m.p.x);
+    const move = open.map((v, i) => Math.abs(v - closed[i]));
+    const nearSide = move.slice(0, 8), farSide = move.slice(8);
+    const slid = nearSide.every((v) => v > 0.3), still = farSide.every((v) => v < 1e-9);
+    ok('ホーム側の扉が動く', slid, '8枚とも移動', nearSide.filter((v) => v > 0.3).length + '/8枚');
+    ok('反対側の扉は動かない', still, '8枚とも静止', farSide.filter((v) => v < 1e-9).length + '/8枚');
+    X.setCarDoors(c, 0, 1);
   }
 }
 

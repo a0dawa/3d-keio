@@ -1497,13 +1497,10 @@ function buildTrimGeo(cabF,cabR){
   const hwAt=x=>shapeAt(x,cabF,cabR).hw;      // その位置の車体半幅(先頭部の絞りを含む)
   for(const sz of [1,-1]){
     const zo=o=>(x=>sz*(hwAt(x)+o));          // 車体表面から o だけ浮かせた面
-    // 客用扉(戸当りを挟んだ2枚引戸)+扉窓
-    for(const dx of K8.DOORX){
-      const a=dx-K8.DOORW/2, b=dx+K8.DOORW/2;
-      sidePanel(P,C,I,a,b,K8.FLOOR+0.06,K8.SHLD-0.10,zo(OUT),'door');
-      sidePanel(P,C,I,dx-0.012,dx+0.012,K8.FLOOR+0.06,K8.SHLD-0.10,zo(OUT*1.6),'dark');
-      sideWindow(P,C,I,a+0.15,b-0.15,WIN.B-0.16,WIN.T-0.05,zo(OUT*2),zo(OUT*1.5));
-    }
+    // 客用扉の"開口"(戸袋の奥)。扉そのものは開閉するので別メッシュ(9-10節)。
+    // 扉が開いたときにここが見える。
+    for(const dx of K8.DOORX)
+      sidePanel(P,C,I,dx-K8.DOORW/2,dx+K8.DOORW/2,K8.FLOOR+0.06,K8.SHLD-0.10,zo(-0.02),'dark');
     // 客用窓(扉配置から自動生成)
     for(const w of sideWindows(cabF,cabR))
       sideWindow(P,C,I,w[0],w[1],WIN.B,WIN.T,zo(OUT),zo(OUT*0.5));
@@ -1560,6 +1557,44 @@ function buildFaceGeo(sgn){
   g.setAttribute('color',new THREE.Float32BufferAttribute(C,3));
   g.setIndex(I); g.computeVertexNormals();
   return g;
+}
+
+/* ---- 9-7b. 客用扉(2枚引戸。停車中にホーム側だけ開く) ------------------------
+   扉は車体トリムから分離し、片開き1枚を1つのジオメトリにして
+   4箇所×2枚×左右2面=16枚をインスタンスで配置する。開閉は行列の更新だけで済む。 */
+const DOOR_HW=K8.DOORW/4;       // 片開き1枚の半幅[m]
+const DOOR_SLIDE=0.62;          // 開いたときの移動量[m]
+const G_DOORLEAF=(function(){
+  const P=[],C=[],I=[];
+  const z0=()=>0, z1=()=>0.006, z2=()=>0.003;
+  sidePanel(P,C,I,-DOOR_HW,DOOR_HW,K8.FLOOR+0.06,K8.SHLD-0.10,z0,'door');
+  sideWindow(P,C,I,-DOOR_HW+0.07,DOOR_HW-0.07,WIN.B-0.16,WIN.T-0.05,z1,z2);
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.Float32BufferAttribute(P,3));
+  g.setAttribute('color',new THREE.Float32BufferAttribute(C,3));
+  g.setIndex(I); g.computeVertexNormals();
+  return g;
+})();
+const _drM=new THREE.Matrix4(),_drQ=new THREE.Quaternion(),
+      _drP=new THREE.Vector3(),_drS=new THREE.Vector3(1,1,1);
+// 開度 r(0=閉/1=開)を反映する。side は開ける面(車体ローカルzの符号)。
+function setCarDoors(c,r,side){
+  const d=c.userData&&c.userData.doors;
+  if(!d) return;
+  const zf=K8.W/2+OUT*3;
+  let i=0;
+  for(const sz of [1,-1]){
+    const op=(sz===side)?r:0;                    // 開くのはホームに面した側だけ
+    for(const dx of K8.DOORX){
+      for(const sg of [-1,1]){
+        _drP.set(dx+sg*(DOOR_HW+DOOR_SLIDE*op), 0, sz*zf);
+        _drM.compose(_drP,_drQ,_drS);
+        d.inst.setMatrixAt(i++,_drM);
+      }
+    }
+  }
+  d.inst.instanceMatrix.needsUpdate=true;
+  d.r=r; d.side=side;
 }
 
 /* ---- 9-8. ジオメトリのLODと材質 -------------------------------------------- */
@@ -1655,6 +1690,12 @@ function makeCar(livery,panto,cabF,cabR){
   const addFine=m=>{ g.add(m); fine.push(m); return m; };
   if(cabF) g.add(new THREE.Mesh(FACEGEO.f,TRIMMAT));
   if(cabR) g.add(new THREE.Mesh(FACEGEO.r,TRIMMAT));
+  {                                    // 客用扉(4箇所×2枚×左右2面=16枚)
+    const inst=new THREE.InstancedMesh(G_DOORLEAF,TRIMMAT,K8.DOORX.length*4);
+    g.add(inst);
+    g.userData.doors={inst:inst,r:-1,side:1};
+    setCarDoors(g,0,1);
+  }
   // 屋根上:集中式冷房1基+前後のダクトカバー
   const ac=new THREE.Mesh(G_AC,M_AC);  ac.position.set(0,K8.ROOF+0.14,0); g.add(ac);
   const al=new THREE.Mesh(G_ACL,M_ACL);al.position.set(0,K8.ROOF+0.33,0); addFine(al);
@@ -1844,6 +1885,11 @@ for(const d of PSD_DEF){
       for(const dx of K8.DOORX) open.push(cs+dir*dx);   // 1両4箇所
     }
     open.sort((a,b)=>a-b);
+    // その扉列から見て、列車のどちらの面がホーム側か。
+    // 軌道より内側(off>軌道)ならワールドの+off側。車体ローカルzは
+    // 下り(dir>0)で -off 方向、上り(dir<0)で +off 方向を向くので符号を反転する。
+    const trackOff=dir>0?-ro:ro;
+    const side=(off>trackOff?1:-1)*(dir>0?-1:1);
     CUR=st.kk?KOUKU[st.kk-1].VGs:null;
     // 開口と開口の間の固定部
     let prev=d.x0;
@@ -1855,7 +1901,7 @@ for(const d of PSD_DEF){
     // 扉(2枚引き)。曲線に追従させるためインスタンスで置き、開閉は行列を更新する
     const inst=new THREE.InstancedMesh(G_PSD_LEAF,MAT_PSDL,open.length*2);
     add(inst);
-    PSD.push({st:st,dir:dir,off:off,y:d.y+1.71,open:open,inst:inst,r:-1});
+    PSD.push({st:st,dir:dir,off:off,side:side,y:d.y+1.71,open:open,inst:inst,r:-1});
   }
 }
 CUR=null;
@@ -1878,6 +1924,18 @@ function setPSD(p,r){
   p.r=r;
 }
 for(const p of PSD) setPSD(p,0);
+// 列車の客用扉:停車中(発車3秒前まで)、ホームに面した側だけ開く。
+// どちらの面がホーム側かは、その駅・その方向のホームドア(PSD)の位置から決まる。
+function stepCarDoors(t,dt){
+  const p=(t.st==='dwell'&&t.atSt)?PSD.find(q=>q.st===t.atSt&&q.dir===t.dir):null;
+  const want=(p&&t.dwell>3)?1:0, side=p?p.side:1;
+  if(t.dr===undefined){t.dr=0;t.dside=1;}
+  if(t.dr===want&&t.dside===side) return;
+  let nr=t.dr+(want-t.dr)*Math.min(1,dt*3.0);    // 約1秒で開閉
+  if(Math.abs(want-nr)<0.005) nr=want;           // 端で止め切る(半開きのまま残らないように)
+  t.dr=nr; t.dside=side;
+  for(const c of t.cars) setCarDoors(c,nr,side);
+}
 // 毎フレームの開閉。停車中(発車3秒前まで)だけ開く。
 function stepPSD(dt){
   for(const p of PSD){
@@ -2163,6 +2221,7 @@ function loop(now){
     for(const t of trains){
       driveTrain(t,dt);   // 各駅停車の自動運転(加速P4/60km/h上限/減速B5/停車25秒)
       placeTrain(t);
+      stepCarDoors(t,dt); // 客用扉:停車中はホーム側だけ開く
     }
     stepPSD(dt);          // ホームドア:停車中(発車3秒前まで)だけ開く
     inoZ+=inoDir*13*dt;if(inoZ>430||inoZ<-430)inoDir*=-1;
