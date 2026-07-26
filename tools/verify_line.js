@@ -12,7 +12,9 @@ const X = require('./stub_three')(path,
   'poleXs:poleXs,poleOff:poleOff,poleStep:poleStep,STA:STA,DOM:DOM,DECK_END:DECK_END,' +
   'DECK_MIN:DECK_MIN,railY:railY,platRange:platRange,PLAT_EDGE:PLAT_EDGE,' +
   'TRACKS:(typeof TRACKS!=="undefined"?TRACKS:null),' +
-  'WIRES:(typeof WIRES!=="undefined"?WIRES:null)');
+  'WIRES:(typeof WIRES!=="undefined"?WIRES:null),' +
+  'POLE_S:(typeof POLE_S!=="undefined"?POLE_S:[]),' +
+  'WIRE_CAT:WIRE_CAT,WIRE_TRO:WIRE_TRO,BEAM_LOW:BEAM_LOW,POLE_TOP:POLE_TOP');
 
 /* ---- 設計上の要件(検証側が独立して持つ) ---------------------------------- */
 const REQ = {
@@ -94,10 +96,18 @@ if (X.TRACKS && X.WIRES) {
       const w = X.WIRES.find((q) => q.id === t.id);
       if (!w) continue;
       const gap = Math.max(w.x0 - t.x0, t.x1 - w.x1);
-      if (gap > 30 && (!bad || gap > bad[1])) bad = [t.id, gap];
+      if (gap > 1 && (!bad || gap > bad[1])) bad = [t.id, gap];
     }
-    ok('架線が線路の全長を覆う', bad === null, '未架設≤30m', bad ? bad[0] + ' ' + bad[1].toFixed(0) + 'm' : '全線を覆う');
+    ok('架線が線路の全長を覆う', bad === null, '未架設≤1m', bad ? bad[0] + ' ' + bad[1].toFixed(0) + 'm' : '全長を覆う');
   }
+  // 2-5 架線の高さの順序:トロリ線 < ちょう架線 < ビーム下弦(部材と干渉しない)
+  {
+    const good = X.WIRE_TRO < X.WIRE_CAT && X.WIRE_CAT < X.BEAM_LOW && X.BEAM_LOW < X.POLE_TOP;
+    ok('架線とビームの高さ関係', good, 'トロリ<ちょう架<下弦<上弦',
+      [X.WIRE_TRO, X.WIRE_CAT, X.BEAM_LOW, X.POLE_TOP].map((v) => v.toFixed(2)).join(' < '));
+  }
+  rows.push(['架線柱の本数', '-', X.POLE_S.length + '本', 'OK']);
+  rows.push(['敷設した線路', '-', X.TRACKS.length + '本', 'OK']);
 } else {
   rows.push(['架線の検査', 'TRACKS/WIRES', '未登録(スキップ)', '--']);
 }
