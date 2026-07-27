@@ -14,7 +14,9 @@ const X = require('./stub_three')(path,
   'sideWindows:sideWindows,DOOR_HW:DOOR_HW,DOOR_SLIDE:DOOR_SLIDE,frame:frame,PLATS:PLATS,' +
   'TRACKS:TRACKS,' +
   'atcLimit:atcLimit,stepRide:stepRide,ATC:ATC,NOTCHES:NOTCHES,NIDX_B7:NIDX_B7,' +
-  'setRideState:setRideState,getRideState:getRideState');
+  'setRideState:setRideState,getRideState:getRideState,setNotch:setNotch,NIDX_N:NIDX_N,' +
+  'NOTCH_LAG:NOTCH_LAG,ATC_DISP_STEP:ATC_DISP_STEP,ATC_DISP_LAG:ATC_DISP_LAG,' +
+  'DOOR_LAMP_SEC:DOOR_LAMP_SEC,DOOR_STOP_TOL:DOOR_STOP_TOL,stopPosOf:stopPosOf');
 
 /* ---- 期待値(検証側が独立して持つ) ---------------------------------------- */
 const REF = {
@@ -38,6 +40,11 @@ const REF = {
   // 保安装置(指示):600m先=120km/h まで / 20m先=0km/h まで、間はなめらか
   ATC_FAR: 600, ATC_NEAR: 20, ATC_VFAR: 120,
   ATC_BRAKE: 'B7',         // 介入時に使う制動段
+  ATC_DISP_STEP: 5,        // ATCの表示は5km/h刻み(表示のみ)
+  ATC_DISP_LAG: 10,        // ATCの表示は10秒遅れ(表示のみ)
+  NOTCH_LAG: 1.0,          // 力行・制動の応答遅れ[秒]
+  DOOR_LAMP_SEC: 25,       // 戸閉灯の点灯時間[秒]
+  DOOR_STOP_TOL: 1.0,      // 停車と見なす停止位置からのずれ[m]
 };
 
 const rows = [];
@@ -465,6 +472,88 @@ ok('上限速度を超えない', vmax <= REF.VMAX_KMH + 0.5, '≤' + REF.VMAX_K
     ok('介入に使う制動段', nb && nb.s === REF.ATC_BRAKE, REF.ATC_BRAKE, nb ? nb.s : '不明');
   }
   for (let i = 0; i < T.length; i++) Object.assign(T[i], save[i]);
+}
+
+/* ---- 9. 運転モードの表示と戸閉灯 ------------------------------------------ */
+{
+  ok('マスコンの応答遅れ', Math.abs(X.NOTCH_LAG - REF.NOTCH_LAG) < 1e-9,
+    REF.NOTCH_LAG + '秒', X.NOTCH_LAG + '秒');
+  ok('ATC表示の刻み', X.ATC_DISP_STEP === REF.ATC_DISP_STEP,
+    REF.ATC_DISP_STEP + 'km/h刻み', X.ATC_DISP_STEP + 'km/h刻み');
+
+  const T = X.trains;
+  const save = T.map((t) => ({ x: t.x, dir: t.dir, st: t.st, atSt: t.atSt }));
+  for (const t of T) { t.dir = 1; t.x = X.DOM.x1 - 5; t.st = 'run'; t.atSt = null; }
+  const lead = T[0];
+  const rearOf = (t) => t.x - (t.cars.length - 1) * X.K8.PITCH - X.K8.LEN / 2;
+
+  // 9-1 ATCの表示は10秒遅れ(制御は瞬時値)
+  {
+    const s0 = 2000;
+    X.setRideState({ on: true, s: s0, v: 0, notch: X.NIDX_N, acc: 0, reset: true });
+    for (let i = 0; i < 240; i++) X.stepRide(0.05);          // 12秒:前方に列車なし
+    const before = X.getRideState();
+    lead.x = s0 + 300 + (lead.x - rearOf(lead));             // 300m先に列車を出す
+    // ※「null なら未取得」で判定すると、null が続く間ずっと上書きしてしまう。
+    //   取得済みかどうかは別のフラグで持つ。
+    let at5 = null, at12 = null, got5 = false, got12 = false, t = 0;
+    for (let i = 0; i < 300; i++) {
+      X.stepRide(0.05); t += 0.05;
+      if (!got5 && t >= 5) { at5 = X.getRideState().disp; got5 = true; }
+      if (!got12 && t >= 12) { at12 = X.getRideState().disp; got12 = true; }
+    }
+    const now = X.getRideState();
+    ok('ATC表示は前方が空なら制限なし', before.disp === null, '—',
+      before.disp === null ? '—' : before.disp.toFixed(0));
+    ok('ATC表示は10秒遅れる', at5 === null && at12 !== null,
+      REF.ATC_DISP_LAG + '秒後に出る',
+      '5秒後=' + (at5 === null ? '—' : at5.toFixed(0)) + ' / 12秒後=' +
+      (at12 === null ? '—' : at12.toFixed(0)));
+    ok('ATCの制御は瞬時値', now.lim !== null, '即座に制限',
+      now.lim === null ? '制限なし' : now.lim.toFixed(0) + 'km/h');
+  }
+  for (const t of T) { t.x = X.DOM.x1 - 5; }
+
+  // 9-2 戸閉灯:停止位置の前後1m以内で停止したら25秒点灯し、ホームドアが開く
+  {
+    const st = X.STA.find((z) => z.n === '代田橋');
+    const sp = X.stopPosOf(st, 1);
+    X.setRideState({ on: true, s: sp, v: 0, notch: X.NIDX_N, acc: 0, reset: true });
+    X.stepRide(0.05);
+    const a = X.getRideState();
+    ok('停車で戸閉灯が点く', a.lamp > 0 && a.lampSt === st, REF.DOOR_LAMP_SEC + '秒点灯',
+      a.lamp > 0 ? a.lamp.toFixed(1) + '秒 @' + (a.lampSt ? a.lampSt.n : '?') : '点かない');
+    // 点灯中は力行に入れられない
+    X.setNotch(X.NOTCHES.length - 1);
+    ok('点灯中は力行できない', X.getRideState().notch <= X.NIDX_N, 'N以下',
+      X.NOTCHES[X.getRideState().notch].s);
+    // ホームドアが開く(下り側)
+    const psd = X.PSD.find((q) => q.st === st && q.dir === 1 && q.openable);
+    for (let i = 0; i < 120; i++) X.stepPSD(0.05);
+    ok('自列車でホームドアが開く', psd.r > 0.95, '開度>0.95', psd.r.toFixed(3));
+    // 25秒で消灯し、ホームドアも閉じる
+    for (let i = 0; i < Math.ceil(REF.DOOR_LAMP_SEC / 0.05) + 40; i++) X.stepRide(0.05);
+    for (let i = 0; i < 120; i++) X.stepPSD(0.05);
+    const b = X.getRideState();
+    ok('25秒で消灯する', b.lamp === 0, '消灯', b.lamp.toFixed(1) + '秒');
+    ok('消灯でホームドアも閉じる', psd.r < 0.05, '開度<0.05', psd.r.toFixed(3));
+    X.setNotch(X.NIDX_N);
+    ok('消灯後は力行できる', (X.setNotch(X.NOTCHES.length - 1),
+      X.getRideState().notch === X.NOTCHES.length - 1), 'P4',
+      X.NOTCHES[X.getRideState().notch].s);
+  }
+  // 9-3 停止位置から1mより離れていれば点かない
+  {
+    const st = X.STA.find((z) => z.n === '上北沢');
+    X.setRideState({ on: true, s: X.stopPosOf(st, 1) + REF.DOOR_STOP_TOL + 0.5,
+      v: 0, notch: X.NIDX_N, acc: 0, reset: true });
+    X.stepRide(0.05);
+    ok('停止位置から外れれば点かない', X.getRideState().lamp === 0, '消灯',
+      X.getRideState().lamp.toFixed(1) + '秒');
+  }
+  X.setRideState({ on: false, reset: true });
+  for (let i = 0; i < T.length; i++) Object.assign(T[i], save[i]);
+  for (const p of X.PSD) X.stepPSD(1);
 }
 
 /* ---- 出力 ---- */

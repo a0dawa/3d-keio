@@ -97,7 +97,7 @@
   #kjStepRow button:disabled{opacity:.3;cursor:default}
   #hint{right:12px;bottom:120px;padding:7px 11px;font:10.5px/1.7 var(--mono);color:var(--dim)}
   /* 運転台(マスコン+速度計。運転モード時のみ表示) */
-  #spd{display:none;left:50%;transform:translateX(-50%);bottom:16px;padding:9px 14px;
+  #spd{display:none;left:16px;bottom:16px;padding:9px 14px;
     align-items:center;gap:12px}
   #spd.show{display:flex}
   /* 段位チップ(P4〜N〜B7・EB) */
@@ -108,6 +108,12 @@
   #spd .notch.n{background:#8a9099}      /* 中立 */
   #spd .notch.b{background:#d98a3a}      /* 制動 */
   #spd .notch.e{background:#d62828}      /* 非常 */
+  /* 戸閉灯:点灯=黄 / 消灯=黒。速度表示の左に置く */
+  #spd .dl{display:flex;flex-direction:column;align-items:center;gap:3px}
+  #spd .dl i{width:26px;height:26px;border-radius:50%;background:#14181c;
+    border:2px solid #4a5058;box-shadow:inset 0 0 4px rgba(0,0,0,.6)}
+  #spd .dl.on i{background:#f2c230;border-color:#c99b12;box-shadow:0 0 9px rgba(242,194,48,.85)}
+  #spd .dl b{font:700 9px/1 inherit;color:var(--dim)}
   #spd .v{font:700 22px var(--mono);color:var(--ink);min-width:86px;text-align:center}
   /* 次駅と停止位置までの距離 */
   #spd .nxt{display:flex;flex-direction:column;align-items:flex-start;gap:1px;min-width:96px}
@@ -149,9 +155,10 @@
 
 <div class="panel" id="spd">
   <div id="masName" class="notch">N</div>
+  <div class="dl" id="doorLamp"><i></i><b>戸閉</b></div>
   <div class="v"><span id="spdVal">0</span><i>km/h</i><b id="spdKm">—</b></div>
   <div class="nxt"><b id="nxtName">—</b><span id="nxtDist">—</span></div>
-  <div class="nxt"><b>保安装置</b><span id="atcInfo"></span></div>
+  <div class="nxt"><b>ATC</b><span id="atcInfo">—</span></div>
   <div class="ctl">
     <button id="btnUp" aria-label="制動側へ">▲<span>制動</span></button>
     <button id="btnDn" aria-label="力行側へ">▼<span>力行</span></button>
@@ -2498,8 +2505,12 @@ function stepCarDoors(t,dt){
 function stepPSD(dt){
   for(const p of PSD){
     let want=0;
-    if(p.openable) for(const t of trains){
-      if(t.dir===p.dir&&t.st==='dwell'&&t.atSt===p.st&&t.dwell>3){want=1;break;}
+    if(p.openable){
+      // 運転モードの自列車(下り線)が停車して戸閉灯が点いている間も開く
+      if(rideOn&&doorLampT>0&&doorSt===p.st&&p.dir===1) want=1;
+      else for(const t of trains){
+        if(t.dir===p.dir&&t.st==='dwell'&&t.atSt===p.st&&t.dwell>3){want=1;break;}
+      }
     }
     if(p.r===want) continue;                           // 開き切り/閉じ切りなら何もしない
     let nr=p.r+(want-p.r)*Math.min(1,dt*3.5);          // 約0.9秒で開閉
@@ -2539,6 +2550,17 @@ let notch=NIDX_N, rideV=0;
    前の列車が待避線へ入った/600mより先/エリア外/列車走行OFF なら解除。 */
 const ATC={FAR:600, NEAR:20, VFAR:120, OFFTOL:1.5};
 let atcLim=null, atcOn=false;
+// 表示は5km/h刻み・10秒遅れ(表示だけ。制御は瞬時値で行う)
+const ATC_DISP_STEP=5, ATC_DISP_LAG=10;
+const atcQ=[]; let atcClock=0, atcShown=null;
+/* 戸閉灯:駅の停止位置の前後1m以内で停止したら DOOR_LAMP_SEC 秒だけ点灯する。
+   点灯中はホームドアと客用扉が開き、マスコンの力行操作を受け付けない。 */
+const DOOR_LAMP_SEC=25, DOOR_STOP_TOL=1.0, DOOR_REARM=60;
+let doorLampT=0, doorSt=null, doorArmed=null;
+function rideStopAt(s){                      // 停止位置の前後1m以内にある駅
+  for(const st of STA) if(Math.abs(stopPosOf(st,1)-s)<=DOOR_STOP_TOL) return st;
+  return null;
+}
 function atcLimit(s){
   if(!trainsOn) return null;
   let lim=null;
@@ -2559,16 +2581,34 @@ function setRideState(o){
   if(o.s!==undefined)rideS=o.s; if(o.v!==undefined)rideV=o.v;
   if(o.notch!==undefined){notch=o.notch;cmdNotch=o.notch;}
   if(o.acc!==undefined)accEff=o.acc;
+  if(o.lamp!==undefined){doorLampT=o.lamp;doorSt=o.lampSt||null;doorArmed=o.lampSt||null;}
+  if(o.on!==undefined)rideOn=o.on;
+  if(o.reset){atcQ.length=0;atcClock=0;atcShown=null;doorLampT=0;doorSt=null;doorArmed=null;}
 }
-function getRideState(){return {s:rideS,v:rideV,notch:notch,acc:accEff,lim:atcLim,atc:atcOn};}
-// 運転モードの1ステップ(速度と位置)。保安装置の判定もここで行う。
+function getRideState(){return {s:rideS,v:rideV,notch:notch,acc:accEff,lim:atcLim,atc:atcOn,
+  lamp:doorLampT,lampSt:doorSt,disp:atcShown};}
+// 運転モードの1ステップ(速度と位置)。ATCと戸閉灯の判定もここで行う。
 function stepRide(dt){
   atcLim=atcLimit(rideS);
   atcOn=(atcLim!==null&&rideV>atcLim);
-  // 加減速の応答は一次遅れ(時定数0.75秒)。さらに速度による特性を加味する:
+  // ATCの表示だけ10秒遅らせる(待ち行列に積んで、10秒前の値を取り出す)
+  atcClock+=dt; atcQ.push({t:atcClock,v:atcLim});
+  while(atcQ.length&&atcQ[0].t<=atcClock-ATC_DISP_LAG) atcShown=atcQ.shift().v;
+  // 戸閉灯:停止位置に着いたら25秒。離れたら次の停車で再び点く
+  if(doorLampT>0){
+    doorLampT=Math.max(0,doorLampT-dt);
+    if(doorLampT===0) doorSt=null;
+  }else{
+    const st=rideStopAt(rideS);
+    if(st&&rideV<0.5&&doorArmed!==st){doorSt=st;doorLampT=DOOR_LAMP_SEC;doorArmed=st;}
+    if(doorArmed&&Math.abs(stopPosOf(doorArmed,1)-rideS)>DOOR_REARM) doorArmed=null;
+  }
+  // 加減速の応答は一次遅れ(時定数 NOTCH_LAG 秒)。さらに速度による特性を加味する:
   //   力行 : 60km/h までは設定どおり、以降は鈍化し 120km/h で半分
   //   制動 : 120km/h では75%、速度が落ちるほど強まり 60km/h 以下で設定どおり
-  const aSet=NOTCHES[atcOn?NIDX_B7:notch].a;
+  // 戸閉灯の点灯中(扉が開いている間)は力行できない
+  const nUse=atcOn?NIDX_B7:(doorLampT>0?Math.min(notch,NIDX_N):notch);
+  const aSet=NOTCHES[nUse].a;
   // 保安装置の制動は指令どおりの減速度で効く(速度による鈍化を受けない)。
   // 鈍化を受けると高速域でパターンに追従できず、頭打ちのまま接近してしまう。
   const aCmd=atcOn?aSet:aSet*accCurve(rideV,aSet);
@@ -2576,8 +2616,8 @@ function stepRide(dt){
   rideV=clamp(rideV+accEff*dt,0,VMAX);
   rideS+=(rideV/3.6)*dt; if(rideS>7950){rideS=-250;}          // 終端で笹塚方へ戻る
 }
-// マスコン操作の遊び(反応遅れ0.75秒):cmdNotch=操作値 / notch=実際に効いている段
-let cmdNotch=NIDX_N, accEff=0; const NOTCH_LAG=0.75;   // accEff=実際に効いている加速度[km/h/s]
+// マスコン操作の遊び(反応遅れ1.0秒):cmdNotch=操作値 / notch=実際に効いている段
+let cmdNotch=NIDX_N, accEff=0; const NOTCH_LAG=1.0;   // accEff=実際に効いている加速度[km/h/s]
 let chaseOn=false,chaseIdx=0;const chaseEye=new THREE.Vector3();
 const CH={th:Math.PI/2-.35,ph:.92,r:150};   // 追尾カメラの球面パラメータ(操作可能)
 function applyCam(){
@@ -2657,7 +2697,8 @@ function setRide(v){
       setXingShown(xingPrev);    bx.disabled=false;
     }
   }
-  if(v){rideV=0;notch=NIDX_N;cmdNotch=NIDX_N;accEff=0;rideYaw=0;ridePitch=0;updSpd();}
+  if(v){rideV=0;notch=NIDX_N;cmdNotch=NIDX_N;accEff=0;rideYaw=0;ridePitch=0;
+    doorLampT=0;doorSt=null;doorArmed=null;atcQ.length=0;atcShown=null;atcClock=0;updSpd();}
   $('spd').classList.toggle('show',v);if(v)updSpd();
   if(v){setChase(false);
     preRide=Object.assign({},cam);setAuto(false);fly=null;rideS=-220;}
@@ -2766,13 +2807,21 @@ function updSpd(){
     $('nxtDist').textContent='—';
   }
   const nd=NOTCHES[atcOn?NIDX_B7:cmdNotch], mn=$('masName');
-  // 保安装置が介入しているときは、操作段ではなく実際に効いている段を出す
+  // ATCが介入しているときは、操作段ではなく実際に効いている段を出す
   mn.textContent=atcOn?'B7\u00a0ATC':nd.s;   // P4 / N / B7 / EB のような短い段位表示
   mn.className='notch '+(atcOn?'e':nd.k);
   const lb=$('atcInfo');
-  if(lb) lb.textContent=(atcLim===null)?'':('ATC '+Math.round(atcLim)+' km/h');
+  // 表示は5km/h刻み・10秒遅れ(制御は瞬時値。表示だけ実機に近づける)
+  if(lb) lb.textContent=(atcShown===null)?'—'
+    :(Math.floor(atcShown/ATC_DISP_STEP)*ATC_DISP_STEP+' km/h');
+  const dl=$('doorLamp'); if(dl) dl.classList.toggle('on',doorLampT>0);
+  const bd=$('btnDn'); if(bd) bd.disabled=(doorLampT>0);   // 点灯中は力行ボタンを無効に
 }
-function setNotch(i){cmdNotch=clamp(i,0,NOTCHES.length-1);notch=cmdNotch;updSpd();}   // 操作は即時反映
+function setNotch(i){
+  i=clamp(i,0,NOTCHES.length-1);
+  if(doorLampT>0&&i>NIDX_N) i=NIDX_N;      // 戸閉灯の点灯中は力行に入れられない
+  cmdNotch=i;notch=cmdNotch;updSpd();      // 操作は即時反映
+}
 // 速度による加減速特性
 function accCurve(v,a){
   if(a>0)    return clamp(1-0.75*(v-60)/60, 0.20, 1);    // 力行:60km/h超で鈍化し120km/hで25%
