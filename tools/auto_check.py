@@ -108,17 +108,23 @@ def main():
         ng += 0 if ok else 1
         print('%-18s %14.3f %14.3f %8.3f  %s' % (k, v, mdl_val[k], d, 'OK' if ok else 'NG'))
 
-    # 側窓は[B]の実測ではなく「帯の上10cm」という関係で決まるので、式の形で確認する
-    ok = 'const WIN ={B:RED[1]+0.10+WIN_TRIM' in src
+    # 側窓は「帯の上10cm→上下30cm切詰→高さ+10%」という関係で決まる。式の形で確認する。
+    ok = ('RED[1]+0.10+WIN_TRIM' in src) and ('WIN_GROW' in src)
     ng += 0 if ok else 1
-    print('%-18s %14s %14s %8s  %s' % ('側窓の下端', '帯の上10cm+切詰',
-                                       '帯の上10cm+切詰' if ok else '別の決め方', '-',
+    print('%-18s %14s %14s %8s  %s' % ('側窓の決め方', '帯+10cm/切詰/+10%',
+                                       '帯+10cm/切詰/+10%' if ok else '別の決め方', '-',
+                                       'OK' if ok else 'NG'))
+    # 戸袋窓は幅を30%狭めて角丸にする
+    ok = ('POCKET_NARROW' in src) and ('roundWindow(' in src)
+    ng += 0 if ok else 1
+    print('%-18s %14s %14s %8s  %s' % ('戸袋窓', '幅-30%・角丸',
+                                       '幅-30%・角丸' if ok else '未対応', '-',
                                        'OK' if ok else 'NG'))
     # 前/後面の赤帯は側面よりさらに下げる。青帯は同じ高さ。
     m2 = re.search(r'const FRED_DROP=([\d.]+);', src)
-    ok = bool(m2) and abs(float(m2.group(1)) - 0.40) < 1e-9
+    ok = bool(m2) and abs(float(m2.group(1)) - 0.33) < 1e-9
     ng += 0 if ok else 1
-    print('%-18s %14s %14s %8s  %s' % ('前面の赤帯の追加下げ', '0.40m',
+    print('%-18s %14s %14s %8s  %s' % ('前面の赤帯の追加下げ', '0.33m',
                                        (m2.group(1) + 'm') if m2 else 'なし', '-',
                                        'OK' if ok else 'NG'))
     # 灯具の高さは床面から200mm
@@ -178,11 +184,18 @@ def main():
                                        '%d面' % (cb.group(1).count('strip(') if cb else 0),
                                        '-', 'OK' if ok else 'NG'))
 
-    # 戸袋の開口に帯を通していないこと(通すと扉が開いても帯が続いて見える)
-    ok = "PAL.void,PAL.void" in src
+    # 客用扉の開口は外板に"穴"を開けて奥まった戸袋にすること。
+    # 外板に穴が無いと、扉を内側に置いても車体シェルに隠れて見えない。
+    ok = ('DOOR_REC=' in src) and ('inDoor(' in src) and ('PAL.void' in src)
     ng += 0 if ok else 1
-    print('%-18s %14s %14s %8s  %s' % ('戸袋の開口', '一様に暗い',
-                                       '一様に暗い' if ok else '帯が通る', '-',
+    print('%-18s %14s %14s %8s  %s' % ('客用扉の開口', '外板に穴+戸袋',
+                                       '外板に穴+戸袋' if ok else '未対応', '-',
+                                       'OK' if ok else 'NG'))
+    # 開く面(ホーム側)は姿勢から計算すること(符号を決め打つと左右が逆になる)
+    ok = 'localZSign(' in src
+    ng += 0 if ok else 1
+    print('%-18s %14s %14s %8s  %s' % ('開く面の判定', '姿勢から計算',
+                                       '姿勢から計算' if ok else '決め打ち', '-',
                                        'OK' if ok else 'NG'))
 
     # 旧「写真転写方式」の残骸が無いこと

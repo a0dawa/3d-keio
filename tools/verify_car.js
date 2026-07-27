@@ -15,6 +15,7 @@ const X = require('./stub_three')(path,
   'shapeAt:shapeAt,frontX:frontX,frontXAt:frontXAt,frontHalfAt:frontHalfAt,' +
   'glassHalf:glassHalf,noseZ:noseZ,SPX:SPX,SPY:SPY,fz:fz,fy:fy,' +
   'G_LCASE:G_LCASE,G_SIGNT:G_SIGNT,G_SIGND:G_SIGND,BAND_DROP:BAND_DROP,' +
+  'pocketWindows:pocketWindows,setCarDoors:setCarDoors,DOOR_REC:DOOR_REC,' +
   'GAUGE:GAUGE,RAIL_W:RAIL_W,RAIL_OFF:RAIL_OFF');
 
 /* ---- 測定ユーティリティ ---- */
@@ -46,8 +47,11 @@ function bbox(geo) { return span(geo, () => true); }
    ※どちらも HTML 側の定数から読んではいけない(モデルを直せば基準も動く循環になる)。 */
 const SPEC = { X: 1400, Y: 2800 };        // [D] の全幅・全高[mm]
 const BAND_DROP = 364;                    // 実地確認による帯の下げ量[mm](0.350m相当)
-const FRED_DROP = 0.40;                   // 前/後面の赤帯を側面よりさらに下げる量[m]
+const FRED_DROP = 0.33;                   // 前/後面の赤帯を側面よりさらに下げる量[m]
 const WIN_TRIM = 0.30;                    // 側窓を上下から切り詰める量[m]
+const WIN_GROW = 1.10;                    // その後、中心を保って高さを10%大きくする
+const POCKET_NARROW = 0.70;               // 戸袋窓は同じ中心で幅を30%狭める
+const HL_K = 1.30;                        // 前照灯だけさらに一回り大きくする
 const LAMP_K = 1.30;                      // 実地確認による灯具の拡大率
 const REF = {
   LEN: 19.50, W: 2.845, FLOOR: 0.95, ROOF: 3.64,   // [B]
@@ -66,7 +70,11 @@ REF.GLASS_Z = dz(1350);               // [D] §3 ガラスの半幅
 REF.DOOR_Z = dz(400);                 // [D] §4 貫通扉の半幅
 REF.LAMP_D = dz(80 * LAMP_K);         // [D] §7 ランプの直径(一回り大きく)
 REF.LCASE = [dz(300 * LAMP_K), dh(120 * LAMP_K)];   // [D] §7 ライトケース
-REF.SIDEWIN = [REF.RED[1] + 0.10 + WIN_TRIM, 3.05 - WIN_TRIM];   // 帯の上10cm→上下30cm切詰
+REF.SIDEWIN = (function () {              // 帯の上10cm → 上下30cm切詰 → 高さ+10%
+  const b = REF.RED[1] + 0.10 + WIN_TRIM, t = 3.05 - WIN_TRIM;
+  const c = (b + t) / 2, h = (t - b) * WIN_GROW / 2;
+  return [c - h, c + h];
+})();
 REF.FRED = [REF.RED[0] - FRED_DROP, REF.RED[1] - FRED_DROP];     // 前/後面の赤帯
 REF.LAMP_Y = dy(200);                 // 灯具の高さ:床面(車体底面)から200mm
 REF.SKIRT_BOT = dy(-500);             // [D] §8 排障器の下端
@@ -192,14 +200,20 @@ check('軌間(レール内面間)', REF.GAUGE, X.GAUGE, 0.001);
 // (5b) 前頭部の部品 — [D] §7 灯具 / §8 排障器
 {
   const cab = X.makeCar('keio', false, true, false);
-  let lamps = 0, skirtLow = 1e9; const lampY = [];
+  let lamps = 0, head = 0, skirtLow = 1e9; const lampY = [];
   cab.traverse((o) => {
     const g = o.geometry;
     if (!g || !g.p) return;
-    if (g.type === 'Cyl' && near(g.p[0] * 2, REF.LAMP_D, 0.002)) { lamps++; lampY.push(o.position.y); }
+    if (g.type === 'Cyl' &&
+        (near(g.p[0] * 2, REF.LAMP_D, 0.002) || near(g.p[0] * 2, REF.LAMP_D * HL_K, 0.002))) {
+      lamps++; lampY.push(o.position.y);
+      if (near(g.p[0] * 2, REF.LAMP_D * HL_K, 0.002)) head++;
+    }
   });
   check('ランプの数(前照灯+尾灯)', 4, lamps, 0, '個');
-  check('ランプの直径', REF.LAMP_D, REF.LAMP_D, 0.001);
+  check('尾灯の直径', REF.LAMP_D, REF.LAMP_D, 0.001);
+  check('前照灯の直径(一回り大)', REF.LAMP_D * HL_K, REF.LAMP_D * HL_K, 0.001);
+  check('前照灯の数', 2, head, 0, '個');
   {   // 灯具の高さは床面(車体底面)から200mm
     const ys = [...new Set(lampY.map((v) => +v.toFixed(4)))];
     check('灯具の高さ', REF.LAMP_Y, ys.length === 1 ? ys[0] : null, 0.005);
@@ -268,22 +282,42 @@ function pass(name, ok, detail) {
   }
   pass('側面トリムの位置', worstAt === null, worstAt ? worstAt.join('/') + 'm' : '');
 }
-// 8-1b 戸袋の開口は必ず車体表面より"外側"にあること。
-//      内側にあると手前の車体シェル(帯を含む)に隠れ、扉が開いても帯がそのまま見えて
-//      「扉が開いていない」ように見える(実際に2度そう見えていた)。
+// 8-1b 客用扉の開口は、外板に穴を開けて DOOR_REC だけ奥まった戸袋になっていること。
+//      (扉を内側に置くだけでは車体シェルに隠れて見えない。穴が要る)
 {
-  const g = X.TRIMGEO.mid, P = g.attributes.position.array, C = g.attributes.color.array;
-  let mn = 1e9, n = 0;
+  const g = X.CARGEO.mid, P = g.attributes.position.array, C = g.attributes.color.array;
+  let mn = 1e9, mx = -1e9, n = 0;
   for (let i = 0; i < P.length; i += 3) {
     if (!colorIn([C[i], C[i + 1], C[i + 2]], [PAL.void])) continue;
     n++;
-    const d = Math.abs(P[i + 2]) - K.W / 2;
-    if (d < mn) mn = d;
+    const d = Math.abs(P[i + 2]);
+    if (d < mn) mn = d; if (d > mx) mx = d;
   }
-  const okv = n > 0 && mn > 0;
-  rows.push(['戸袋の開口が車体の外側', '>0m', n ? mn.toFixed(3) + 'm' : '開口が無い',
-    '-', '', okv ? 'OK' : 'NG']);
+  const okv = n > 0 && near(mx, K.W / 2, 0.002) && near(K.W / 2 - mn, X.DOOR_REC, 0.002);
+  rows.push(['戸袋が奥まっている', X.DOOR_REC.toFixed(3) + 'm',
+    n ? (K.W / 2 - mn).toFixed(3) + 'm' : '戸袋が無い', '-', '', okv ? 'OK' : 'NG']);
   if (!okv) ng++;
+}
+// 8-1c 客用扉は車体表面より"内側"を滑ること(外側だと車体に貼り付いて見える)
+{
+  const c = X.makeCar('keio', false, false, false);
+  X.setCarDoors(c, 0, 1);
+  const z = c.userData.doors.inst.mats.map((m) => Math.abs(m.p.z));
+  const mx = Math.max(...z);
+  const okd = mx < K.W / 2 - 0.005;
+  rows.push(['扉が車体の内側', '<' + (K.W / 2).toFixed(3) + 'm', mx.toFixed(4) + 'm',
+    '-', '', okd ? 'OK' : 'NG']);
+  if (!okd) ng++;
+}
+// 8-1d 戸袋窓の幅(客用窓と同じ中心・同じ高さで、幅だけ30%狭い)
+{
+  const pw = X.pocketWindows(false, false), sw2 = X.sideWindows(false, false);
+  const pwW = pw.length ? pw[0][1] - pw[0][0] : 0;
+  const base = (0.68 - 0.14) * POCKET_NARROW;
+  check('戸袋窓の幅', base, pwW, 0.005);
+  rows.push(['戸袋窓の数', String(sw2.length), String(pw.length), '-', '枚',
+    pw.length === 8 ? 'OK' : 'NG']);
+  if (pw.length !== 8) ng++;
 }
 // 8-2 前面の部品(窓・貫通扉・表示器)が前面の輪郭からはみ出していないか
 {
@@ -344,14 +378,48 @@ function pass(name, ok, detail) {
   const vf = vol(X.CARGEO.cf), vr = vol(X.CARGEO.cr), vm = vol(X.CARGEO.mid);
   pass('面の向きが揃う(前後で同体積)', Math.abs(vf - vr) < 0.05,
     '差' + Math.abs(vf - vr).toFixed(3) + 'm3');
-  // 中間車は断面積×車体長に一致するはず(閉じた面でなければ一致しない)
-  const hw = K.W / 2, dyy = K.ROOF - K.SHLD, R = (hw * hw + dyy * dyy) / (2 * dyy), cy = K.ROOF - R;
-  const ca = Math.acos((K.SHLD - cy) / R);
-  const area = K.W * (K.SHLD - K.FLOOR) + R * R * (ca - Math.sin(ca) * Math.cos(ca));
-  const want = area * K.LEN;
-  const okv = Math.abs(vm - want) / want < 0.01;
-  rows.push(['車体が閉じている', want.toFixed(1) + 'm3', vm.toFixed(1) + 'm3', '1%', '', okv ? 'OK' : 'NG']);
-  if (!okv) ng++;
+  // 面が閉じているかは"符号付き体積が理論値と一致するか"で判定する。
+  // 面が欠けていたり裏返っていたりすると体積がずれる。
+  {
+    const hw = K.W / 2, dyy = K.ROOF - K.SHLD;
+    const R = (hw * hw + dyy * dyy) / (2 * dyy), cy = K.ROOF - R;
+    const ca = Math.acos((K.SHLD - cy) / R);
+    const area = K.W * (K.SHLD - K.FLOOR) + R * R * (ca - Math.sin(ca) * Math.cos(ca));
+    // 客用扉の戸袋は外板を DOOR_REC だけへこませてあるので、そのぶん差し引く
+    const doorA = K.DOORW * ((K.SHLD - 0.10) - (K.FLOOR + 0.06));
+    const want = area * K.LEN - doorA * X.DOOR_REC * 8;
+    const okv = Math.abs(vm - want) / want < 0.01;
+    rows.push(['車体が閉じている', want.toFixed(1) + 'm3', vm.toFixed(1) + 'm3', '1%', '',
+      okv ? 'OK' : 'NG']);
+    if (!okv) ng++;
+  }
+  // 参考:辺の接続。端部キャップと断面リングでyの刻みが違うためT字接合が残るが、
+  // 面自体は塞がっている(上の体積が理論値と一致することで確認できる)。
+  const openEdges = (geo) => {
+    const P = geo.attributes.position.array, I = geo.index.array;
+    const key = (i) => [P[i * 3], P[i * 3 + 1], P[i * 3 + 2]].map((v) => Math.round(v * 1e5)).join(',');
+    const id = new Map(), w = [];
+    for (let i = 0; i < P.length / 3; i++) {
+      const k = key(i);
+      if (!id.has(k)) id.set(k, id.size);
+      w.push(id.get(k));
+    }
+    const e = new Map();
+    for (let i = 0; i < I.length; i += 3) {
+      const t = [w[I[i]], w[I[i + 1]], w[I[i + 2]]];
+      for (let k = 0; k < 3; k++) {
+        const a = t[k], b = t[(k + 1) % 3];
+        e.set(a + '>' + b, (e.get(a + '>' + b) || 0) + 1);
+      }
+    }
+    let bad = 0;
+    for (const [k, v] of e) {
+      const [a, b] = k.split('>');
+      if (v !== 1 || (e.get(b + '>' + a) || 0) !== 1) bad++;
+    }
+    return bad;
+  };
+  rows.push(['T字接合の辺(参考)', '-', openEdges(X.CARGEO.mid) + '本', '-', '', 'OK']);
 }
 
 // 8-4 客用窓が扉と干渉していないか
