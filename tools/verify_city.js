@@ -16,7 +16,9 @@ const X = require('./stub_three')(path,
   'JOSUI_X:JOSUI_X,BRIDGE:BRIDGE,XINGS:XINGS,WADA_S:WADA_S,WADA_OFF:WADA_OFF,' +
   'PLAZA_S:PLAZA_S,PLAZA_OFF:PLAZA_OFF,SUBK:SUBK,SUBC:SUBC,' +
   'stepXRail:stepXRail,inoCars:inoCars,setaCars:setaCars,INO_LIM:INO_LIM,INO_CARS:INO_CARS,INO_PITCH:INO_PITCH,' +
-  'INO_TRK:INO_TRK,SETA_LO:SETA_LO,SETA_HI:SETA_HI,SETA_CARS:SETA_CARS,SETA_PITCH:SETA_PITCH');
+  'INO_TRK:INO_TRK,SETA_LO:SETA_LO,SETA_HI:SETA_HI,SETA_CARS:SETA_CARS,SETA_PITCH:SETA_PITCH,' +
+  'XCAR:XCAR,CARGEO:CARGEO,CARGEO_LO:CARGEO_LO,TRIMGEO:TRIMGEO,FACEGEO:FACEGEO,' +
+  'GAUGE_INO:GAUGE_INO,GAUGE_SETA:GAUGE_SETA,RAIL_W:RAIL_W');
 
 /* ---- 期待値(検証側が独立して持つ) ----------------------------------------
    道路の幅は4章の描画寸法(box の第1引数)。ここでは"路面の半幅"だけを持ち、
@@ -161,15 +163,36 @@ ok('樹木の数', T.length >= REF.MIN_TREES, '≥' + REF.MIN_TREES + '本', T.l
     if (Math.abs(c.position.y - railTop) > 1e-6 && !by) by = [c.position.y.toFixed(3)];
   ok('レール面に載っている', by === null, railTop.toFixed(3) + 'm', by ? by[0] + 'm' : railTop.toFixed(3) + 'm');
   // 折り返しても編成の最後尾が線路からはみ出さない
-  const inoTail = X.INO_LIM + (X.INO_CARS - 1) * X.INO_PITCH + X.K8.LEN / 2;
+  /* 交差鉄道は京王線とは別形式。8000系のジオメトリを使い回していないこと
+     (使い回すと井の頭線・世田谷線にまで京王8000系の前面が付く)。 */
+  {
+    const keio = new Set();
+    for (const src of [X.CARGEO, X.CARGEO_LO, X.TRIMGEO, X.FACEGEO])
+      for (const k in src) keio.add(src[k]);
+    let bad = null;
+    for (const c of X.inoCars.concat(X.setaCars)) {
+      if (!c.userData || !c.userData.xcar) { bad = bad || ['専用モデルでない']; continue; }
+      c.traverse((o) => { if (o.geometry && keio.has(o.geometry) && !bad) bad = ['8000系のジオメトリを共有']; });
+    }
+    ok('交差鉄道は専用モデル', bad === null, '8000系と別', bad ? bad[0] : '井の頭線/世田谷線とも専用');
+    // 軌間は線区ごと(井の頭線1067mm / 世田谷線1372mm)。車輪の左右位置で測る。
+    const wheelZ = (c) => { let m = 0; c.traverse((o) => {
+      const g = o.geometry; if (g && g.type === 'Cyl' && Math.abs(o.position.z) > m) m = Math.abs(o.position.z); }); return m; };
+    const wantI = (X.GAUGE_INO + X.RAIL_W) / 2, wantS = (X.GAUGE_SETA + X.RAIL_W) / 2;
+    const gotI = wheelZ(X.inoCars[0]), gotS = wheelZ(X.setaCars[0]);
+    ok('交差鉄道の軌間', Math.abs(gotI - wantI) < 1e-6 && Math.abs(gotS - wantS) < 1e-6,
+      wantI.toFixed(3) + ' / ' + wantS.toFixed(3) + 'm',
+      gotI.toFixed(3) + ' / ' + gotS.toFixed(3) + 'm');
+  }
+  const inoTail = X.INO_LIM + (X.INO_CARS - 1) * X.INO_PITCH + X.XCAR.ino.L / 2;
   ok('井の頭線の編成が線路内', inoTail <= Math.min(-X.XR.U0, X.XR.U1) + 1e-6,
     '≤' + X.XR.U1 + 'm', inoTail.toFixed(1) + 'm');
+  const sHalf = X.XCAR.seta.L / 2;
+  const sLo = X.SETA_LO - (X.SETA_CARS - 1) * X.SETA_PITCH - sHalf, sHi = X.SETA_HI + sHalf;
   ok('世田谷線の編成が線路内',
-    X.SETA_LO - (X.SETA_CARS - 1) * X.SETA_PITCH - X.K8.LEN / 2 * 0.9 >= X.XR.SETA_U0 - 1e-6 &&
-    X.SETA_HI + X.K8.LEN / 2 * 0.9 <= X.XR.SETA_U1 + 1e-6,
+    sLo >= X.XR.SETA_U0 - 1e-6 && sHi <= X.XR.SETA_U1 + 1e-6,
     X.XR.SETA_U0 + '〜' + X.XR.SETA_U1 + 'm',
-    (X.SETA_LO - (X.SETA_CARS - 1) * X.SETA_PITCH - X.K8.LEN / 2 * 0.9).toFixed(1) + '〜' +
-    (X.SETA_HI + X.K8.LEN / 2 * 0.9).toFixed(1) + 'm');
+    sLo.toFixed(1) + '〜' + sHi.toFixed(1) + 'm');
   ok('折り返し範囲が正の長さ', X.INO_LIM > 50 && X.SETA_HI > X.SETA_LO, '走行する',
     'INO±' + X.INO_LIM.toFixed(0) + ' / SETA' + X.SETA_LO.toFixed(0) + '〜' + X.SETA_HI.toFixed(0));
   // 走る線(掘割の南側)が敷設した軌道中心と一致するか
