@@ -16,6 +16,7 @@ const X = require('./stub_three')(path,
   'glassHalf:glassHalf,noseZ:noseZ,SPX:SPX,SPY:SPY,fz:fz,fy:fy,' +
   'G_LCASE:G_LCASE,G_SIGNT:G_SIGNT,G_SIGND:G_SIGND,BAND_DROP:BAND_DROP,' +
   'pocketWindows:pocketWindows,setCarDoors:setCarDoors,DOOR_REC:DOOR_REC,' +
+  'PT:PT,WIRE_TRO:WIRE_TRO,PANTO_FROM_END:PANTO_FROM_END,AC_L:AC_L,AC_W:AC_W,' +
   'GAUGE:GAUGE,RAIL_W:RAIL_W,RAIL_OFF:RAIL_OFF');
 
 /* ---- 測定ユーティリティ ---- */
@@ -52,6 +53,8 @@ const WIN_TRIM = 0.30;                    // 側窓を上下から切り詰め�
 const WIN_GROW = 1.10;                    // その後、中心を保って高さを10%大きくする
 const POCKET_NARROW = 0.70;               // 戸袋窓は同じ中心で幅を30%狭める
 const HL_K = 1.30;                        // 前照灯だけさらに一回り大きくする
+const RED_THICK = 1.20;                   // 赤帯を仕様書の150mmから20%太くする
+const PANTO_FROM_END = 5.0;               // パンタの取付位置(車端からの距離[m])
 const LAMP_K = 1.30;                      // 実地確認による灯具の拡大率
 const REF = {
   LEN: 19.50, W: 2.845, FLOOR: 0.95, ROOF: 3.64,   // [B]
@@ -63,7 +66,7 @@ const REF = {
 const sx = (REF.W / 2) / SPEC.X, sy = (REF.ROOF - REF.FLOOR) / SPEC.Y;
 const dz = (mm) => mm * sx, dy = (mm) => REF.FLOOR + mm * sy, dh = (mm) => mm * sy;
 REF.NAVY = [dy(900 - BAND_DROP), dy(950 - BAND_DROP)];    // [D] §6 京王ブルー(細い帯・下)
-REF.RED = [dy(950 - BAND_DROP), dy(1100 - BAND_DROP)];    // [D] §6 京王レッド(太い帯・上)
+REF.RED = [dy(950 - BAND_DROP), dy(950 + 150 * RED_THICK - BAND_DROP)];  // 京王レッド(+20%)
 REF.FRONTWIN = [dy(1200 - BAND_DROP), dy(2500)];          // [D] §3 前面窓(下へ広げる)
 REF.SIDEWIN = [0, 3.05];                                  // 下端は下で帯から決める
 REF.GLASS_Z = dz(1350);               // [D] §3 ガラスの半幅
@@ -247,9 +250,31 @@ check('軌間(レール内面間)', REF.GAUGE, X.GAUGE, 0.001);
   check('排障器の下端', REF.SKIRT_BOT, skirtLow, 0.02);
 }
 
+// (5c) パンタグラフ — すり板がトロリ線の高さに合い、車端から5mに載ること
+{
+  const car2 = X.makeCar('keio', true, false, false);
+  let shoe = null, minX = 1e9;
+  car2.traverse((o) => {
+    const g = o.geometry;
+    if (!g || !g.p || g.type !== 'Box') return;
+    if (near(g.p[2], X.PT.SHOEZ, 1e-6)) shoe = o.position;       // 舟体
+  });
+  const yf = K.ROOF + X.PT.BASE + X.PT.INS;
+  check('すり板の高さ=トロリ線', X.WIRE_TRO, shoe ? shoe.y + 0.055 : null, 0.02);
+  check('パンタの取付位置(車端から)', PANTO_FROM_END,
+    shoe ? K.LEN / 2 - Math.abs(shoe.x - X.PT.TOPX) : null, 0.05);
+  rows.push(['パンタの膝が中央', '0.000', X.PT.KNEX.toFixed(3), '-', 'm',
+    Math.abs(X.PT.KNEX) < 1e-9 ? 'OK' : 'NG']);
+  if (Math.abs(X.PT.KNEX) >= 1e-9) ng++;
+  void yf; void minX;
+}
+
 // (6) 屋根上 — 冷房装置は集中式1基(旧実装は3基で誤りだった)
 let ac = 0;
-car.traverse((o) => { if (o.geometry && o.geometry.type === 'Box' && near(o.geometry.p[0], 2.40, 1e-6) && near(o.geometry.p[2], 1.86, 1e-6)) ac++; });
+car.traverse((o) => {
+  const g = o.geometry;
+  if (g && g.type === 'Box' && near(g.p[0], X.AC_L, 1e-6) && near(g.p[2], X.AC_W, 1e-6)) ac++;
+});
 check('冷房装置の数', 1, ac, 0, '基');
 
 // (7) 旧「写真転写方式」の残骸が無いこと
@@ -302,8 +327,18 @@ function pass(name, ok, detail) {
 {
   const c = X.makeCar('keio', false, false, false);
   X.setCarDoors(c, 0, 1);
-  const z = c.userData.doors.inst.mats.map((m) => Math.abs(m.p.z));
+  const mats = c.userData.doors.inst.mats;
+  const z = mats.map((m) => Math.abs(m.p.z));
   const mx = Math.max(...z);
+  // 扉の板は1つのジオメトリを左右に置くので、-z側は z を反転しないと
+  // 窓・框が板の裏へ回って見えなくなる(下り列車の南側の扉で発生した)
+  {
+    const a = mats.slice(0, 8).every((m) => m.s.z > 0);
+    const b = mats.slice(8).every((m) => m.s.z < 0);
+    rows.push(['扉が左右で反転している', '+z/-z', a && b ? '+1/-1' : '同符号', '-', '',
+      a && b ? 'OK' : 'NG']);
+    if (!(a && b)) ng++;
+  }
   const okd = mx < K.W / 2 - 0.005;
   rows.push(['扉が車体の内側', '<' + (K.W / 2).toFixed(3) + 'm', mx.toFixed(4) + 'm',
     '-', '', okd ? 'OK' : 'NG']);

@@ -24,6 +24,7 @@ TOL = 0.02
 
 BAND_DROP = 364     # 実地確認による帯の下げ量[mm](0.350m相当)
 LAMP_K = 1.30       # 実地確認による灯具の拡大率
+RED_THICK = 1.20    # 赤帯を仕様書の150mmから20%太くする
 
 # [B] 実車写真の実測値[m]
 REF_VAL = {
@@ -37,7 +38,7 @@ REF_VAL = {
 REF_SPEC_MM = {
     '京王ブルー帯 下端': 900 - BAND_DROP,
     '京王ブルー帯 上端': 950 - BAND_DROP,
-    '京王レッド帯 上端': 1100 - BAND_DROP,
+    '京王レッド帯 上端': 950 + 150 * RED_THICK - BAND_DROP,
     '前面窓 下端': 1200 - BAND_DROP,      # 帯を下げたぶん窓を下へ広げる
     '前面窓 上端': 2500,
     'ガラス半幅': 1350,
@@ -54,7 +55,7 @@ def main():
 
     # 実地調整の定数をHTMLから読み、式の評価に使う
     env = {}
-    for name in ('BAND_DROP', 'LAMP_K'):
+    for name in ('BAND_DROP', 'LAMP_K', 'RED_THICK'):
         m = re.search(r'const %s\s*=\s*(-?[\d.]+)\s*;' % name, src)
         if not m:
             print('NG: %s が見つからない' % name)
