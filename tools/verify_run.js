@@ -12,7 +12,9 @@ const X = require('./stub_three')(path,
   'mainOff:mainOff,runOff:runOff,DOM:DOM,STOP_BACK:STOP_BACK,' +
   'PSD:PSD,stepPSD:stepPSD,trains:trains,stepCarDoors:stepCarDoors,setCarDoors:setCarDoors,' +
   'sideWindows:sideWindows,DOOR_HW:DOOR_HW,DOOR_SLIDE:DOOR_SLIDE,frame:frame,PLATS:PLATS,' +
-  'TRACKS:TRACKS');
+  'TRACKS:TRACKS,' +
+  'atcLimit:atcLimit,stepRide:stepRide,ATC:ATC,NOTCHES:NOTCHES,NIDX_B7:NIDX_B7,' +
+  'setRideState:setRideState,getRideState:getRideState');
 
 /* ---- 期待値(検証側が独立して持つ) ---------------------------------------- */
 const REF = {
@@ -33,6 +35,9 @@ const REF = {
   TACTILE_IN: 0.45,        // 点字ブロックの中心をホーム縁から何m内側に置くか
   TACTILE_REACH: 3.0,      // ホーム縁の外側これだけ以内に線路があれば「線路側の縁」
   TOL: 1.0,                // 停止位置の許容誤差[m]
+  // 保安装置(指示):600m先=120km/h まで / 20m先=0km/h まで、間はなめらか
+  ATC_FAR: 600, ATC_NEAR: 20, ATC_VFAR: 120,
+  ATC_BRAKE: 'B7',         // 介入時に使う制動段
 };
 
 const rows = [];
@@ -359,6 +364,107 @@ ok('上限速度を超えない', vmax <= REF.VMAX_KMH + 0.5, '≤' + REF.VMAX_K
     ok('扉が全開できる', Math.abs(X.DOOR_SLIDE - X.K8.DOORW / 2) < 1e-9,
       '片開き1枚ぶん', X.DOOR_SLIDE.toFixed(3) + 'm');
   }
+}
+
+/* ---- 8. 運転モードの保安装置(前方の列車で自動的に減速する) ---------------- */
+{
+  const T = X.trains;
+  const save = T.map((t) => ({ x: t.x, dir: t.dir, st: t.st, atSt: t.atSt }));
+  // 全編成をいったん遠くへ退ける(意図した1本だけを前方に置く)
+  for (const t of T) { t.dir = 1; t.x = X.DOM.x1 - 5; t.st = 'run'; t.atSt = null; }
+  const lead = T[0];
+  const rearOf = (t) => t.x - (t.cars.length - 1) * X.K8.PITCH - X.K8.LEN / 2;
+  // 先行列車の最後尾が s から d[m] 先に来るように置く
+  const place = (s, d) => { lead.x = s + d + (lead.x - rearOf(lead)); };
+
+  // 待避線への振り分け区間から外れた本線上の地点(明大前と桜上水の間)。
+  // 振り分け区間に先行列車が入ると「別の線路」とみなされ、試験にならない。
+  const s0 = 2000;
+  // 8-1 距離ごとの許容速度(600m=120 / 20m=0 / 間は√で滑らか)
+  {
+    let bad = null;
+    const want = (d) => (d <= REF.ATC_NEAR) ? 0
+      : REF.ATC_VFAR * Math.sqrt((d - REF.ATC_NEAR) / (REF.ATC_FAR - REF.ATC_NEAR));
+    for (const d of [20, 50, 100, 200, 310, 450, 600]) {
+      place(s0, d);
+      const got = X.atcLimit(s0);
+      if (got === null || Math.abs(got - want(d)) > 0.5) {
+        if (!bad) bad = [d + 'm', '期待' + want(d).toFixed(1), '実測' + (got === null ? '制限なし' : got.toFixed(1))];
+      }
+    }
+    ok('許容速度の距離特性', bad === null,
+      REF.ATC_FAR + 'm=' + REF.ATC_VFAR + ' / ' + REF.ATC_NEAR + 'm=0',
+      bad ? bad.join(' ') : '7点すべて一致');
+    // 単調増加(近いほど遅い)であること
+    let mono = true, prev = -1;
+    for (let d = 20; d <= 600; d += 10) { place(s0, d); const v = X.atcLimit(s0); if (v < prev - 1e-9) mono = false; prev = v; }
+    ok('距離が近いほど遅い', mono, '単調', mono ? '単調' : '逆転あり');
+  }
+  // 8-2 解除条件:600mより先 / 待避線に入った / エリア外
+  {
+    place(s0, 601);
+    ok('600mより先は制限しない', X.atcLimit(s0) === null, '制限なし',
+      X.atcLimit(s0) === null ? '制限なし' : X.atcLimit(s0).toFixed(1) + 'km/h');
+    // 待避線(2面4線の外側)に入っている列車は対象外
+    const q = X.STA.find((z) => z.n === '桜上水');
+    place(q.x - 100, 100); lead.x = q.x;            // 先行列車を待避線の一定区間へ
+    ok('待避線の列車は対象外', X.atcLimit(q.x - 300) === null, '制限なし',
+      X.atcLimit(q.x - 300) === null ? '制限なし' : '制限あり');
+    // エリア外
+    lead.x = X.DOM.x1 + 500;
+    ok('エリア外の列車は対象外', X.atcLimit(s0) === null, '制限なし',
+      X.atcLimit(s0) === null ? '制限なし' : '制限あり');
+  }
+  // 8-3 実際に走らせる:力行のままでも自動的にB7で減速し、追突しない
+  {
+    place(s0, REF.ATC_FAR);                          // 600m先=パターンの起点に置く
+    const leadRear = rearOf(lead);
+    X.setRideState({ s: s0, v: REF.ATC_VFAR, notch: X.NOTCHES.length - 1, acc: 0 });  // P4 全開のまま
+    let braked = false, minGap = 1e9, over = 0, vEnd = 0, gapEnd = 0;
+    for (let i = 0; i < 20000; i++) {
+      X.stepRide(0.05);
+      const st = X.getRideState();
+      if (st.atc) braked = true;
+      const gap = leadRear - st.s;
+      if (gap < minGap) minGap = gap;
+      if (st.lim !== null && st.v - st.lim > over) over = st.v - st.lim;
+      vEnd = st.v; gapEnd = gap;
+      if (gap <= REF.ATC_NEAR + 5 || st.v < 0.05) break;
+    }
+    ok('力行中でも自動でB7が入る', braked, '介入する', braked ? '介入した' : '介入しない');
+    ok('先行列車に追突しない', minGap > REF.ATC_NEAR - 5, '最後尾の手前',
+      '最接近 ' + minGap.toFixed(1) + 'm');
+    ok('接近時は徐行になる', vEnd < 20, '<20km/h',
+      gapEnd.toFixed(0) + 'm手前で ' + vEnd.toFixed(1) + 'km/h');
+    ok('パターンに追従する', over < 12, '超過<12km/h', '最大超過 ' + over.toFixed(1) + 'km/h');
+  }
+  /* 8-3b すでにパターンを大きく超えた状態(前方に列車が突然現れた等)。
+     120km/h から B7(4.2km/h/s)で止まるには約475m必要なので、300m地点からでは
+     物理的に止まりきれない。ここで見るのは「力行に戻らず、B7を掛け続けて
+     減速し続ける」こと。指示どおり制動は B7 までとし、非常制動は使わない。 */
+  {
+    place(s0, 300);                                  // 300m先(パターンは83km/h)に
+    const leadRear = rearOf(lead);
+    X.setRideState({ s: s0, v: 120, notch: X.NOTCHES.length - 1, acc: 0 });  // P4 全開のまま
+    let steps = 0, held = 0, rose = 0, v0 = 120;
+    for (let i = 0; i < 6000; i++) {
+      X.stepRide(0.05);
+      const st = X.getRideState();
+      steps++; if (st.atc) held++;
+      if (st.v > v0 + 1e-6) rose++;
+      v0 = st.v;
+      if (st.v < 0.05 || leadRear - st.s <= 0) break;   // 停止 or 追いついた時点で終了
+    }
+    ok('超過状態でも制動を掛け続ける', held === steps && rose === 0,
+      '全区間で介入・増速なし',
+      held + '/' + steps + 'ステップ介入・増速' + rose + '回');
+  }
+  // 8-4 介入に使う段が B7 であること
+  {
+    const nb = X.NOTCHES[X.NIDX_B7];
+    ok('介入に使う制動段', nb && nb.s === REF.ATC_BRAKE, REF.ATC_BRAKE, nb ? nb.s : '不明');
+  }
+  for (let i = 0; i < T.length; i++) Object.assign(T[i], save[i]);
 }
 
 /* ---- 出力 ---- */
