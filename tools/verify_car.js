@@ -305,6 +305,15 @@ check('軌間(レール内面間)', REF.GAUGE, X.GAUGE, 0.001);
     // 上下の腕がともに立っていること(どちらかが寝ると「フ」の字)
     pass('パンタが「く」の字', aLow > 20 && aUpp > 20,
       '下枠' + aLow.toFixed(0) + '° / 上枠' + aUpp.toFixed(0) + '°');
+    // 下枠と上枠は同じ長さ(指示)
+    const lLow = Math.hypot(X.PT.KNEX - X.PT.PIVX, X.PT.KNEY);
+    const lUpp = Math.hypot(X.PT.KNEX - X.PT.TOPX, X.PT.TOPY - X.PT.KNEY);
+    check('下枠と上枠の長さの差', 0, lLow - lUpp, 1e-6);
+    /* 台枠は腕の軸を載せるだけの大きさに絞る(以前は2.30×1.76mと過大だった)。
+       前後は腕の軸が載る長さ、左右は舟体より狭いこと。 */
+    const frL = X.PT.FRX * 2, frW = X.PT.ZBAS * 2;
+    pass('台枠が過大でない', frL <= 1.6 && frW < X.PT.SHOEZ && frL >= Math.abs(X.PT.PIVX) * 2 - 0.02,
+      '前後' + frL.toFixed(2) + 'm / 左右' + frW.toFixed(2) + 'm(舟体' + X.PT.SHOEZ.toFixed(2) + 'm)');
   }
   void yf; void minX;
 }

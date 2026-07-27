@@ -15,7 +15,8 @@ const X = require('./stub_three')(path,
   'TRACKS:TRACKS,' +
   'atcLimit:atcLimit,stepRide:stepRide,ATC:ATC,NOTCHES:NOTCHES,NIDX_B7:NIDX_B7,' +
   'setRideState:setRideState,getRideState:getRideState,setNotch:setNotch,NIDX_N:NIDX_N,' +
-  'NOTCH_LAG:NOTCH_LAG,ATC_DISP_STEP:ATC_DISP_STEP,ATC_DISP_LAG:ATC_DISP_LAG,' +
+  'NOTCH_LAG:NOTCH_LAG,ATC_DISP_STEP:ATC_DISP_STEP,ATC_UP_LAG:ATC_UP_LAG,' +
+  'ridePSDFor:ridePSDFor,mainOff:mainOff,' +
   'DOOR_LAMP_SEC:DOOR_LAMP_SEC,DOOR_STOP_TOL:DOOR_STOP_TOL,stopPosOf:stopPosOf');
 
 /* ---- 期待値(検証側が独立して持つ) ---------------------------------------- */
@@ -40,8 +41,8 @@ const REF = {
   // 保安装置(指示):600m先=120km/h まで / 20m先=0km/h まで、間はなめらか
   ATC_FAR: 600, ATC_NEAR: 20, ATC_VFAR: 120,
   ATC_BRAKE: 'B7',         // 介入時に使う制動段
-  ATC_DISP_STEP: 5,        // ATCの表示は5km/h刻み(表示のみ)
-  ATC_DISP_LAG: 10,        // ATCの表示は10秒遅れ(表示のみ)
+  ATC_DISP_STEP: 5,        // ATCの表示は5km/h刻み
+  ATC_UP_LAG: 10,          // 現示アップ(制限が緩む)は10秒遅れ。ダウンは即時
   NOTCH_LAG: 1.0,          // 力行・制動の応答遅れ[秒]
   DOOR_LAMP_SEC: 25,       // 戸閉灯の点灯時間[秒]
   DOOR_STOP_TOL: 1.0,      // 停車と見なす停止位置からのずれ[m]
@@ -487,30 +488,54 @@ ok('上限速度を超えない', vmax <= REF.VMAX_KMH + 0.5, '≤' + REF.VMAX_K
   const lead = T[0];
   const rearOf = (t) => t.x - (t.cars.length - 1) * X.K8.PITCH - X.K8.LEN / 2;
 
-  // 9-1 ATCの表示は10秒遅れ(制御は瞬時値)
+  /* 9-1 現示ダウンは即時・現示アップは10秒遅れ。
+     遅らせるのは表示だけでなく実際の速度制限も同じ(実機の現示アップと同じ扱い)。
+     ※「null なら未取得」で判定すると、null が続く間ずっと上書きしてしまうので、
+       取得済みかどうかは別のフラグで持つ。 */
   {
     const s0 = 2000;
     X.setRideState({ on: true, s: s0, v: 0, notch: X.NIDX_N, acc: 0, reset: true });
-    for (let i = 0; i < 240; i++) X.stepRide(0.05);          // 12秒:前方に列車なし
+    for (let i = 0; i < 40; i++) X.stepRide(0.05);           // 2秒:前方に列車なし
     const before = X.getRideState();
-    lead.x = s0 + 300 + (lead.x - rearOf(lead));             // 300m先に列車を出す
-    // ※「null なら未取得」で判定すると、null が続く間ずっと上書きしてしまう。
-    //   取得済みかどうかは別のフラグで持つ。
-    let at5 = null, at12 = null, got5 = false, got12 = false, t = 0;
+    ok('前方が空なら制限なし', before.lim === null, '—',
+      before.lim === null ? '—' : before.lim.toFixed(0));
+
+    // (a) 現示ダウン:300m先に列車を出した直後から効く
+    lead.x = s0 + 300 + (lead.x - rearOf(lead));
+    X.stepRide(0.05);
+    const down = X.getRideState();
+    ok('現示ダウンは即時', down.lim !== null && Math.abs(down.lim - down.raw) < 1e-9,
+      '即座に制限', down.lim === null ? '制限なし' : down.lim.toFixed(1) + 'km/h');
+    const held0 = down.lim;
+
+    // (b) 現示アップ:列車を遠ざけても10秒間は前の(厳しい)制限のまま
+    const held = held0;
+    lead.x = s0 + 560 + (lead.x - rearOf(lead));             // 560m先=緩い現示へ
+    let up5 = null, up12 = null, g5 = false, g12 = false, t = 0;
     for (let i = 0; i < 300; i++) {
       X.stepRide(0.05); t += 0.05;
-      if (!got5 && t >= 5) { at5 = X.getRideState().disp; got5 = true; }
-      if (!got12 && t >= 12) { at12 = X.getRideState().disp; got12 = true; }
+      if (!g5 && t >= 5) { up5 = X.getRideState(); g5 = true; }
+      if (!g12 && t >= 12) { up12 = X.getRideState(); g12 = true; }
     }
-    const now = X.getRideState();
-    ok('ATC表示は前方が空なら制限なし', before.disp === null, '—',
-      before.disp === null ? '—' : before.disp.toFixed(0));
-    ok('ATC表示は10秒遅れる', at5 === null && at12 !== null,
-      REF.ATC_DISP_LAG + '秒後に出る',
-      '5秒後=' + (at5 === null ? '—' : at5.toFixed(0)) + ' / 12秒後=' +
-      (at12 === null ? '—' : at12.toFixed(0)));
-    ok('ATCの制御は瞬時値', now.lim !== null, '即座に制限',
-      now.lim === null ? '制限なし' : now.lim.toFixed(0) + 'km/h');
+    const kmh = (v) => (v === null || v === undefined) ? '—' : v.toFixed(1);
+    ok('現示アップは10秒遅れる',
+      up5.lim !== null && Math.abs(up5.lim - held) < 1e-9 && up12.lim !== null && up12.lim > held + 1,
+      REF.ATC_UP_LAG + '秒後に上がる',
+      '5秒後=' + kmh(up5.lim) + ' / 12秒後=' + kmh(up12.lim) + 'km/h');
+    ok('現示アップ前も瞬時値は上がっている', up5.raw !== null && up5.raw > held + 1, '瞬時値は上昇',
+      kmh(up5.raw) + 'km/h');
+
+    // (c) 解除(制限なしへ)も10秒待つ
+    lead.x = X.DOM.x1 - 5;
+    let rel5 = null, rel12 = null, h5 = false, h12 = false; t = 0;
+    for (let i = 0; i < 300; i++) {
+      X.stepRide(0.05); t += 0.05;
+      if (!h5 && t >= 5) { rel5 = X.getRideState(); h5 = true; }
+      if (!h12 && t >= 12) { rel12 = X.getRideState(); h12 = true; }
+    }
+    const km = (v) => (v === null || v === undefined) ? '—' : v.toFixed(1);
+    ok('解除も10秒遅れる', rel5.lim !== null && rel12.lim === null,
+      REF.ATC_UP_LAG + '秒後に解除', '5秒後=' + km(rel5.lim) + ' / 12秒後=' + km(rel12.lim));
   }
   for (const t of T) { t.x = X.DOM.x1 - 5; }
 
@@ -521,6 +546,13 @@ ok('上限速度を超えない', vmax <= REF.VMAX_KMH + 0.5, '≤' + REF.VMAX_K
     X.setRideState({ on: true, s: sp, v: 0, notch: X.NIDX_N, acc: 0, reset: true });
     X.stepRide(0.05);
     const a = X.getRideState();
+    // 自列車は本線(八幡山では通過線)を走る。開くのは本線側の扉列であること
+    {
+      const want = X.ridePSDFor(st), trackOff = -X.mainOff(st.x);
+      ok('開くのは自列車側の扉列', a.psd === want && want &&
+        Math.abs(want.off - trackOff) < 2.5, '本線側(off≈' + trackOff.toFixed(2) + ')',
+        a.psd ? 'off=' + a.psd.off.toFixed(2) : 'なし');
+    }
     ok('停車で戸閉灯が点く', a.lamp > 0 && a.lampSt === st, REF.DOOR_LAMP_SEC + '秒点灯',
       a.lamp > 0 ? a.lamp.toFixed(1) + '秒 @' + (a.lampSt ? a.lampSt.n : '?') : '点かない');
     // 点灯中は力行に入れられない
@@ -528,7 +560,7 @@ ok('上限速度を超えない', vmax <= REF.VMAX_KMH + 0.5, '≤' + REF.VMAX_K
     ok('点灯中は力行できない', X.getRideState().notch <= X.NIDX_N, 'N以下',
       X.NOTCHES[X.getRideState().notch].s);
     // ホームドアが開く(下り側)
-    const psd = X.PSD.find((q) => q.st === st && q.dir === 1 && q.openable);
+    const psd = X.ridePSDFor(st);
     for (let i = 0; i < 120; i++) X.stepPSD(0.05);
     ok('自列車でホームドアが開く', psd.r > 0.95, '開度>0.95', psd.r.toFixed(3));
     // 25秒で消灯し、ホームドアも閉じる
@@ -542,6 +574,26 @@ ok('上限速度を超えない', vmax <= REF.VMAX_KMH + 0.5, '≤' + REF.VMAX_K
       X.getRideState().notch === X.NOTCHES.length - 1), 'P4',
       X.NOTCHES[X.getRideState().notch].s);
   }
+  /* 9-2b 2面4線の駅:自列車は本線(内側)にいるので、待避線側ではなく
+     本線側の扉列が開くこと(以前は待避線の方が開いていた)。 */
+  {
+    let bad = null;
+    for (const n of REF.QUAD_STA.concat(['笹塚'])) {
+      const st = X.STA.find((z) => z.n === n);
+      const q = X.ridePSDFor(st), trackOff = -X.mainOff(st.x);
+      if (!q || Math.abs(q.off - trackOff) > 2.5) { bad = bad || [n, '見つからない']; continue; }
+      // 待避線側(より外側)の列を掴んでいないこと
+      const outer = X.PSD.filter((z) => z.st === st && z.off < 0)
+        .sort((a2, b2) => a2.off - b2.off)[0];
+      if (q === outer && Math.abs(outer.off - trackOff) > 2.5 && !bad) bad = [n, '待避線側'];
+    }
+    ok('2面4線で本線側が開く', bad === null, '本線側の扉列',
+      bad ? bad.join(' ') : REF.QUAD_STA.concat(['笹塚']).join('/') + ' すべて本線側');
+    // 八幡山は通過線にホームが無いので開かない
+    const h = X.STA.find((z) => z.n === '八幡山');
+    ok('ホームの無い通過線では開かない', X.ridePSDFor(h) === null, '扉列なし',
+      X.ridePSDFor(h) === null ? '扉列なし' : 'off=' + X.ridePSDFor(h).off.toFixed(2));
+  }
   // 9-3 停止位置から1mより離れていれば点かない
   {
     const st = X.STA.find((z) => z.n === '上北沢');
@@ -550,6 +602,11 @@ ok('上限速度を超えない', vmax <= REF.VMAX_KMH + 0.5, '≤' + REF.VMAX_K
     X.stepRide(0.05);
     ok('停止位置から外れれば点かない', X.getRideState().lamp === 0, '消灯',
       X.getRideState().lamp.toFixed(1) + '秒');
+    // 停止位置に居ても速度が完全に0でなければ点かない
+    X.setRideState({ on: true, s: X.stopPosOf(st, 1), v: 0.3, notch: X.NIDX_N, acc: 0, reset: true });
+    X.stepRide(0.05);
+    ok('0km/hでなければ点かない', X.getRideState().lamp === 0, '消灯',
+      X.getRideState().v.toFixed(2) + 'km/hで ' + X.getRideState().lamp.toFixed(1) + '秒');
   }
   X.setRideState({ on: false, reset: true });
   for (let i = 0; i < T.length; i++) Object.assign(T[i], save[i]);
