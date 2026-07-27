@@ -1423,25 +1423,36 @@ const PAL={
 // 帯の下げ量。実地確認により仕様書[D]の位置から35cm下げる。
 // 仕様書は相対寸法なので mm で持ち、下げ量も同じ尺度に揃える(364mm≒0.350m)。
 const BAND_DROP=364;
-const RED_THICK=1.20;   // 赤帯を仕様書の150mmから20%太くする(実地確認)
-const BLU=[fy(900-BAND_DROP),fy(950-BAND_DROP)],
-      RED=[fy(950-BAND_DROP),fy(950+150*RED_THICK-BAND_DROP)];
+/* 赤帯の太さは仕様書[D]の150mmに対する倍率。実地確認により側面と前/後面で異なる。
+   側面 1.20→さらに20%=1.44 / 前後 1.20→さらに30%=1.56。
+   また側面の赤帯だけ10cm上げる(青帯は動かさないので、間にステンレス地が出る)。 */
+const RED_THICK=1.44, FRED_THICK=1.56, SIDE_RED_UP=0.10;
+const BLU=[fy(900-BAND_DROP),fy(950-BAND_DROP)];
+const RED_BASE=fy(950-BAND_DROP);      // 帯の基準面(=青帯の上端)
+const RED=[RED_BASE+SIDE_RED_UP, RED_BASE+SIDE_RED_UP+fh(150*RED_THICK)];
 const BANDS=[
   {y0:0.00,    y1:BLU[0],  c:'stl' },   // 腰板(ステンレス地)
   {y0:BLU[0],  y1:BLU[1],  c:'navy'},   // 京王ブルー(細い帯)
-  {y0:BLU[1],  y1:RED[1],  c:'red' },   // 京王レッド(太い帯。青帯に隙間なく接する)
+  {y0:BLU[1],  y1:RED[0],  c:'stl' },   // 赤帯を上げたぶんの隙間
+  {y0:RED[0],  y1:RED[1],  c:'red' },   // 京王レッド(太い帯)
   {y0:RED[1],  y1:K8.SHLD, c:'stl' },   // 幕板
   {y0:K8.SHLD, y1:9.99,    c:'roof'},   // 肩から上=屋根
 ];
 // 側窓は「帯の上10cmから上」。帯を下げたぶん下端も下がり、上端はそのまま。
 // 前/後面の赤帯は側面よりさらに下げる(青帯の高さは前後・側面で同じ)。
 const FRED_DROP=0.33;   // 0.40から7cm上げた(実地確認)
-const FRED=[RED[0]-FRED_DROP, RED[1]-FRED_DROP];
-// 側窓。「帯の上10cm」を下端とし、そこから上下を30cmずつ切り詰めたうえで、
-// 中心位置を保ったまま高さを10%大きくする(実地確認)。
-const WIN_TRIM=0.30, WIN_GROW=1.10;
+// 前/後面の赤帯は側面の10cm上げを受けない。基準面から FRED_DROP だけ下げた位置。
+const FRED=[RED_BASE-FRED_DROP, RED_BASE-FRED_DROP+fh(150*FRED_THICK)];
+/* 側窓。かつては「赤帯の上端+10cm」から導いていたが、帯の太さや位置を実地確認で
+   動かすたびに窓まで動いてしまうため、窓は帯から切り離してこの基準面から決める
+   (値は切り離した時点の赤帯上端)。
+   基準面+10cm を下端、3.05を上端とし、上下を30cmずつ切り詰めたうえで、
+   中心を保って高さを WIN_GROW 倍にし、さらに WIN_DROP だけ下げる。 */
+const WIN_REF=1.6859;
+const WIN_TRIM=0.30, WIN_GROW=1.21, WIN_DROP=0.07;
 const WIN=(function(){
-  const b=RED[1]+0.10+WIN_TRIM, t=3.05-WIN_TRIM, c=(b+t)/2, h=(t-b)*WIN_GROW/2;
+  const b=WIN_REF+0.10+WIN_TRIM, t=3.05-WIN_TRIM;
+  const c=(b+t)/2-WIN_DROP, h=(t-b)*WIN_GROW/2;
   return {B:c-h, T:c+h};
 })();
 const POCKET_NARROW=0.70;   // 戸袋窓は同じ中心で幅を30%狭める
@@ -1851,39 +1862,43 @@ function buildFaceGeo(sgn){
    4箇所×2枚×左右2面=16枚をインスタンスで配置する。開閉は行列の更新だけで済む。 */
 const DOOR_HW=K8.DOORW/4;       // 片開き1枚の半幅[m]
 const DOOR_SLIDE=K8.DOORW/2;    // 開いたときの移動量[m](=片開き1枚ぶん。全開)
-const G_DOORLEAF=(function(){
+/* 左右2面ぶんのジオメトリを別々に作る。
+   1つのジオメトリを scale.z=-1 で鏡像にすると面の巻き順が裏返り、法線が
+   内側を向く。同じ材質でも陰影が変わって「片側だけ色が違う」ように見えるので、
+   -z 面は z を反転したうえで巻き順も反転した専用ジオメトリを持つ。 */
+function buildDoorLeaf(sz){
   const P=[],C=[],I=[];
-  const z0=()=>0, z1=()=>0.006, z2=()=>0.003;
+  const z0=()=>0, z1=()=>sz*0.006, z2=()=>sz*0.003;
   sidePanel(P,C,I,-DOOR_HW,DOOR_HW,K8.FLOOR+0.06,K8.SHLD-0.10,z0,'door');
   sideWindow(P,C,I,-DOOR_HW+0.07,DOOR_HW-0.07,DWIN_B,WIN.T-0.05,z1,z2);
+  if(sz<0) for(let i=0;i<I.length;i+=3){const t=I[i+1];I[i+1]=I[i+2];I[i+2]=t;}
   const g=new THREE.BufferGeometry();
   g.setAttribute('position',new THREE.Float32BufferAttribute(P,3));
   g.setAttribute('color',new THREE.Float32BufferAttribute(C,3));
   g.setIndex(I); g.computeVertexNormals();
   return g;
-})();
+}
+const G_DOORLEAF={p:buildDoorLeaf(1), m:buildDoorLeaf(-1)};
 const _drM=new THREE.Matrix4(),_drQ=new THREE.Quaternion(),
-      _drP=new THREE.Vector3(),_drS=new THREE.Vector3(1,1,1);   // scale.z で左右を反転する
+      _drP=new THREE.Vector3(),_drS=new THREE.Vector3(1,1,1);
 // 開度 r(0=閉/1=開)を反映する。side は開ける面(車体ローカルzの符号)。
 function setCarDoors(c,r,side){
   const d=c.userData&&c.userData.doors;
   if(!d) return;
   const zf=K8.W/2-DOOR_REC/2;   // 扉は戸袋の凹みの"内側"を滑る
-  let i=0;
   for(const sz of [1,-1]){
     const op=(sz===side)?r:0;                    // 開くのはホームに面した側だけ
+    const inst=(sz>0)?d.p:d.m;                   // 面ごとに専用ジオメトリ(鏡像は巻き順も反転)
+    let i=0;
     for(const dx of K8.DOORX){
       for(const sg of [-1,1]){
         _drP.set(dx+sg*(DOOR_HW+DOOR_SLIDE*op), 0, sz*zf);
-        // 扉の板は1つのジオメトリを左右に配置する。窓・框は+z側へ数mm出してあるので、
-        // -z側では z を反転しないと窓が板の裏側に回って見えなくなる。
-        _drS.set(1,1,sz);
         _drM.compose(_drP,_drQ,_drS);
-        d.inst.setMatrixAt(i++,_drM);
+        inst.setMatrixAt(i++,_drM);
       }
     }
+    inst.instanceMatrix.needsUpdate=true;
   }
-  d.inst.instanceMatrix.needsUpdate=true;
   d.r=r; d.side=side;
 }
 
@@ -1915,17 +1930,20 @@ const M_AC =M(0x9199a0), M_ACL=M(0xa6adb3), M_DUCT=M(0x8b9299),
       M_HL =new THREE.MeshLambertMaterial({color:0xffffff,emissive:0xc8ced6}),   // 前照灯(白)
       M_TL =new THREE.MeshLambertMaterial({color:0xd8342e,emissive:0x63120f}),   // 尾灯(赤)
       M_SIGNT=new THREE.MeshLambertMaterial({color:0xc60052,emissive:0x4d0020,side:THREE.DoubleSide}),
-      M_SIGND=new THREE.MeshLambertMaterial({color:0x121212,emissive:0x8a4a08,side:THREE.DoubleSide}),
+      M_SIGND=new THREE.MeshLambertMaterial({color:0xf0f0ee,emissive:0x54544e,side:THREE.DoubleSide}),
       M_CPL=M(0x3a3f45), M_HOOD=M(0x23262a);
 /* 屋根上:集中式冷房装置 48.84kW を1両1基。
    キセ(外箱)は低く幅広で、天面に凝縮器ファンのグリルが2つ並ぶ。
    両脇に低い段(点検蓋)を付け、前後へ冷風ダクトのカバーが伸びる。 */
-const AC_L=2.10, AC_W=1.98, AC_H=0.42;
+const AC_LONG=1.70;                    // キセの長さを1.7倍にする(実地確認)
+const AC_L=2.10*AC_LONG, AC_W=1.98, AC_H=0.42;
+// ダクトカバーはキセの外側から車端の手前まで(キセと重ならない長さを毎回求める)
+const DUCT_I=AC_L/2+0.12, DUCT_O=K8.LEN/2-1.10, DUCT_C=(DUCT_I+DUCT_O)/2;
 const G_AC  =new THREE.BoxGeometry(AC_L,AC_H,AC_W);              // キセ本体
 const G_ACT =new THREE.BoxGeometry(AC_L-0.24,0.06,AC_W-0.22);    // 天板
-const G_ACF =new THREE.CylinderGeometry(0.34,0.34,0.07,18);      // ファングリル(2つ)
+const G_ACF =new THREE.CylinderGeometry(0.40,0.40,0.07,18);      // ファングリル(2つ)
 const G_ACS =new THREE.BoxGeometry(AC_L+0.10,0.10,0.26);         // 側面の点検蓋
-const G_DUCT=new THREE.BoxGeometry(5.80,0.10,1.06);              // 前後へ伸びるダクトカバー
+const G_DUCT=new THREE.BoxGeometry(DUCT_O-DUCT_I,0.10,1.06);     // 前後へ伸びるダクトカバー
 // 床下(機器を個別に分けて"箱ひとつ"感をなくす)
 const G_VVVF=new THREE.BoxGeometry(3.10,0.62,2.06);      // 主制御器(VVVF)
 const G_SIV =new THREE.BoxGeometry(2.20,0.58,1.94);      // 静止形インバータ
@@ -1944,15 +1962,17 @@ const G_MOT =new THREE.CylinderGeometry(0.24,0.24,0.70,14);  // 主電動機
 /* パンタグラフ(シングルアーム型)。
    菱形と違い、下枠は後方の軸からのみ立ち上がり、膝で折れて上枠が舟体へ戻る。
    側面から見て「く」の字になるのが特徴。台枠は碍子4個で屋根に載る。 */
+// 舟体の高さは"すり板がトロリ線に接する"ように決める(架線を突き抜けない)
+const PT_TOP=WIRE_TRO-(K8.ROOF+0.06+0.30)-0.055;
 const PT={
   BASE:0.06,      // 台枠の高さ(屋根面から)
   INS :0.30,      // 碍子の高さ
   PIVX:-0.95,     // 下枠の軸(後方寄り。シングルアームなので片側だけ)
   KNEX: 0.00,     // 膝(下枠と上枠の継ぎ目)。「く」の字の折れ目はパンタの中央に置く
-  KNEY: 0.86,     // 膝の高さ(台枠から)
+  // 膝の高さは舟体の62%。ここを高くすると上枠がほぼ水平になり「フ」の字に見える
+  KNEY: PT_TOP*0.62,
   TOPX:-0.52,     // 舟体の前後位置(上枠は膝から後方へ戻る)
-  // 舟体の高さは"すり板がトロリ線に接する"ように決める(架線を突き抜けない)
-  TOPY: WIRE_TRO-(K8.ROOF+0.06+0.30)-0.055,
+  TOPY: PT_TOP,
   ZLOW:0.13,      // 下枠の左右位置(±)
   ZUPP:0.09,      // 上枠の左右位置(±)
   ZBAS:0.84,      // 台枠の左右位置(±)
@@ -2019,14 +2039,22 @@ function addPanto(g,px,addFine){
 const LAMP_K=1.30;
 // 灯具の高さは指示により床面(車体底面)から200mm。左右位置と間隔は仕様書どおり。
 const LY=fy(200), LZ=fz(950), LGAP=fz(60*LAMP_K);
-const SGY=fy(2350);                                     // 表示器の高さ
+/* 表示器は前面窓の上隅に置く。正面から見て左上=種別(赤)/右上=行先(白)。
+   車体ローカル+z は正面から見て"左"(視線が-x、上が+y なので右手は-z)。
+   左右位置はガラスの実際の半幅から決める(角丸で狭まるので固定値だと外へ出る)。 */
+const SGH=fh(150), SGY=fy(2350);                        // 表示器の高さと寸法
+const SGW_T=fz(400), SGW_D=fz(600);                     // 種別/行先の幅
+const SGZ=(function(){                                  // 上隅に寄せた中心位置
+  const hw=glassHalf(SGY+SGH/2)-0.04;                   // 表示器の上端でのガラス半幅
+  return {T:hw-SGW_T/2, D:-(hw-SGW_D/2)};
+})();
 const G_LCASE={}, G_SIGNT={}, G_SIGND={};
 for(const k of [['f',1],['r',-1]]){
   const s=k[1];
   G_LCASE[k[0]]=[ buildFacePanelGeo(s, LZ,fz(300*LAMP_K),LY,fh(120*LAMP_K),0.014),
                   buildFacePanelGeo(s,-LZ,fz(300*LAMP_K),LY,fh(120*LAMP_K),0.014) ];
-  G_SIGNT[k[0]]=buildFacePanelGeo(s,fz(-650),fz(400),SGY,fh(150),0.022);   // 種別(左)
-  G_SIGND[k[0]]=buildFacePanelGeo(s,fz( 450),fz(600),SGY,fh(150),0.022);   // 行先(右)
+  G_SIGNT[k[0]]=buildFacePanelGeo(s,SGZ.T,SGW_T,SGY,SGH,0.022);   // 種別(赤・左上)
+  G_SIGND[k[0]]=buildFacePanelGeo(s,SGZ.D,SGW_D,SGY,SGH,0.022);   // 行先(白・右上)
 }
 const HL_K=1.30;   // 前照灯だけさらに一回り大きくする(実地確認)
 const G_LAMP=new THREE.CylinderGeometry(fz(80*LAMP_K)/2,fz(80*LAMP_K)/2,0.05,16);      // 尾灯
@@ -2068,9 +2096,11 @@ function makeCar(livery,panto,cabF,cabR){
   if(cabF) g.add(new THREE.Mesh(FACEGEO.f,TRIMMAT));
   if(cabR) g.add(new THREE.Mesh(FACEGEO.r,TRIMMAT));
   {                                    // 客用扉(4箇所×2枚×左右2面=16枚)
-    const inst=new THREE.InstancedMesh(G_DOORLEAF,TRIMMAT,K8.DOORX.length*4);
-    g.add(inst);
-    g.userData.doors={inst:inst,r:-1,side:1};
+    const n=K8.DOORX.length*2;
+    const ip=new THREE.InstancedMesh(G_DOORLEAF.p,TRIMMAT,n);   // +z面
+    const im=new THREE.InstancedMesh(G_DOORLEAF.m,TRIMMAT,n);   // -z面
+    g.add(ip); g.add(im);
+    g.userData.doors={p:ip,m:im,r:-1,side:1};
     setCarDoors(g,0,1);
   }
   // 屋根上:集中式冷房1基+前後のダクトカバー
@@ -2078,13 +2108,13 @@ function makeCar(livery,panto,cabF,cabR){
     const y0=K8.ROOF+AC_H/2-0.04;
     const ac=new THREE.Mesh(G_AC ,M_AC ); ac.position.set(0,y0,0); g.add(ac);
     const at=new THREE.Mesh(G_ACT,M_ACL); at.position.set(0,y0+AC_H/2+0.02,0); g.add(at);
-    for(const fx of [-0.52,0.52]){                       // 凝縮器ファンのグリル
+    for(const fx of [-AC_L*0.25,AC_L*0.25]){             // 凝縮器ファンのグリル
       const fn=addFine(new THREE.Mesh(G_ACF,M_ACL));
       fn.position.set(fx,y0+AC_H/2+0.07,0);
     }
     for(const sz of [-1,1])                              // 側面の点検蓋
       addFine(new THREE.Mesh(G_ACS,M_ACL)).position.set(0,y0-0.06,sz*(AC_W/2-0.06));
-    for(const dx of [-4.30,4.30]){
+    for(const dx of [-DUCT_C,DUCT_C]){
       const du=new THREE.Mesh(G_DUCT,M_DUCT); du.position.set(dx,K8.ROOF+0.02,0); g.add(du);
     }
   }

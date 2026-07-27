@@ -303,16 +303,18 @@ ok('上限速度を超えない', vmax <= REF.VMAX_KMH + 0.5, '≤' + REF.VMAX_K
   // 7-4 各車両に16枚(4箇所×2枚×左右)の扉があるか
   {
     const c = X.trains[0].cars[0];
-    const n = c.userData.doors ? c.userData.doors.inst.count : 0;
+    const d = c.userData.doors;
+    const n = d ? d.p.count + d.m.count : 0;
     ok('1両あたりの扉の枚数', n === 16, '16枚(4箇所×2枚×左右)', n + '枚');
   }
   // 7-5 開いたとき、ホーム側の扉だけが実際に動いているか(配置行列を測る)
   {
     const c = X.trains[0].cars[0];
     X.setCarDoors(c, 0, 1);
-    const closed = c.userData.doors.inst.mats.map((m) => m.p.x);
+    const dm = (q) => q.p.mats.concat(q.m.mats).map((m) => m.p.x);
+    const closed = dm(c.userData.doors);
     X.setCarDoors(c, 1, 1);
-    const open = c.userData.doors.inst.mats.map((m) => m.p.x);
+    const open = dm(c.userData.doors);
     const move = open.map((v, i) => Math.abs(v - closed[i]));
     const nearSide = move.slice(0, 8), farSide = move.slice(8);
     const slid = nearSide.every((v) => v > 0.3), still = farSide.every((v) => v < 1e-9);
