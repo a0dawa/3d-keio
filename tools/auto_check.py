@@ -24,7 +24,9 @@ TOL = 0.02
 
 BAND_DROP = 364     # 実地確認による帯の下げ量[mm](0.350m相当)
 LAMP_K = 1.30       # 実地確認による灯具の拡大率
-RED_THICK = 1.20    # 赤帯を仕様書の150mmから20%太くする
+RED_THICK = 1.44    # 側面の赤帯(仕様書150mmからの倍率)
+FRED_THICK = 1.56   # 前/後面の赤帯
+SIDE_RED_UP = 0.10  # 側面の赤帯だけ10cm上げる
 
 # [B] 実車写真の実測値[m]
 REF_VAL = {
@@ -38,7 +40,8 @@ REF_VAL = {
 REF_SPEC_MM = {
     '京王ブルー帯 下端': 900 - BAND_DROP,
     '京王ブルー帯 上端': 950 - BAND_DROP,
-    '京王レッド帯 上端': 950 + 150 * RED_THICK - BAND_DROP,
+    # 側面の赤帯は基準面(950-BAND_DROP)から SIDE_RED_UP 上げた位置に始まる。
+    # mm系の表では上げ量を扱えないので、上端は verify_car.js(実寸)側で見る。
     '前面窓 下端': 1200 - BAND_DROP,      # 帯を下げたぶん窓を下へ広げる
     '前面窓 上端': 2500,
     'ガラス半幅': 1350,
@@ -49,14 +52,18 @@ REF_SPEC_MM = {
 }
 
 
+SPY_MM = (3.640 - 0.950) / 2800.0    # [D]の1mmあたりの実寸[m](全高2800mm ⇔ 屋根-床)
+
+
 def main():
     src = open(HTML, encoding='utf-8').read()
     ng = 0
 
     # 実地調整の定数をHTMLから読み、式の評価に使う
     env = {}
-    for name in ('BAND_DROP', 'LAMP_K', 'RED_THICK'):
-        m = re.search(r'const %s\s*=\s*(-?[\d.]+)\s*;' % name, src)
+    for name in ('BAND_DROP', 'LAMP_K', 'RED_THICK', 'FRED_THICK', 'SIDE_RED_UP'):
+        # 1行に複数宣言する場合があるので、区切りは ; か , のどちらでも拾う
+        m = re.search(r'\b%s\s*=\s*(-?[\d.]+)\s*[;,]' % name, src)
         if not m:
             print('NG: %s が見つからない' % name)
             sys.exit(1)
@@ -91,7 +98,7 @@ def main():
     mdl_spec = {
         '京王ブルー帯 下端': expr(r'const BLU=\[fy\(([^)]+)\)', 'BLU下端'),
         '京王ブルー帯 上端': expr(r'const BLU=\[fy\([^)]+\),fy\(([^)]+)\)\]', 'BLU上端'),
-        '京王レッド帯 上端': expr(r'RED=\[fy\([^)]+\),fy\(([^)]+)\)\]', 'RED上端'),
+
         '前面窓 下端': expr(r'const FWIN=\{B:fy\(([^)]+)\)', 'FWIN下端'),
         '前面窓 上端': expr(r'const FWIN=\{B:fy\([^)]+\),\s*T:fy\(([^)]+)\)\}', 'FWIN上端'),
         'ガラス半幅': expr(r'const GZ=fz\(([^)]+)\)', 'GZ'),
@@ -109,11 +116,11 @@ def main():
         ng += 0 if ok else 1
         print('%-18s %14.3f %14.3f %8.3f  %s' % (k, v, mdl_val[k], d, 'OK' if ok else 'NG'))
 
-    # 側窓は「帯の上10cm→上下30cm切詰→高さ+10%」という関係で決まる。式の形で確認する。
-    ok = ('RED[1]+0.10+WIN_TRIM' in src) and ('WIN_GROW' in src)
+    # 側窓は「基準面+10cm→上下30cm切詰→拡大→下げ」という関係で決まる。式の形で確認する。
+    ok = ('WIN_REF+0.10+WIN_TRIM' in src) and ('WIN_GROW' in src) and ('WIN_DROP' in src)
     ng += 0 if ok else 1
-    print('%-18s %14s %14s %8s  %s' % ('側窓の決め方', '帯+10cm/切詰/+10%',
-                                       '帯+10cm/切詰/+10%' if ok else '別の決め方', '-',
+    print('%-18s %14s %14s %8s  %s' % ('側窓の決め方', '基準+10cm/切詰/拡大/下げ',
+                                       '基準+10cm/切詰/拡大/下げ' if ok else '別の決め方', '-',
                                        'OK' if ok else 'NG'))
     # 戸袋窓は幅を30%狭めて角丸にする
     ok = ('POCKET_NARROW' in src) and ('roundWindow(' in src)
@@ -149,14 +156,25 @@ def main():
         ng += 0 if ok else 1
         print('%-18s %14.0f %14.0f %8.0f  %s' % (k, v, g, g - v, 'OK' if ok else 'NG'))
 
-    # 帯の並び:[D] §6 では青が下の細帯、赤が上の太帯で、隙間なく接する
+    # 帯の並び:[D] §6 では青が下の細帯、赤が上の太帯。
+    # 実地確認により側面の赤帯だけ SIDE_RED_UP だけ上げてあるので、青帯の上端から
+    # その量だけ上に赤帯が始まり、青帯より太いことを mm 系で確かめる。
     blu = (mdl_spec['京王ブルー帯 下端'], mdl_spec['京王ブルー帯 上端'])
-    red_t = mdl_spec['京王レッド帯 上端']
-    ok = red_t > blu[1] and (red_t - blu[1]) > (blu[1] - blu[0])
+    up_mm = env['SIDE_RED_UP'] / SPY_MM          # 実寸[m] → 仕様書の mm 系へ
+    red_b = blu[1] + up_mm
+    red_t = red_b + 150 * env['RED_THICK']
+    ok = red_b > blu[1] and (red_t - red_b) > (blu[1] - blu[0])
     ng += 0 if ok else 1
     print()
     print('%-18s %14s %14s %8s  %s' % ('帯の上下', '赤が上で太い',
                                        '赤が上で太い' if ok else '不一致', '-', 'OK' if ok else 'NG'))
+    # 前/後面の赤帯は側面より太い(指示:前後+30% / 側面+20%)
+    ok = env['FRED_THICK'] > env['RED_THICK']
+    ng += 0 if ok else 1
+    print('%-18s %14s %14s %8s  %s' % ('前/後面の赤帯',
+                                       '側面より太い',
+                                       '%.2f>%.2f' % (env['FRED_THICK'], env['RED_THICK'])
+                                       if ok else '細い', '-', 'OK' if ok else 'NG'))
 
     # BANDS 表が下から順に隙間なく並んでいること(境界が同じ式で書かれているか)
     bands = [(a.strip(), b.strip(), c) for a, b, c
@@ -170,10 +188,12 @@ def main():
     print('%-18s %14s %14s %8s  %s' % ('BANDSの連続性', '隙間なし',
                                        '隙間なし' if ok else '段%s で不連続' % gap, '-',
                                        'OK' if ok else 'NG'))
+    # 下から 腰板/青帯/(隙間)/赤帯/幕板/屋根。赤帯を上げたぶんの隙間が1段入る。
     seq = [b[2] for b in bands]
-    ok = seq == ['stl', 'navy', 'red', 'stl', 'roof']
+    want = ['stl', 'navy', 'stl', 'red', 'stl', 'roof']
+    ok = seq == want
     ng += 0 if ok else 1
-    print('%-18s %14s %14s %8s  %s' % ('帯の並び順', 'stl/navy/red/stl/roof',
+    print('%-18s %14s %14s %8s  %s' % ('帯の並び順', '/'.join(want),
                                        '/'.join(seq), '-', 'OK' if ok else 'NG'))
 
     # 曲線追従の直方体(cbox)に上面と下面の両方があること。
