@@ -11,7 +11,7 @@ const X = require('./stub_three')(path,
   'driveTrain:driveTrain,DRIVE:DRIVE,DWELL_OF:DWELL_OF,CAR_HALF:CAR_HALF,K8:K8,' +
   'mainOff:mainOff,runOff:runOff,DOM:DOM,STOP_BACK:STOP_BACK,' +
   'PSD:PSD,stepPSD:stepPSD,trains:trains,stepCarDoors:stepCarDoors,setCarDoors:setCarDoors,' +
-  'sideWindows:sideWindows,DOOR_HW:DOOR_HW,DOOR_SLIDE:DOOR_SLIDE');
+  'sideWindows:sideWindows,DOOR_HW:DOOR_HW,DOOR_SLIDE:DOOR_SLIDE,frame:frame');
 
 /* ---- 期待値(検証側が独立して持つ) ---------------------------------------- */
 const REF = {
@@ -199,19 +199,40 @@ ok('上限速度を超えない', vmax <= REF.VMAX_KMH + 0.5, '≤' + REF.VMAX_K
   ok('停車中に客用扉が開く', opened > 0.98, '開度>0.98', opened.toFixed(3));
   ok('走行中は客用扉が閉じる', closed < 0.01, '開度<0.01', closed.toFixed(3));
   ok('開くのはホーム側だけ', side === p.side, 'ホーム側(' + p.side + ')', String(side));
-  // 7-2 全ての駅・方向でホーム側の判定が付いているか
+  // 7-2 ホーム側の判定を検証側で"独立に"計算して突き合わせる。
+  //     モデルが持つ p.side と比べるだけでは、p.side 自体が間違っていても素通りする
+  //     (実際に左右が逆のまま素通りしていた)。seatCar と同じ式 R = F × UP から、
+  //     車体ローカル+z がワールドの ±off どちらを向くかを検証側で求める。
+  {
+    let bad = null;
+    for (const q of X.PSD) {
+      const s = q.st.x;
+      const pA = X.frame(s - 1, 0), pB = X.frame(s + 1, 0);
+      const pO = X.frame(s, 0), pN = X.frame(s, 1);
+      let fx = pB.x - pA.x, fz = pB.z - pA.z;
+      if (q.dir < 0) { fx = -fx; fz = -fz; }
+      const rx = -fz, rz = fx;                       // R = F × (0,1,0)
+      const lz = (rx * (pN.x - pO.x) + rz * (pN.z - pO.z)) > 0 ? 1 : -1;
+      const ro = X.runOff(s), trackOff = q.dir > 0 ? -ro : ro;
+      const want = (q.off > trackOff ? 1 : -1) * lz;
+      if (want !== q.side && !bad) bad = [q.st.n, q.dir > 0 ? '下り' : '上り',
+        'モデル' + (q.side > 0 ? '+z' : '-z') + '/正解' + (want > 0 ? '+z' : '-z')];
+    }
+    ok('開く面がホーム側と一致', bad === null, '20列すべて', bad ? bad.join(' ') : '20列すべて一致');
+  }
+  // 7-3 全ての駅・方向でホーム側の判定が付いているか
   {
     const bad = X.PSD.filter((q) => q.side !== 1 && q.side !== -1);
     ok('全扉列でホーム側が定まる', bad.length === 0, '20列すべて',
       bad.length ? bad[0].st.n + ' 未定' : '20列すべて');
   }
-  // 7-3 各車両に16枚(4箇所×2枚×左右)の扉があるか
+  // 7-4 各車両に16枚(4箇所×2枚×左右)の扉があるか
   {
     const c = X.trains[0].cars[0];
     const n = c.userData.doors ? c.userData.doors.inst.count : 0;
     ok('1両あたりの扉の枚数', n === 16, '16枚(4箇所×2枚×左右)', n + '枚');
   }
-  // 7-4 開いたとき、ホーム側の扉だけが実際に動いているか(配置行列を測る)
+  // 7-5 開いたとき、ホーム側の扉だけが実際に動いているか(配置行列を測る)
   {
     const c = X.trains[0].cars[0];
     X.setCarDoors(c, 0, 1);
@@ -225,7 +246,7 @@ ok('上限速度を超えない', vmax <= REF.VMAX_KMH + 0.5, '≤' + REF.VMAX_K
     ok('反対側の扉は動かない', still, '8枚とも静止', farSide.filter((v) => v < 1e-9).length + '/8枚');
     X.setCarDoors(c, 0, 1);
   }
-  // 7-5 扉が全開したとき、隣の客用窓に被らないか(戸袋の幅が足りているか)
+  // 7-6 扉が全開したとき、隣の客用窓に被らないか(戸袋の幅が足りているか)
   {
     const win = X.sideWindows(false, false);
     let over = 0, minGap = 9;

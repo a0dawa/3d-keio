@@ -813,6 +813,16 @@ const hachiT=x=>plateau(x,HACHI_C,118,150);
 const hachiStopOff=x=>2.0+2.55*hachiT(x);           // 停車線(6章で敷設しているものと同一)
 function runOff(x){const w=hachiT(x);return mainOff(x)*(1-w)+hachiStopOff(x)*w;}
 const zRunDown=x=>-runOff(x), zRunUp=x=>runOff(x);  // 自動運転の"停車列車"が走る位置
+// 車体ローカル+z がワールドの +off / -off のどちらを向くか。
+// seatCar と同じ式(R = F × UP)で実際に計算する。
+// この路線は s が西へ増えるので、素朴に「+zは南」と決め打つと左右が逆になる。
+function localZSign(s,dir){
+  const pA=frame(s-1,0), pB=frame(s+1,0), pO=frame(s,0), pN=frame(s,1);
+  let fx=pB.x-pA.x, fz=pB.z-pA.z;
+  if(dir<0){ fx=-fx; fz=-fz; }
+  const rx=-fz, rz=fx;                      // R = F × (0,1,0)
+  return (rx*(pN.x-pO.x)+rz*(pN.z-pO.z))>0 ? 1 : -1;
+}
 // ※運転モード(手動)は自動運転ではないので、従来どおり本線(外側の通過線)を走る
 // 架線:ちょう架線(柱間で垂れる)+トロリ線(その真下)+ハンガー(吊り線)。
 // 横位置は必ず線路と同じ zf を使う=架線は線路の真上にしか張られない。
@@ -1301,11 +1311,17 @@ const BANDS=[
 ];
 // 側窓は「帯の上10cmから上」。帯を下げたぶん下端も下がり、上端はそのまま。
 // 前/後面の赤帯は側面よりさらに下げる(青帯の高さは前後・側面で同じ)。
-const FRED_DROP=0.40;
+const FRED_DROP=0.33;   // 0.40から7cm上げた(実地確認)
 const FRED=[RED[0]-FRED_DROP, RED[1]-FRED_DROP];
-// 側窓。「帯の上10cm」を下端とし、そこから上下を30cmずつ切り詰める(中心位置は不変)。
-const WIN_TRIM=0.30;
-const WIN ={B:RED[1]+0.10+WIN_TRIM, T:3.05-WIN_TRIM};
+// 側窓。「帯の上10cm」を下端とし、そこから上下を30cmずつ切り詰めたうえで、
+// 中心位置を保ったまま高さを10%大きくする(実地確認)。
+const WIN_TRIM=0.30, WIN_GROW=1.10;
+const WIN=(function(){
+  const b=RED[1]+0.10+WIN_TRIM, t=3.05-WIN_TRIM, c=(b+t)/2, h=(t-b)*WIN_GROW/2;
+  return {B:c-h, T:c+h};
+})();
+const POCKET_NARROW=0.70;   // 戸袋窓は同じ中心で幅を30%狭める
+const POCKET_R=0.075;       // 戸袋窓の角丸半径[m]
 // 前面窓は帯を下げたぶん下へ広げる(上端はそのまま=窓が大きくなる)
 const FWIN={B:fy(1200-BAND_DROP), T:fy(2500)};
 // 扉窓の下端。帯の上に必ず出るようにする(帯を下げても窓が帯へ食い込まない)
@@ -1329,6 +1345,9 @@ function bandAtFront(y){
 /* ---- 9-4. 断面と車体ロフト -------------------------------------------------
    ストレート車体(裾絞りなし)+丸屋根。断面を車長方向にスイープする。          */
 const EPS=0.004;
+// 客用扉の開口。外板に穴を開け、DOOR_REC だけ奥まった戸袋(内壁)を作る。
+// 扉はこの凹みの"内側"を滑るので、開くと車内が見える。
+const DOOR_Y0=K8.FLOOR+0.06, DOOR_Y1=K8.SHLD-0.10, DOOR_REC=0.07;
 function uniqSorted(a,tol){
   const s=a.slice().sort((p,q)=>p-q), o=[s[0]];
   for(const v of s) if(v-o[o.length-1]>(tol||0.0015)) o.push(v);
@@ -1340,6 +1359,7 @@ const BAND_YS=(function(){
   const f=[K8.FLOOR];
   for(const b of BANDS) for(const k of [b.y0,b.y1])
     if(k>K8.FLOOR+0.02&&k<K8.SHLD-0.02){ f.push(k-EPS); f.push(k+EPS); }
+  f.push(DOOR_Y0); f.push(DOOR_Y1);   // 扉の開口の上下端(ここで外板に穴を開ける)
   return uniqSorted(f);
 })();
 function sideYs(ys,nFill){
@@ -1420,11 +1440,35 @@ function buildBodyGeo(cabF,cabR,LP){
   }
   // 断面リングは閉じた多角形として扱う(k+1 を巡回させる)。
   // 巡回させないと車体の"床"が張られず、下から見ると中が透けて見える。
+  // 客用扉の位置だけは外板を張らず、穴を開けて奥に戸袋(内壁)を作る。
+  const inDoor=(xm,ya,yb,za,zb)=>
+    Math.abs(za-zb)<1e-6 && Math.abs(Math.abs(za)-K8.W/2)<0.02 &&
+    Math.min(ya,yb)>DOOR_Y0-1e-6 && Math.max(ya,yb)<DOOR_Y1+1e-6 &&
+    K8.DOORX.some(d=>Math.abs(xm-d)<K8.DOORW/2-1e-6);
   for(let i=0;i<rings.length-1;i++){
     const A=rings[i],B=rings[i+1];
     for(let k=0;k<A.length;k++){
       const k2=(k+1)%A.length;
+      const xm=(P[A[k]*3]+P[B[k]*3])/2;
+      if(inDoor(xm,P[A[k]*3+1],P[A[k2]*3+1],P[A[k]*3+2],P[A[k2]*3+2])) continue;
       I.push(A[k],B[k],B[k2]); I.push(A[k],B[k2],A[k2]);
+    }
+  }
+  // 戸袋(奥まった開口)。外向きの法線を保つため、-z側は頂点の並びを逆にする。
+  for(const dx of K8.DOORX){
+    const a=dx-K8.DOORW/2, b=dx+K8.DOORW/2;
+    for(const sz of [1,-1]){
+      const zo=sz*K8.W/2, zi=sz*(K8.W/2-DOOR_REC);
+      const quad=(q0,q1,q2,q3)=>{
+        const v=[q0,q1,q2,q3].map(q=>vtx(q[0],q[1],q[2],PAL.void));
+        if(sz>0){ I.push(v[0],v[1],v[2]); I.push(v[0],v[2],v[3]); }
+        else    { I.push(v[3],v[2],v[1]); I.push(v[3],v[1],v[0]); }
+      };
+      quad([a,DOOR_Y0,zi],[b,DOOR_Y0,zi],[b,DOOR_Y1,zi],[a,DOOR_Y1,zi]);   // 内壁
+      quad([a,DOOR_Y0,zo],[b,DOOR_Y0,zo],[b,DOOR_Y0,zi],[a,DOOR_Y0,zi]);   // 下の見込み
+      quad([a,DOOR_Y1,zi],[b,DOOR_Y1,zi],[b,DOOR_Y1,zo],[a,DOOR_Y1,zo]);   // 上の見込み
+      quad([a,DOOR_Y0,zo],[a,DOOR_Y0,zi],[a,DOOR_Y1,zi],[a,DOOR_Y1,zo]);   // 左の見込み
+      quad([b,DOOR_Y0,zi],[b,DOOR_Y0,zo],[b,DOOR_Y1,zo],[b,DOOR_Y1,zi]);   // 右の見込み
     }
   }
   // 両端を面で閉じる。先頭側は後傾した前面、連結側は平らな妻面。
@@ -1496,8 +1540,10 @@ function pocketWindows(cabF,cabR){
   const out=[], half=K8.LEN/2, hw=K8.DOORW/2;
   for(const dx of K8.DOORX) for(const sg of [-1,1]){
     const a=dx+sg*hw, b=a+sg*PIER_END;
-    const lo=Math.min(a,b)+0.07, hi=Math.max(a,b)-0.07;
-    if(hi-lo<0.25) continue;
+    let lo=Math.min(a,b)+0.07, hi=Math.max(a,b)-0.07;
+    const c=(lo+hi)/2, w=(hi-lo)*POCKET_NARROW/2;      // 中心を保って幅を狭める
+    lo=c-w; hi=c+w;
+    if(hi-lo<0.15) continue;
     if(cabF&&hi> half-K8.CAB) continue;      // 乗務員室側には置かない
     if(cabR&&lo<-half+K8.CAB) continue;
     out.push([lo,hi]);
@@ -1534,26 +1580,44 @@ function sideWindow(P,C,I,x0,x1,y0,y1,zf,zg){
   pushQuad(P,C,I,[x0+f,y0+f,zg(x0+f)],[x1-f,y0+f,zg(x1-f)],
                  [x1-f,y1-f,zg(x1-f)],[x0+f,y1-f,zg(x0+f)],PAL.glass,PAL.glassT);
 }
+// 角丸の窓。上下の隅を半径rで丸める(戸袋窓に使う)。
+function roundWindow(P,C,I,x0,x1,y0,y1,zf,zg,r){
+  const xc=(x0+x1)/2, hw=(x1-x0)/2, yc=(y0+y1)/2, hh=(y1-y0)/2, f=0.045;
+  const rr=Math.min(r,hw*0.85,hh*0.85);
+  const halfAt=(y,sh)=>{           // その高さでの半幅(shだけ内側に縮めた輪郭)
+    const w=hw-sh, h=hh-sh, q=Math.max(0,Math.min(rr,w*0.85,h*0.85));
+    const d=Math.abs(y-yc)-(h-q);
+    if(d<=0) return w;
+    const v=q*q-d*d;
+    return w-q+(v>0?Math.sqrt(v):0);
+  };
+  const N=12;
+  for(const lay of [{sh:0,zz:zf,c:PAL.sash,c2:PAL.sash},
+                    {sh:f,zz:zg,c:PAL.glass,c2:PAL.glassT}]){
+    const yA=yc-(hh-lay.sh), yB=yc+(hh-lay.sh);
+    for(let i=0;i<N;i++){
+      const ya=yA+(yB-yA)*i/N, yb=yA+(yB-yA)*(i+1)/N;
+      const ha=halfAt(ya,lay.sh), hb=halfAt(yb,lay.sh);
+      if(ha<=0||hb<=0) continue;
+      pushQuad(P,C,I,[xc-ha,ya,lay.zz(xc-ha)],[xc+ha,ya,lay.zz(xc+ha)],
+                     [xc+hb,yb,lay.zz(xc+hb)],[xc-hb,yb,lay.zz(xc-hb)],
+               lay.c,lay.sh?lay.c2:lay.c);
+    }
+  }
+}
 function buildTrimGeo(cabF,cabR){
   const P=[],C=[],I=[];
   const hwAt=x=>shapeAt(x,cabF,cabR).hw;      // その位置の車体半幅(先頭部の絞りを含む)
   for(const sz of [1,-1]){
     const zo=o=>(x=>sz*(hwAt(x)+o));          // 車体表面から o だけ浮かせた面
-    // 客用扉の"開口"(戸袋の奥)。扉そのものは開閉するので別メッシュ(9-7b節)。
-    // 車内なので一様に暗くする。かつ、必ず車体表面より"外側"に置くこと。
-    // 内側に置くと手前の車体シェル(帯を含む)に隠れてしまい、扉が開いても
-    // 帯がそのまま見えて「扉が開いていない」ように見える(実際にそうなっていた)。
-    for(const dx of K8.DOORX){
-      const a=dx-K8.DOORW/2, b=dx+K8.DOORW/2, y0=K8.FLOOR+0.06, y1=K8.SHLD-0.10;
-      const za=zo(0.002)(a), zb=zo(0.002)(b);
-      pushQuad(P,C,I,[a,y0,za],[b,y0,zb],[b,y1,zb],[a,y1,za],PAL.void,PAL.void);
-    }
+    // 客用扉の開口は車体ロフト側で"穴"にして奥まった戸袋を作る(9-4節)。
+    // ここでは何も描かない。
     // 客用窓(扉配置から自動生成)
     for(const w of sideWindows(cabF,cabR))
       sideWindow(P,C,I,w[0],w[1],WIN.B,WIN.T,zo(OUT),zo(OUT*0.5));
-    // 戸袋窓
+    // 戸袋窓(角丸)
     for(const w of pocketWindows(cabF,cabR))
-      sideWindow(P,C,I,w[0],w[1],WIN.B,WIN.T,zo(OUT),zo(OUT*0.5));
+      roundWindow(P,C,I,w[0],w[1],WIN.B,WIN.T,zo(OUT),zo(OUT*0.5),POCKET_R);
     // 乗務員扉・乗務員室側窓
     for(const end of [{s:1,on:cabF},{s:-1,on:cabR}]){
       if(!end.on) continue;
@@ -1676,7 +1740,7 @@ const _drM=new THREE.Matrix4(),_drQ=new THREE.Quaternion(),
 function setCarDoors(c,r,side){
   const d=c.userData&&c.userData.doors;
   if(!d) return;
-  const zf=K8.W/2+OUT*3;
+  const zf=K8.W/2-DOOR_REC/2;   // 扉は戸袋の凹みの"内側"を滑る
   let i=0;
   for(const sz of [1,-1]){
     const op=(sz===side)?r:0;                    // 開くのはホームに面した側だけ
@@ -1826,7 +1890,9 @@ for(const k of [['f',1],['r',-1]]){
   G_SIGNT[k[0]]=buildFacePanelGeo(s,fz(-650),fz(400),SGY,fh(150),0.022);   // 種別(左)
   G_SIGND[k[0]]=buildFacePanelGeo(s,fz( 450),fz(600),SGY,fh(150),0.022);   // 行先(右)
 }
-const G_LAMP=new THREE.CylinderGeometry(fz(80*LAMP_K)/2,fz(80*LAMP_K)/2,0.05,16);
+const HL_K=1.30;   // 前照灯だけさらに一回り大きくする(実地確認)
+const G_LAMP=new THREE.CylinderGeometry(fz(80*LAMP_K)/2,fz(80*LAMP_K)/2,0.05,16);      // 尾灯
+const G_HLAMP=new THREE.CylinderGeometry(fz(80*LAMP_K*HL_K)/2,fz(80*LAMP_K*HL_K)/2,0.05,16);
 const G_CPL =new THREE.BoxGeometry(0.50,0.22,0.30);                   // 連結器
 const G_HOOD=new THREE.BoxGeometry(0.10,1.90,1.02);      // 連結部の幌
 
@@ -1892,7 +1958,7 @@ function makeCar(livery,panto,cabF,cabR){
     for(const cg of G_LCASE[end.k]) g.add(new THREE.Mesh(cg,M_LCASE));   // ライトケース
     for(const sz of [-1,1]){
       const zh=sz*(LZ-LGAP), zt=sz*(LZ+LGAP);            // 内側=前照灯 / 外側=尾灯
-      const hl=addFine(new THREE.Mesh(G_LAMP,M_HL));
+      const hl=addFine(new THREE.Mesh(G_HLAMP,M_HL));
       hl.rotation.z=Math.PI/2; hl.position.set(sg*(frontXAt(LY,zh)+0.034),LY,sg*zh);
       const tl=addFine(new THREE.Mesh(G_LAMP,M_TL));
       tl.rotation.z=Math.PI/2; tl.position.set(sg*(frontXAt(LY,zt)+0.034),LY,sg*zt);
@@ -2062,11 +2128,11 @@ for(const d of PSD_DEF){
       for(const dx of K8.DOORX) open.push(cs+dir*dx);   // 1両4箇所
     }
     open.sort((a,b)=>a-b);
-    // その扉列から見て、列車のどちらの面がホーム側か。
-    // 軌道より内側(off>軌道)ならワールドの+off側。車体ローカルzは
-    // 下り(dir>0)で -off 方向、上り(dir<0)で +off 方向を向くので符号を反転する。
+    // その扉列から見て、列車のどちらの"面"(車体ローカルzの符号)がホーム側か。
+    // ローカル+zが±offのどちらを向くかは線形の向き(この路線はsが西へ増える)と
+    // 進行方向で決まる。符号を推論で決めると間違えるので、実際の姿勢から求める。
     const trackOff=dir>0?-ro:ro;
-    const side=(off>trackOff?1:-1)*(dir>0?-1:1);
+    const side=(off>trackOff?1:-1)*localZSign(st.x,dir);
     CUR=st.kk?KOUKU[st.kk-1].VGs:null;
     // 開口と開口の間の固定部
     let prev=d.x0;
