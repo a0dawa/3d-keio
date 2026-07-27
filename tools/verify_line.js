@@ -14,6 +14,10 @@ const X = require('./stub_three')(path,
   'TRACKS:(typeof TRACKS!=="undefined"?TRACKS:null),' +
   'WIRES:(typeof WIRES!=="undefined"?WIRES:null),' +
   'POLE_S:(typeof POLE_S!=="undefined"?POLE_S:[]),' +
+  'PIERS:(typeof PIERS!=="undefined"?PIERS:[]),' +
+  'parkedCars:parkedCars,YARD_A:YARD_A,YARD_B:YARD_B,YARD_E:YARD_E,YARD_W:YARD_W,K8:K8,' +
+  'INOKASHIRA_X:INOKASHIRA_X,SETAGAYA_X:SETAGAYA_X,BRIDGE:BRIDGE,KAN7_X:KAN7_X,' +
+  'KANPACHI_X:KANPACHI_X,XINGS:XINGS,' +
   'WIRE_CAT:WIRE_CAT,WIRE_TRO:WIRE_TRO,BEAM_LOW:BEAM_LOW,POLE_TOP:POLE_TOP');
 
 /* ---- 設計上の要件(検証側が独立して持つ) ---------------------------------- */
@@ -99,6 +103,81 @@ if (X.TRACKS && X.WIRES) {
       if (gap > 1 && (!bad || gap > bad[1])) bad = [t.id, gap];
     }
     ok('架線が線路の全長を覆う', bad === null, '未架設≤1m', bad ? bad[0] + ' ' + bad[1].toFixed(0) + 'm' : '全長を覆う');
+  }
+  // 2-4b 架線は架線柱の間で直線であること
+  //      線路のように滑らかな曲線にしてはいけない(実物は吊り点を結んだ折れ線)。
+  {
+    const poleSet = new Set(X.POLE_S.map((v) => v.toFixed(3)));
+    let bad = null, spans = 0;
+    for (const w of X.WIRES) {
+      if (!w.nodes) { bad = bad || [w.id, '節点の記録が無い']; continue; }
+      // 節点は「両端」と「架線柱の真下」だけ
+      for (let i = 1; i < w.nodes.length - 1; i++)
+        if (!poleSet.has(w.nodes[i].toFixed(3)) && !bad)
+          bad = [w.id, 's=' + w.nodes[i].toFixed(1) + ' は柱の位置でない'];
+      // トロリ線は節点だけで構成される=柱間に中間点が無い=直線
+      if (w.troN !== w.nodes.length && !bad)
+        bad = [w.id, 'トロリ線に中間点 ' + (w.troN - w.nodes.length) + '点'];
+      // ちょう架線は垂れのぶんだけ中間点を持つ(平面では弦のまま)
+      const want = (w.nodes.length - 1) * w.sagN + 1;
+      if (w.catN !== want && !bad) bad = [w.id, 'ちょう架線の点数 ' + w.catN + '≠' + want];
+      spans += w.nodes.length - 1;
+    }
+    ok('架線柱間が直線', bad === null, '節点=柱の真下のみ',
+      bad ? bad.join(' ') : spans + 'スパンすべて');
+  }
+  /* 2-4c 高架下に構造物がある位置に橋脚を立てないこと。
+     柱は桁半幅の内側(±(hw-1.2))に建つので、高架下駅舎の中を貫いてしまう。
+     期待値(駅舎の半長・横断部の幅)は検証側が独立に持つ。 */
+  {
+    const BLDG_HALF = 23;          // 高架下駅舎のs方向の半長[m]
+    // 高架下を横切るもの [名称, s, 柱を立てない半幅[m]]
+    const CROSS = [['井の頭線', X.INOKASHIRA_X, 12], ['世田谷線', X.SETAGAYA_X, 8],
+    ['仙川', X.BRIDGE.s, 12], ['環七', X.KAN7_X, 16], ['環八', X.KANPACHI_X, 18]];
+    for (const g of X.XINGS) CROSS.push(['踏切道 ' + g[0], g[1], 6]);
+    let bad = null;
+    for (const x of X.PIERS) {
+      for (const st of X.STA) {
+        if (st.t === 'ctx' || st.t === 'gnd') continue;      // 高架下駅舎を持たない駅
+        if (Math.abs(x - st.x) < BLDG_HALF && !bad)
+          bad = [st.n + 'の駅舎内', 's=' + x.toFixed(0)];
+      }
+      for (const c of CROSS)
+        if (Math.abs(x - c[1]) < c[2] && !bad) bad = [c[0] + 'の直上', 's=' + x.toFixed(0)];
+    }
+    ok('構造物の上に橋脚が無い', bad === null, '駅舎・横断部に0本',
+      bad ? bad.join(' ') : X.PIERS.length + '本すべて');
+  }
+  /* 2-4d 桜上水の留置線:2本とも東端から西端まで通しで敷かれていること。
+     内側は待避線(副本線北)と同じ位置なので、その一定区間は副本線が受け持つ。
+     区間の継ぎ目に隙間があると「線路が途切れて見える」。 */
+  {
+    const PARK_CARS = 10;                                     // 滞泊は上下方とも10両(指示)
+    const LEN = (PARK_CARS - 1) * X.K8.PITCH + X.K8.LEN;      // 編成長[m]
+    /* そのオフセットに線路がある区間を2m刻みで塗り、途切れ(隙間)を探す。
+       内側は待避線(副本線北)が中央を受け持つので、区間の合成ではなく被覆で見る。 */
+    const cover = (off) => {
+      const seg = []; let run = null;
+      for (let s = X.YARD_E; s <= X.YARD_W + 1e-6; s += 2) {
+        const on = X.TRACKS.some((t) => s >= t.x0 - 1 && s <= t.x1 + 1 && Math.abs(t.zf(s) - off) < 0.15);
+        if (on) { if (!run) { run = [s, s]; seg.push(run); } else run[1] = s; }
+        else run = null;
+      }
+      return seg;
+    };
+    const inner = cover(X.YARD_A), outer = cover(X.YARD_B);
+    const spans = (list) => list.some((q) => q[0] <= X.YARD_E + 2 && q[1] >= X.YARD_W - 2);
+    const show = (list) => list.map((q) => q[0].toFixed(0) + '〜' + q[1].toFixed(0)).join(' / ') || 'なし';
+    ok('留置線(外側)が通しで敷かれる', spans(outer),
+      X.YARD_E.toFixed(0) + '〜' + X.YARD_W.toFixed(0) + 'm', show(outer));
+    ok('留置線(内側)が通しで敷かれる', spans(inner),
+      X.YARD_E.toFixed(0) + '〜' + X.YARD_W.toFixed(0) + 'm', show(inner));
+    ok('滞泊編成の両数', X.parkedCars.length === PARK_CARS * 2,
+      PARK_CARS + '両×2本', X.parkedCars.length + '両');
+    // 編成が収まる長さがあるか(内側は副本線の一定区間より東/西の区間に停める)
+    const fitI = inner.some((q) => q[1] - q[0] >= LEN), fitO = outer.some((q) => q[1] - q[0] >= LEN);
+    ok('留置線に10両が収まる', fitI && fitO, '≥' + LEN.toFixed(0) + 'm',
+      (fitI ? '内側OK' : '内側不足') + ' / ' + (fitO ? '外側OK' : '外側不足'));
   }
   // 2-5 架線の高さの順序:トロリ線 < ちょう架線 < ビーム下弦(部材と干渉しない)
   {
