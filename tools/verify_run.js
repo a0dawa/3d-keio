@@ -11,7 +11,8 @@ const X = require('./stub_three')(path,
   'driveTrain:driveTrain,DRIVE:DRIVE,DWELL_OF:DWELL_OF,CAR_HALF:CAR_HALF,K8:K8,' +
   'mainOff:mainOff,runOff:runOff,DOM:DOM,STOP_BACK:STOP_BACK,' +
   'PSD:PSD,stepPSD:stepPSD,trains:trains,stepCarDoors:stepCarDoors,setCarDoors:setCarDoors,' +
-  'sideWindows:sideWindows,DOOR_HW:DOOR_HW,DOOR_SLIDE:DOOR_SLIDE,frame:frame,PLATS:PLATS');
+  'sideWindows:sideWindows,DOOR_HW:DOOR_HW,DOOR_SLIDE:DOOR_SLIDE,frame:frame,PLATS:PLATS,' +
+  'TRACKS:TRACKS');
 
 /* ---- 期待値(検証側が独立して持つ) ---------------------------------------- */
 const REF = {
@@ -30,6 +31,7 @@ const REF = {
   // 停車列車の来ない側(笹塚の留置線側/待避線に入らない側)は開かない扉列。
   PSD4_STA: ['笹塚', '明大前', '桜上水', '千歳烏山'],
   TACTILE_IN: 0.45,        // 点字ブロックの中心をホーム縁から何m内側に置くか
+  TACTILE_REACH: 3.0,      // ホーム縁の外側これだけ以内に線路があれば「線路側の縁」
   TOL: 1.0,                // 停止位置の許容誤差[m]
 };
 
@@ -234,14 +236,27 @@ ok('上限速度を超えない', vmax <= REF.VMAX_KMH + 0.5, '≤' + REF.VMAX_K
   ok('ホームの登録数', X.PLATS.length >= X.STA.length, X.STA.length + '面以上',
     X.PLATS.length + '面');
   let bt = null, bf = null, bl = null;
+  /* その縁の"外側"に線路があるか。検証側が TRACKS を独立に走査して決める
+     (相対式ホームの外側や単式ホームの背面には線路が無いので敷かない)。 */
+  const facesTrack = (s, edge, sg) => X.TRACKS.some((t) => {
+    if (s < t.x0 - 1 || s > t.x1 + 1) return false;
+    const d = sg * (t.zf(s) - edge);
+    return d >= -0.01 && d <= REF.TACTILE_REACH;
+  });
+  let nTac = 0;
   for (const q of X.PLATS) {
-    // 点字ブロックは両縁から等距離(45cm)内側にあること
+    const mid = (q.x0 + q.x1) / 2;
+    // 点字ブロックは「線路のある縁」から45cm内側にだけ敷く
     for (const sg of [-1, 1]) {
+      const edge = q.off + sg * q.hw;
       const want = q.off + sg * (q.hw - REF.TACTILE_IN);
-      if (!q.tactile.some((o) => Math.abs(o - want) < 1e-6) && !bt)
-        bt = ['off=' + q.off.toFixed(2), '期待' + want.toFixed(2)];
+      const has = q.tactile.some((o) => Math.abs(o - want) < 1e-6);
+      const need = facesTrack(mid, edge, sg);
+      if (need) nTac++;
+      if (has !== need && !bt)
+        bt = ['off=' + q.off.toFixed(2), (sg > 0 ? '外' : '内') + '縁',
+        need ? '線路側なのに無い' : '線路が無いのに敷いてある'];
     }
-    if (q.tactile.length !== 2 && !bt) bt = ['off=' + q.off.toFixed(2), q.tactile.length + '本'];
     // ホーム端の柵は短辺2箇所、ホームの内側にあること
     if (q.fence.length !== 2 && !bf) bf = ['off=' + q.off.toFixed(2), q.fence.length + '箇所'];
     for (const e of q.fence) {
@@ -250,8 +265,9 @@ ok('上限速度を超えない', vmax <= REF.VMAX_KMH + 0.5, '≤' + REF.VMAX_K
     // 点字ブロックがホームの長さに収まっていること
     if (q.x1 - q.x0 < 200 && !bl) bl = [(q.x1 - q.x0).toFixed(0) + 'm'];
   }
-  ok('点字ブロックが縁沿いにある', bt === null, '両縁から' + REF.TACTILE_IN + 'm内側',
-    bt ? bt.join(' ') : X.PLATS.length + '面すべて');
+  ok('点字ブロックは線路側の縁だけ', bt === null,
+    '線路のある縁から' + REF.TACTILE_IN + 'm内側',
+    bt ? bt.join(' ') : nTac + '本すべて一致');
   ok('ホーム端に柵がある', bf === null, '各面2箇所', bf ? bf.join(' ') : X.PLATS.length + '面すべて');
   ok('ホーム長', bl === null, '210m級', bl ? bl.join('') : '全面210m');
 }

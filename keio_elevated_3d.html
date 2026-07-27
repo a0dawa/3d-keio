@@ -468,8 +468,7 @@ function outerOff(x){   // その地点で最も外側にある軌道中心の�
   o=Math.max(o,2.0+2.55*plateau(x,STA[6].x,118,150));                                       // 八幡山停車線
   // 桜上水留置線:線路のある範囲だけ13.3m、外側は90mで擦り付ける(桁幅を急変させない)
   const yard=(a,b)=>plateau(x,(a+b)/2,(b-a)/2+2,90);
-  o=Math.max(o, 2.0+11.3*yard(YE0e,YE1e));
-  o=Math.max(o, 2.0+11.3*yard(YW0e,YW1e));
+  o=Math.max(o, 2.0+11.3*yard(YE0e,YW1e));   // 留置線は東端〜西端まで通し
   return o;
 }
 // 桁半幅は「その地点に何があるか」だけで決める。幅の表は持たない。
@@ -503,6 +502,11 @@ const BEAM_LOW=POLE_TOP-0.80;   // ビーム下弦。ちょう架線はここか
 const ROAD_SKIP=[[INOKASHIRA_X,12],[SETAGAYA_X,8],[BRIDGE.s,12],[KAN7_X,16],[KYU_INOKA_X,9],
   [HOSHA23_X,11],[H154_X,10],[H128_X,9],[H133_X,9],[H215_X,9],[KANPACHI_X,18],[H216_X,9],[H217_X,10]];
 for(const gq of XINGS)ROAD_SKIP.push([gq[1],7]);
+const PIERS=[];   // 建てた橋脚のs座標(検証用の登録簿)
+// 高架下に駅舎がある区間にも柱を立てない(柱が駅舎を貫いて見える)
+const STA_BLDG=st=>(st.t!=='ctx'&&st.t!=='gnd');   // 高架下駅舎を持つ駅
+const STA_BLDG_HALF=23;                            // 駅舎のs方向の半長[m](7章と同じ値)
+for(const st of STA) if(STA_BLDG(st)) ROAD_SKIP.push([st.x,STA_BLDG_HALF+1.5]);
 // --- 8工区(範囲は駅中心間の中点で自動導出) ---
 const mid2=(a,b)=>Math.round((a+b)/2);
 const KOUKU=[
@@ -762,7 +766,9 @@ for(const R of RANGES){
   }
   CUR=K?K.VGa:null;
   strip(r0,r1,30,x=>[x,.05,-(deckHalf(x)-.5)],x=>[x,.05,deckHalf(x)-.5],MAT.ao);
+  // 高架下に道路・鉄道・河川・駅舎がある位置には柱を立てない(ROAD_SKIP)
   const xs=[];for(let x=r0+16;x<r1-6;x+=30)if(railY(x)>3.4&&!ROAD_SKIP.some(rr=>Math.abs(x-rr[0])<rr[1]))xs.push(x);
+  for(const x of xs)PIERS.push(x);   // 登録簿(検証用)
   if(xs.length){   // 橋脚:南柱→VGa/梁→VGb/北柱→VGn(quad工区)またはVGb
     const mkI=n=>new THREE.InstancedMesh(new THREE.BoxGeometry(1,1,1),MAT.pier,n);
     const iA=mkI(xs.length*2),iB=mkI(xs.length),iC=mkI(xs.length*2);
@@ -797,7 +803,7 @@ function track(x0,x1,zf,yf){
 // 敷設した軌道と、張った架線の登録簿。
 // 「線路はあるのに架線が無い」「架線が線路の真上に無い」を構造的に防ぐため、
 // 軌道と架線は必ず layTrack() で対にして作り、ここへ記録する(検証はこれを見る)。
-const TRACKS=[], WIRES=[];
+const TRACKS=[], WIRES=[];   // 敷設した線路・架線の登録簿(検証用)
 function layTrack(id,x0,x1,zf,yf){
   const y=yf||railY;
   track(x0,x1,zf,y);
@@ -845,22 +851,33 @@ function localZSign(s,dir){
 // 架線:ちょう架線(柱間で垂れる)+トロリ線(その真下)+ハンガー(吊り線)。
 // 横位置は必ず線路と同じ zf を使う=架線は線路の真上にしか張られない。
 // 垂れが0になる吊り点は POLE_S(架線柱の位置)に一致させる=柱の真下が吊り点。
+/* 架線は線路の上にあるが、線路のように滑らかな曲線にはならない。
+   実際には架線柱ごとの吊り点を結んだ"折れ線"で、柱間は直線に張られる
+   (曲線区間ではこの折れ線が弦になって内側へ寄る=偏位)。
+   したがって節点は「両端+架線柱の真下」だけにして、その間は補間しない。
+   ちょう架線だけは柱間で垂れるので、弦の上に中間点を置いて高さだけ下げる。 */
 function wires(r0,r1,zf,id){
   const x0=Math.min(r0,r1), x1=Math.max(r0,r1);
   const poles=polesIn(x0,x1);
-  const sag=x=>{                              // 直近の柱スパン内での垂れ
-    if(poles.length<2||x<=poles[0]||x>=poles[poles.length-1])return 0;
-    for(let i=0;i<poles.length-1;i++)
-      if(x>=poles[i]&&x<=poles[i+1])
-        return WIRE_SAG*Math.sin(Math.PI*(x-poles[i])/(poles[i+1]-poles[i]));
-    return 0;
-  };
+  const nodeS=[x0];
+  for(const v of poles) if(v>x0+0.5&&v<x1-0.5) nodeS.push(v);
+  nodeS.push(x1);
+  const node=nodeS.map(x=>{const q=frame(x,zf(x));
+    return {c:new THREE.Vector3(q.x,railY(x)+WIRE_CAT,q.z),
+            t:new THREE.Vector3(q.x,railY(x)+WIRE_TRO,q.z)};});
   const cat=[],tro=[];
-  for(let x=x0;x<=x1+1e-6;x+=Math.min(5,x1-x0)||1){
-    const q=frame(x,zf(x));
-    cat.push(new THREE.Vector3(q.x,railY(x)+WIRE_CAT-sag(x),q.z));
-    tro.push(new THREE.Vector3(q.x,railY(x)+WIRE_TRO,q.z));
-    if(x+5>x1&&x<x1){x=x1-Math.min(5,x1-x0);}   // 端点を必ず含める
+  const NSAG=3;                               // 1スパンを3分割してちょう架線を垂らす
+  for(let i=0;i<node.length;i++){
+    tro.push(node[i].t);
+    cat.push(node[i].c);
+    if(i===node.length-1) break;
+    const a=node[i].c, b=node[i+1].c;
+    for(let k=1;k<NSAG;k++){                  // 弦の上の点(平面では直線のまま)
+      const u=k/NSAG;
+      cat.push(new THREE.Vector3(a.x+(b.x-a.x)*u,
+                                 a.y+(b.y-a.y)*u-WIRE_SAG*Math.sin(Math.PI*u),
+                                 a.z+(b.z-a.z)*u));
+    }
   }
   add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(cat),wireMat));
   add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(tro),wireMat));
@@ -871,7 +888,10 @@ function wires(r0,r1,zf,id){
     hp.push(new THREE.Vector3(q.x,railY(x)+WIRE_TRO,q.z));
   }
   if(hp.length)add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(hp),wireMat));
-  WIRES.push({id:id,x0:x0,x1:x1,zf:zf,hangers:poles.slice()});
+  // nodes=折れ線の節点(両端+柱の真下)。troN/catN=実際に描いた点の数。
+  // 「柱間が直線」であることは troN===nodes.length で確かめられる。
+  WIRES.push({id:id,x0:x0,x1:x1,zf:zf,hangers:poles.slice(),
+              nodes:nodeS.slice(),troN:tro.length,catN:cat.length,sagN:NSAG});
 }
 // き電線:ビームの上を通す(架線ではないので線路とは対応しない)
 function feeder(x0,x1){
@@ -904,10 +924,16 @@ for(const cx of[X(5.2),X(7.0),X(9.9)]){
   CUR=KOUKU[4].VGa;layTrack('八幡山停車線南',cx-HACHI_HALF,cx+HACHI_HALF,f(-1));
   CUR=KOUKU[4].VGb;layTrack('八幡山停車線北',cx-HACHI_HALF,cx+HACHI_HALF,f(1));
 }
-// 桜上水 留置線:上り方・下り方とも2本併設(±10.1/±13.3)
+/* 桜上水 留置線:駅の外側に2本を通しで敷く(上り方・下り方で切らない)。
+   内側(+10.1)は待避線(副本線北)と同じ位置なので、副本線の一定区間とは重ねない。
+   重ねると同じ場所に線路と架線が二重にできる(「不要な線」に見える)。 */
+const YARD_A=10.1, YARD_B=13.3;
+const YARD_E=YE0e, YARD_W=YW1e;            // 留置線の東端・西端(通しの範囲)
+const YARD_GAP=118;                        // 副本線の一定区間の半長(6章の敷設式と同じ)
 CUR=KOUKU[3].VGn;
-layTrack('留置線東A',YE0e,YE1e,()=>10.1);layTrack('留置線東B',YE0e,YE1e,()=>13.3);
-layTrack('留置線西A',YW0e,YW1e,()=>10.1);layTrack('留置線西B',YW0e,YW1e,()=>13.3);
+layTrack('留置線内側-東',YARD_E,STA[4].x-YARD_GAP,()=>YARD_A);
+layTrack('留置線内側-西',STA[4].x+YARD_GAP,YARD_W,()=>YARD_A);
+layTrack('留置線外側',   YARD_E,YARD_W,()=>YARD_B);
 CUR=null;
 // 交差鉄道(井の頭線・世田谷線):実測の交点・軸方向(RAW.rail)に沿って配置
 function xGroup(A){const g=new THREE.Group();g.position.set(A.x,0,A.z);g.rotation.y=-A.phi;scene.add(g);return g;}
@@ -971,12 +997,25 @@ function textSprite(main,sub,big){
 const MAT_TACTILE=M(0xe0b93c);     // 点字ブロック(黄)
 const MAT_ENDFENCE=M(0xb9bec4);    // ホーム端の柵
 const TACTILE_IN=0.45, TACTILE_HW=0.15;   // 縁からの距離 / 帯の半幅[m]
+const TACTILE_TOL=2.5;                     // 縁の外側どれだけ以内に線路があれば「線路側」か[m]
 const PLATS=[];                            // ホームの登録簿(検証用)
+/* その位置・そのオフセットの近くに線路があるか(6章の登録簿 TRACKS を見る)。
+   相対式ホームの外側や単式ホームの背面には線路が無いので、点字ブロックを敷かない。 */
+function trackNear(s,off,tol){
+  for(const t of TRACKS){
+    if(s<t.x0-1||s>t.x1+1) continue;
+    if(Math.abs(t.zf(s)-off)<=tol) return true;
+  }
+  return false;
+}
 /* ホームの付帯物:縁の点字ブロックと、ホーム端(短辺)の柵。
    x0..x1 がホームの範囲、offC が中心、hw が半幅。 */
 function platDetail(x0,x1,offC,hw,y){
   const tac=[], fen=[];
-  for(const sg of [-1,1]){         // 点字ブロック:両縁から45cm内側に幅30cm
+  const mid=(x0+x1)/2;
+  for(const sg of [-1,1]){         // 点字ブロック:線路のある縁から45cm内側に幅30cm
+    const edge=offC+sg*hw;
+    if(!trackNear(mid,edge+sg*TACTILE_TOL/2,TACTILE_TOL/2)) continue;
     const o=offC+sg*(hw-TACTILE_IN);
     cbox(x0+0.3,x1-0.3,o,TACTILE_HW,y+1.10,y+1.13,MAT_TACTILE,10);
     tac.push(o);
@@ -1030,8 +1069,7 @@ for(const s of STA){
     PSD_DEF.push({st:s,y:y,drs:[-3.2,3.2],x0:c0-103,x1:c0+103});
   }else if(s.t==='ctx'){                       // 笹塚:島式2面4線(既存)
     for(const g of[-6.05,6.05]){cbox(c0-155,c0+55,g,2.5,y,y+1.1,MAT.plat);   // 笹塚:既設210m
-      cbox(c0-154,c0+54,g,2.8,y+4.9,y+5.4,MAT.canopy);
-      platDetail(c0-155,c0+55,g,2.5,y);}
+      cbox(c0-154,c0+54,g,2.8,y+4.9,y+5.4,MAT.canopy);}
     PSD_DEF.push({st:s,y:y,drs:[-3.67,3.67,-8.43,8.43],x0:c0-153,x1:c0+53});
     // 配線図準拠:本線=外側±10.1(BUMPS)/内側±2=新宿方から続く留置線(西端は車止め・200m収容)
     layTrack('笹塚留置線南',DOM.x0+8,c0+355,()=>-2);
@@ -1053,6 +1091,10 @@ for(const s of STA){
       xo(c0+52,c0+162,-10.1,-2);xo(c0+52,c0+162,-2,-10.1); // 南本線⇔南留置線(110m)
       xo(c0+72,c0+122,2,-2);    xo(c0+72,c0+122,-2,2);     // 留置線間(50m・さらに東へ40m移動)
     }
+    // 点字ブロックは「線路のある縁」だけに敷く。内側は上の留置線を敷いてから判定する
+    // (先に呼ぶと留置線がまだ TRACKS に無く、内側の縁に敷かれない)。
+    CUR=s.kk?KOUKU[s.kk-1].VGs:null;
+    for(const g of[-6.05,6.05]) platDetail(c0-155,c0+55,g,2.5,y);
   }else{
     const fc=M(s.c);
     const PLT=(s.t==='isl')?[[0,3.5]]:(s.t==='hachi')?[[0,3.0]]:
@@ -1069,7 +1111,7 @@ for(const s of STA){
     PSD_DEF.push({st:s,y:y,drs:DRS,x0:c0-103,x1:c0+103});
     // 高架下駅舎+正面意匠(公式コンセプト2019の翻案)
     const hw=deckHalf(c0),hb=y-GIRDER;
-    cbox(c0-23,c0+23,0,hw-1,0,hb,M(0xe9e7e2),8);
+    cbox(c0-STA_BLDG_HALF,c0+STA_BLDG_HALF,0,hw-1,0,hb,M(0xe9e7e2),8);
     for(const g of[-1,1]){
       const fo=g*(hw-.1);
       if(s.n==='代田橋'){
@@ -2292,15 +2334,14 @@ const parkedCars=[];
 { // 滞泊編成:留置線の実測有効長に応じ両数を自動決定
   // 留置線は sx が j とともに増える(走行列車と逆)。cabF/cabR をそのまま使うと
   // 両端の運転台が編成の内側を向いてしまうので、前後を入れ替える。
-  const nE=Math.max(2,Math.min(10,Math.floor((YE1e-YE0e-14)/20)));
+  const nE=10, nW=10;                       // 滞泊は上下方とも10両(指示)
   for(let j=0;j<nE;j++){const c=makeCar('keio',(j===1||j===nE-2),j===nE-1,j===0);
-    const sx=YE0e+12+j*K8.PITCH+K8.LEN/2;
-    seatCar(c,sx,()=>10.1,1);
+    const sx=YARD_E+12+j*K8.PITCH+K8.LEN/2;
+    seatCar(c,sx,()=>YARD_A,1);
     KOUKU[3].VGn.add(c);parkedCars.push(c);}
-  const nW=Math.max(2,Math.min(4,Math.floor((YW1e-YW0e-14)/20)));
-  for(let j=0;j<nW;j++){const c=makeCar('keio',(j===0||j===nW-1),j===nW-1,j===0);
+  for(let j=0;j<nW;j++){const c=makeCar('keio',(j===1||j===nW-2),j===nW-1,j===0);
     const sx=YW0e+12+j*K8.PITCH+K8.LEN/2;
-    seatCar(c,sx,()=>13.3,1);
+    seatCar(c,sx,()=>YARD_B,1);
     KOUKU[3].VGn.add(c);parkedCars.push(c);}
 }
 
