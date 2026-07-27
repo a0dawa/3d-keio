@@ -1696,6 +1696,8 @@ function buildBodyGeo(cabF,cabR,LP){
 // 端の柱/窓間の柱/窓の最大幅[m]。
 // 端の柱は"戸袋"でもあるので、扉が全開したときに窓へ被らない幅(片開き1枚ぶん)が要る。
 const PIER_END=0.68, PIER_MID=0.26, WIN_MAX=1.00;
+// 同じ区画に並ぶ窓どうしを近づける量[m](幅は変えず、位置だけ内側へ寄せる)
+const WIN_CLOSE=0.05;
 const CREW={ doorX:8.30, doorW:0.72, doorT:2.95,    // 乗務員扉(中心x/幅/上端)
              winX:9.12, winW:0.66, winB:2.18, winT:2.98 };  // 乗務員室側窓
 function sideWindows(cabF,cabR){
@@ -1712,7 +1714,12 @@ function sideWindows(cabF,cabR){
     const n=Math.max(1,Math.round((L-2*PIER_END+PIER_MID)/(WIN_MAX+PIER_MID)));
     const w=(L-2*PIER_END-(n-1)*PIER_MID)/n;
     if(w<0.35) continue;
-    for(let k=0;k<n;k++){ const x0=a+PIER_END+k*(w+PIER_MID); out.push([x0,x0+w]); }
+    for(let k=0;k<n;k++){
+      // 区画の中心へ向けて WIN_CLOSE/2 ずつ寄せる(2枚なら間隔が WIN_CLOSE 縮む)
+      const sh=(n>1)?(WIN_CLOSE/2)*(n-1-2*k)/(n-1):0;
+      const x0=a+PIER_END+k*(w+PIER_MID)+sh;
+      out.push([x0,x0+w]);
+    }
   }
   return out;
 }
@@ -1913,7 +1920,8 @@ function buildDoorLeaf(sz){
   const P=[],C=[],I=[];
   const z0=()=>0, z1=()=>sz*0.006, z2=()=>sz*0.003;
   sidePanel(P,C,I,-DOOR_HW,DOOR_HW,K8.FLOOR+0.06,K8.SHLD-0.10,z0,'door');
-  sideWindow(P,C,I,-DOOR_HW+0.07,DOOR_HW-0.07,DWIN_B,WIN.T-0.05,z1,z2);
+  // 扉の窓も戸袋窓と同じ角丸にする(隅の処理を揃える)
+  roundWindow(P,C,I,-DOOR_HW+0.07,DOOR_HW-0.07,DWIN_B,WIN.T-0.05,z1,z2,POCKET_R);
   if(sz<0) for(let i=0;i<I.length;i+=3){const t=I[i+1];I[i+1]=I[i+2];I[i+2]=t;}
   const g=new THREE.BufferGeometry();
   g.setAttribute('position',new THREE.Float32BufferAttribute(P,3));
@@ -2010,8 +2018,8 @@ const PT={
   INS :0.30,      // 碍子の高さ
   PIVX:-0.95,     // 下枠の軸(後方寄り。シングルアームなので片側だけ)
   KNEX: 0.00,     // 膝(下枠と上枠の継ぎ目)。「く」の字の折れ目はパンタの中央に置く
-  // 膝の高さは舟体の62%。ここを高くすると上枠がほぼ水平になり「フ」の字に見える
-  KNEY: PT_TOP*0.62,
+  // 膝(「く」の字の折れ目)は台枠と架線(舟体)の中間の高さに置く
+  KNEY: PT_TOP*0.50,
   TOPX:-0.52,     // 舟体の前後位置(上枠は膝から後方へ戻る)
   TOPY: PT_TOP,
   ZLOW:0.13,      // 下枠の左右位置(±)
@@ -2031,7 +2039,12 @@ const G_PSTR=new THREE.BoxGeometry(0.09,0.025,PT.SHOEZ-0.18);     // すり板(2
 const G_PHRN=new THREE.BoxGeometry(0.07,0.05,0.30);               // ホーン
 const G_PSPR=new THREE.CylinderGeometry(0.06,0.06,0.24,8);        // 復元ばね
 const M_PANS=M(0x9aa1a8);                              // すり板(銅系のため明るめ)
-const PANTO_FROM_END=5.0;                              // パンタの取付位置(車端からの距離[m])
+const PANTO_FROM_END=3.0;                              // パンタの取付位置(車端からの距離[m])
+/* パンタを載せる車両。西端から数えた両数(1始まり)で指定する。
+   編成の向きで j の意味が変わる(下りは j=0 が西端、上りは j=0 が東端)ので、
+   置くときに必ず西端基準へ直す。 */
+const PANTO_CARS=[2,3,6,7,9];
+const hasPanto=(jWest)=>PANTO_CARS.indexOf(jWest)>=0;
 // 2点を結ぶ棒を置く(長さと傾きは配置時に決める)
 function putRod(g,geo,mat,x0,y0,x1,y1,z,addFine){
   const dx=x1-x0, dy=y1-y0;
@@ -2084,7 +2097,8 @@ const LY=fy(200), LZ=fz(950), LGAP=fz(60*LAMP_K);
    車体ローカル+z は正面から見て"左"(視線が-x、上が+y なので右手は-z)。
    左右位置はガラスの実際の半幅から決める(角丸で狭まるので固定値だと外へ出る)。 */
 const SGH=fh(150), SGY=fy(2350);                        // 表示器の高さと寸法
-const SGW_T=fz(400), SGW_D=fz(600);                     // 種別/行先の幅
+// 種別と行先は同じ大きさ(実地確認。仕様書[D]は400/600だが揃える)
+const SGW_T=fz(600), SGW_D=fz(600);
 const SGZ=(function(){                                  // 上隅に寄せた中心位置
   const hw=glassHalf(SGY+SGH/2)-0.04;                   // 表示器の上端でのガラス半幅
   return {T:hw-SGW_T/2, D:-(hw-SGW_D/2)};
@@ -2205,7 +2219,8 @@ const DWELL_OF={'八幡山':60,'明大前':60,'桜上水':60,'千歳烏山':60};
 const trains=[];
 [[1, 300],[1, 3000],[-1, 5600]].forEach(function(a){
   const dir=a[0], xs=a[1], cars=[];
-  for(let j=0;j<10;j++)cars.push(makeCar('keio',(j===1||j===7), j===0, j===9));   // 先頭部は編成の外側へ
+  // 先頭部は編成の外側へ。パンタは西端から2/3/6/7/9両目(向きで j を読み替える)
+  for(let j=0;j<10;j++)cars.push(makeCar('keio',hasPanto(dir>0?j+1:10-j), j===0, j===9));
   const reset=(dir>0)?(DOM.x0-210):(DOM.x1+210);
   // st=状態, v=速度[m/s], dwell=停車残り時間, target=次の停止位置s
   trains.push({dir:dir, x:xs, x0:reset, v:0, st:'run', dwell:0, target:null, atSt:null, cars:cars});
@@ -2386,11 +2401,12 @@ const parkedCars=[];
   // 留置線は sx が j とともに増える(走行列車と逆)。cabF/cabR をそのまま使うと
   // 両端の運転台が編成の内側を向いてしまうので、前後を入れ替える。
   const nE=10, nW=10;                       // 滞泊は上下方とも10両(指示)
-  for(let j=0;j<nE;j++){const c=makeCar('keio',(j===1||j===nE-2),j===nE-1,j===0);
+  // 留置線は sx が j とともに増える=j が大きいほど西。西端基準は nE-j
+  for(let j=0;j<nE;j++){const c=makeCar('keio',hasPanto(nE-j),j===nE-1,j===0);
     const sx=YARD_E+12+j*K8.PITCH+K8.LEN/2;
     seatCar(c,sx,()=>YARD_A,1);
     KOUKU[3].VGn.add(c);parkedCars.push(c);}
-  for(let j=0;j<nW;j++){const c=makeCar('keio',(j===1||j===nW-2),j===nW-1,j===0);
+  for(let j=0;j<nW;j++){const c=makeCar('keio',hasPanto(nW-j),j===nW-1,j===0);
     const sx=YW0e+12+j*K8.PITCH+K8.LEN/2;
     seatCar(c,sx,()=>YARD_B,1);
     KOUKU[3].VGn.add(c);parkedCars.push(c);}

@@ -16,8 +16,9 @@ const X = require('./stub_three')(path,
   'glassHalf:glassHalf,noseZ:noseZ,SPX:SPX,SPY:SPY,fz:fz,fy:fy,' +
   'G_LCASE:G_LCASE,G_SIGNT:G_SIGNT,G_SIGND:G_SIGND,BAND_DROP:BAND_DROP,' +
   'pocketWindows:pocketWindows,setCarDoors:setCarDoors,DOOR_REC:DOOR_REC,' +
+  'G_DOORLEAF:G_DOORLEAF,' +
   'PT:PT,WIRE_TRO:WIRE_TRO,PANTO_FROM_END:PANTO_FROM_END,AC_L:AC_L,AC_W:AC_W,' +
-  'GAUGE:GAUGE,RAIL_W:RAIL_W,RAIL_OFF:RAIL_OFF');
+  'GAUGE:GAUGE,RAIL_W:RAIL_W,RAIL_OFF:RAIL_OFF,trains:trains');
 
 /* ---- 測定ユーティリティ ---- */
 const near = (a, b, t) => Math.abs(a - b) <= t;
@@ -59,7 +60,10 @@ const RED_THICK = 1.44;                   // 側面の赤帯(仕様書150mmか�
 const FRED_THICK = 1.56;                  // 前/後面の赤帯(側面より太い)
 const SIDE_RED_UP = 0.10;                 // 側面の赤帯だけ10cm上げる(青帯は動かさない)
 const AC_L_REF = 2.10 * 1.70;             // 冷房装置キセの長さ[m](1.7倍)
-const PANTO_FROM_END = 5.0;               // パンタの取付位置(車端からの距離[m])
+const PANTO_FROM_END = 3.0;               // パンタの取付位置(車端からの距離[m])
+const PANTO_CARS = [2, 3, 6, 7, 9];       // パンタを載せる車両(西端から1始まり)
+const PIER_MID = 0.26;                    // 同じ区画の窓どうしの柱の幅[m]
+const WIN_CLOSE = 0.05;                   // 窓どうしを近づける量[m]
 const LAMP_K = 1.30;                      // 実地確認による灯具の拡大率
 const REF = {
   LEN: 19.50, W: 2.845, FLOOR: 0.95, ROOF: 3.64,   // [B]
@@ -249,7 +253,8 @@ check('軌間(レール内面間)', REF.GAUGE, X.GAUGE, 0.001);
     const lc = bb2(X.G_LCASE.f[0]), st = bb2(X.G_SIGNT.f), sd = bb2(X.G_SIGND.f);
     check('ライトケースの幅', REF.LCASE[0], lc.z[1] - lc.z[0], 0.005);
     check('ライトケースの高さ', REF.LCASE[1], lc.y[1] - lc.y[0], 0.005);
-    check('種別表示器の幅', dz(400), st.z[1] - st.z[0], 0.005);
+    // 種別と行先は同じ大きさ(実地確認。仕様書[D]の400/600から揃えた)
+    check('種別表示器の幅', dz(600), st.z[1] - st.z[0], 0.005);
     check('行先表示器の幅', dz(600), sd.z[1] - sd.z[0], 0.005);
     /* 正面から見て左上=種別(赤)/右上=行先(白)。視線は-x・上は+y なので
        右手は-z、すなわち車体ローカル+z が正面から見た"左"。 */
@@ -290,14 +295,36 @@ check('軌間(レール内面間)', REF.GAUGE, X.GAUGE, 0.001);
   rows.push(['パンタの膝が中央', '0.000', X.PT.KNEX.toFixed(3), '-', 'm',
     Math.abs(X.PT.KNEX) < 1e-9 ? 'OK' : 'NG']);
   if (Math.abs(X.PT.KNEX) >= 1e-9) ng++;
-  // 「く」の字:下枠と上枠の傾きが近いこと。片方が水平に寝ると「フ」の字に見える
+  /* 「く」の字:折れ目(膝)は台枠と舟体のちょうど中間の高さに置く。
+     ここが高いと上枠がほぼ水平になり「フ」の字に見える。 */
   {
     const aLow = Math.atan2(X.PT.KNEY, Math.abs(X.PT.KNEX - X.PT.PIVX)) * 180 / Math.PI;
     const aUpp = Math.atan2(X.PT.TOPY - X.PT.KNEY, Math.abs(X.PT.KNEX - X.PT.TOPX)) * 180 / Math.PI;
-    pass('パンタが「く」の字', Math.abs(aLow - aUpp) < 12 && aLow > 20 && aUpp > 20,
+    pass('膝が台枠と架線の中間', Math.abs(X.PT.KNEY - X.PT.TOPY / 2) < 1e-6,
+      '膝' + X.PT.KNEY.toFixed(3) + 'm / 舟体' + X.PT.TOPY.toFixed(3) + 'm');
+    // 上下の腕がともに立っていること(どちらかが寝ると「フ」の字)
+    pass('パンタが「く」の字', aLow > 20 && aUpp > 20,
       '下枠' + aLow.toFixed(0) + '° / 上枠' + aUpp.toFixed(0) + '°');
   }
   void yf; void minX;
+}
+
+/* (5d) パンタを載せる車両。編成の向きで j の意味が変わる(下りは j=0 が西端、
+   上りは j=0 が東端)ので、検証側でも西端基準に読み替えて突き合わせる。 */
+{
+  const hasP = (c) => { let has = false;
+    c.traverse((o) => { if (o.geometry && o.geometry.p && near(o.geometry.p[2], X.PT.SHOEZ, 1e-6)) has = true; });
+    return has; };
+  let bad = null;
+  for (const t of X.trains) {
+    const got = t.cars.map((c, j) => hasP(c) ? (t.dir > 0 ? j + 1 : t.cars.length - j) : 0)
+      .filter((v) => v).sort((a, b) => a - b);
+    if (got.join(',') !== PANTO_CARS.join(',') && !bad)
+      bad = [(t.dir > 0 ? '下り' : '上り'), got.join('/') + '両目'];
+  }
+  rows.push(['パンタの搭載位置(西端から)', PANTO_CARS.join('/') + '両目',
+    bad ? bad.join(' ') : PANTO_CARS.join('/') + '両目', '-', '', bad ? 'NG' : 'OK']);
+  if (bad) ng++;
 }
 
 // (6) 屋根上 — 冷房装置は集中式1基(旧実装は3基で誤りだった)
@@ -382,6 +409,38 @@ function pass(name, ok, detail) {
   rows.push(['扉が車体の内側', '<' + (K.W / 2).toFixed(3) + 'm', mx.toFixed(4) + 'm',
     '-', '', okd ? 'OK' : 'NG']);
   if (!okd) ng++;
+}
+// 8-1c2 扉の窓も角丸であること(戸袋窓と隅の処理を揃える)
+{
+  const g = X.G_DOORLEAF.p;
+  const P = g.attributes.position.array, C = g.attributes.color.array;
+  // 框(sash)の色を持つ頂点だけを見て、高さごとの半幅を測る
+  let ylo = 1e9, yhi = -1e9;
+  const byY = new Map();
+  for (let i = 0; i < P.length; i += 3) {
+    if (!colorIn([C[i], C[i + 1], C[i + 2]], [PAL.sash])) continue;
+    const y = Math.round(P[i + 1] * 1000) / 1000, x = Math.abs(P[i]);
+    if (y < ylo) ylo = y; if (y > yhi) yhi = y;
+    byY.set(y, Math.max(byY.get(y) || 0, x));
+  }
+  const at = (y) => { let best = null, bd = 1e9;
+    for (const [k, v] of byY) { const d = Math.abs(k - y); if (d < bd) { bd = d; best = v; } } return best; };
+  const mid = at((ylo + yhi) / 2), top = at(yhi);
+  const rounded = byY.size > 8 && top !== null && mid !== null && top < mid - 0.01;
+  rows.push(['扉の窓が角丸', '隅が丸い',
+    rounded ? '中央' + mid.toFixed(3) + '>上端' + top.toFixed(3) : '角のまま',
+    '-', 'm', rounded ? 'OK' : 'NG']);
+  if (!rounded) ng++;
+}
+// 8-1c3 同じ区画に並ぶ窓は WIN_CLOSE ぶん近い(柱の幅 PIER_MID から縮める)
+{
+  const w = X.sideWindows(false, false);
+  let gap = null;
+  for (let i = 0; i < w.length - 1; i++) {
+    const d = w[i + 1][0] - w[i][1];
+    if (d > 0 && d < 0.6 && (gap === null || d < gap)) gap = d;   // 同じ区画の隣どうし
+  }
+  check('区画内の窓の間隔', PIER_MID - WIN_CLOSE, gap, 0.002);
 }
 // 8-1d 戸袋窓の幅(客用窓と同じ中心・同じ高さで、幅だけ30%狭い)
 {
