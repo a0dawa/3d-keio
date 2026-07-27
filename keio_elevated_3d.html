@@ -914,14 +914,19 @@ function xGroup(A){const g=new THREE.Group();g.position.set(A.x,0,A.z);g.rotatio
 function xMk(g,u0,u1,off,w,mat,y,h){
   const m=new THREE.Mesh(new THREE.BoxGeometry(u1-u0,h,w),mat);
   m.position.set((u0+u1)/2,y,off);g.add(m);}
+/* 交差鉄道の諸元。線路の敷設・車両の走行・占有域の判定がすべてここを見る。
+   XR.RAILTOP を直せば車両の載る高さも一緒に動く(片方だけ変えると車輪が沈む)。 */
+const XR={U0:-440,U1:440, TRK:[-3,3], RAILY:.83, RAILH:.12, SETA_U0:-370, SETA_U1:-10};
+XR.RAILTOP=XR.RAILY+XR.RAILH/2;                          // レール頭頂面(車両の原点を置く高さ)
 { // 京王井の頭線(複線・掘割擁壁・渋谷寄り=南側へ移設したホーム)。ローカルu+=a点側(北)
   const g=xGroup(INO);
   const oI=(GAUGE_INO+RAIL_W)/2;                                        // 井の頭線は1067mm軌間
-  for(const c of[-3,3]){xMk(g,-440,440,c,3.2,MAT.slab,.62,.30);          // 道床(厚みを持たせ地表と分離)
-    xMk(g,-440,440,c-oI,RAIL_W,MAT.rail,.83,.12);xMk(g,-440,440,c+oI,RAIL_W,MAT.rail,.83,.12);}
-  xMk(g,-440,440,-9.4,.6,MAT.wall,.9,1.8);xMk(g,-440,440,9.4,.6,MAT.wall,.9,1.8);
-  for(const c of[-3,3]){                                   // 井の頭線の架線(ちょう架線・トロリ線)
-    xMk(g,-440,440,c,.05,MAT.pole,5.85,.05);xMk(g,-440,440,c,.05,MAT.pole,4.85,.05);
+  for(const c of XR.TRK){xMk(g,XR.U0,XR.U1,c,3.2,MAT.slab,.62,.30);      // 道床(厚みを持たせ地表と分離)
+    xMk(g,XR.U0,XR.U1,c-oI,RAIL_W,MAT.rail,XR.RAILY,XR.RAILH);
+    xMk(g,XR.U0,XR.U1,c+oI,RAIL_W,MAT.rail,XR.RAILY,XR.RAILH);}
+  xMk(g,XR.U0,XR.U1,-9.4,.6,MAT.wall,.9,1.8);xMk(g,XR.U0,XR.U1,9.4,.6,MAT.wall,.9,1.8);
+  for(const c of XR.TRK){                                  // 井の頭線の架線(ちょう架線・トロリ線)
+    xMk(g,XR.U0,XR.U1,c,.05,MAT.pole,5.85,.05);xMk(g,XR.U0,XR.U1,c,.05,MAT.pole,4.85,.05);
   }
   for(let u=-430;u<430;u+=45){                             // 架線柱(門型)
     xMk(g,u,u+.4,-6.2,.34,MAT.pole,3.0,6.0);xMk(g,u,u+.4,6.2,.34,MAT.pole,3.0,6.0);
@@ -935,9 +940,10 @@ function xMk(g,u0,u1,off,w,mat,y,h){
 }
 { // 東急世田谷線(単線・南=b点側から到着)
   const g=xGroup(SETA);
-  xMk(g,-370,-10,0,3.0,MAT.slab,.62,.30);
+  xMk(g,XR.SETA_U0,XR.SETA_U1,0,3.0,MAT.slab,.62,.30);
   const oS=(GAUGE_SETA+RAIL_W)/2;                                       // 世田谷線は1372mm軌間
-  xMk(g,-370,-10,-oS,RAIL_W,MAT.rail,.83,.12);xMk(g,-370,-10,oS,RAIL_W,MAT.rail,.83,.12);
+  xMk(g,XR.SETA_U0,XR.SETA_U1,-oS,RAIL_W,MAT.rail,XR.RAILY,XR.RAILH);
+  xMk(g,XR.SETA_U0,XR.SETA_U1, oS,RAIL_W,MAT.rail,XR.RAILY,XR.RAILH);
   xMk(g,-370,-10,0,.05,MAT.pole,5.6,.05);xMk(g,-370,-10,0,.05,MAT.pole,4.75,.05);   // 世田谷線の架線
   for(let u=-360;u<-20;u+=40){xMk(g,u,u+.35,-3.4,.28,MAT.pole,2.9,5.8);
     xMk(g,u,u+.30,-1.7,.22,MAT.pole,5.7,3.4);}
@@ -1196,34 +1202,103 @@ tag('仙川橋梁(架替)',BRIDGE.s,20,-60);
 }
 
 /* ============ 8. 街並み(街区整列・模式) ============ */
+/* 【設計方針】建物・樹木は「置いてはいけない場所(占有域 KEEP)」と
+   「すでに置いた物(OCC)」の2段階で棄却してから置く。
+   ・占有域 …… 道路・河川・交差鉄道(井の頭線/世田谷線)・高架下と側道・施設
+     交差鉄道は線路に対して斜めに走るので、s一定の帯では覆えない
+     (井の頭線は880mの延長でsが約160m動く)。世界座標の直線として判定する。
+   ・非重複 …… 世界座標の格子ハッシュに外接円を登録し、円同士が重ならないことを見る。
+   4章の描画寸法と対応させること(道路を動かしたらここも直す)。 */
+const KEEP=[];
+const keepBand =(c,hw,oh)=>KEEP.push({k:'b',c:c,hw:hw,oh:oh===undefined?1e9:oh}); // 交差道路(s一定の帯)
+const keepStrip=(o,hw,s0,s1)=>KEEP.push({k:'s',o:o,hw:hw,s0:s0,s1:s1});           // 並行道路(off一定の帯)
+const keepRect =(c,hs,o,ho)=>KEEP.push({k:'r',c:c,hs:hs,o:o,ho:ho});              // 施設
+const keepDisc =(c,o,r)=>KEEP.push({k:'d',c:c,o:o,r:r});                          // 池・広場
+const keepLine =(A,hw,u0,u1)=>KEEP.push({k:'l',A:A,hw:hw,u0:u0,u1:u1});           // 交差鉄道(世界座標)
+// 交差道路(4章 box(w,...) の w/2 に路肩ぶんを足す)
+for(const r of [[KAN7_X,17],[HOSHA23_X,11],[KYU_INOKA_X,9],[H154_X,10],[H128_X,9.5],
+                [H133_X,9.5],[H215_X,9.5],[KANPACHI_X,19],[H216_X,10],[H217_X,10]])
+  keepBand(r[0],r[1]);
+keepBand(JOSUI_X,10,230);                       // 玉川上水(暗渠緑道)
+keepBand(BRIDGE.s,7,75);                        // 仙川(河川)
+for(const gq of XINGS) keepBand(gq[1],5.5,120); // 旧踏切位置の高架下通り抜け道路
+// 並行道路(4章 strip のoff範囲)
+keepStrip(158,15,DOM.x0-300,DOM.x1+300);        // 甲州街道
+keepStrip(93,7,4200,DOM.x1+200);                // 旧甲州街道
+keepStrip(300,12,2000,6100);                    // 首都高4号新宿線(高架・橋脚)
+// 施設・水面
+keepRect(WADA_S,220,WADA_OFF,120);              // 和田堀給水所
+keepDisc(WADA_S-105,WADA_OFF+22,22);keepDisc(WADA_S+115,WADA_OFF-24,24);
+keepRect(SUBK.s,16,SUBK.off,12);keepRect(SUBC.s,17,SUBC.off,13);   // 変電所
+keepDisc(PLAZA_S,PLAZA_OFF,26);                 // 千歳烏山駅前広場
+// 交差鉄道:掘割・擁壁・ホームまで含めた幅で確保する(9章の車両もここを走る)
+keepLine(INO,15,XR.U0-10,XR.U1+10);
+keepLine(SETA,12,XR.SETA_U0-10,XR.SETA_U1+10);
+/* (s,off)に半径radの物を置けるか。高架下・側道は桁半幅から求める(桁幅を変えれば追従)。 */
+function cityFree(s,off,rad,px,pz){
+  if(Math.abs(off)<deckHalf(s)+5.2+rad) return false;          // 高架下+側道
+  for(const q of KEEP){
+    if(q.k==='b'){ if(Math.abs(s-q.c)<q.hw+rad && Math.abs(off)<q.oh) return false; }
+    else if(q.k==='s'){ if(Math.abs(off-q.o)<q.hw+rad && s>q.s0 && s<q.s1) return false; }
+    else if(q.k==='r'){ if(Math.abs(s-q.c)<q.hs+rad && Math.abs(off-q.o)<q.ho+rad) return false; }
+    else if(q.k==='d'){ if(Math.hypot(s-q.c,off-q.o)<q.r+rad) return false; }
+    else {                                                     // 世界座標の直線(交差鉄道)
+      const dx=px-q.A.x, dz=pz-q.A.z;
+      const du=dx*q.A.ax+dz*q.A.az, dn=dx*q.A.nx+dz*q.A.nz;
+      if(Math.abs(dn)<q.hw+rad && du>q.u0-rad && du<q.u1+rad) return false;
+    }
+  }
+  return true;
+}
+// すでに置いた物との重なり(世界座標の格子ハッシュ。建物と樹木で共有する)
+const OCC=new Map(), OCC_CELL=26, OCC_GAP=1.2;
+function occFree(px,pz,r){
+  const cx=Math.floor(px/OCC_CELL), cz=Math.floor(pz/OCC_CELL);
+  for(let a=-1;a<=1;a++)for(let b=-1;b<=1;b++){
+    const l=OCC.get((cx+a)+','+(cz+b)); if(!l) continue;
+    for(const o of l){
+      const rr=r+o[2]+OCC_GAP;
+      if((px-o[0])*(px-o[0])+(pz-o[1])*(pz-o[1])<rr*rr) return false;
+    }
+  }
+  return true;
+}
+function occAdd(px,pz,r){
+  const k=Math.floor(px/OCC_CELL)+','+Math.floor(pz/OCC_CELL);
+  let l=OCC.get(k); if(!l){l=[];OCC.set(k,l);}
+  l.push([px,pz,r]);
+}
+const CITY={buildings:[],trees:[]};    // 検証用の登録簿
 {
-  const N=2400,inst=new THREE.InstancedMesh(new THREE.BoxGeometry(1,1,1),new THREE.MeshLambertMaterial({color:0xffffff}),N);
+  const N=5200,inst=new THREE.InstancedMesh(new THREE.BoxGeometry(1,1,1),new THREE.MeshLambertMaterial({color:0xffffff}),N);
   const m4=new THREE.Matrix4(),q=new THREE.Quaternion(),e=new THREE.Euler(),col=new THREE.Color();
   const pal=[0xd8d2c6,0xcfc9bf,0xc6c8cc,0xdad7cf,0xbfb8ab,0xd2cdd0];
-  const bands=[[-450,-346],[-334,-241],[-229,-136],[-124,-68],[-56,-27],[27,60],[72,126],[184,232],[244,312],[324,402],[414,462]];
-  const majors=[KAN7_X,HOSHA23_X,KYU_INOKA_X,H154_X,H128_X,H133_X,H215_X,KANPACHI_X,H216_X,H217_X,INOKASHIRA_X];
+  const bands=[[-462,-346],[-334,-241],[-229,-136],[-124,-68],[-56,-27],[27,60],[72,126],
+               [136,180],[184,232],[244,312],[324,402],[414,466]];
   let i=0;
   outer:
   for(let ci=0;ci<NSx.length-1;ci++){
     const x0=NSx[ci]+4,x1=NSx[ci+1]-4;if(x1-x0<9)continue;
     for(const bd of bands){
-      const nb=1+Math.floor((x1-x0)*(bd[1]-bd[0])/2600);
+      const nb=1+Math.floor((x1-x0)*(bd[1]-bd[0])/1150);   // 街区あたりの棟数(密度)
       for(let k=0;k<nb;k++){
         if(i>=N)break outer;
-        const w=6+Math.random()*9,d=6+Math.random()*9;
-        const x=x0+w/2+Math.random()*Math.max(1,(x1-x0-w));
-        const z=bd[0]+d/2+Math.random()*Math.max(1,(bd[1]-bd[0]-d));
-        if(Math.abs(z)<deckHalf(x)+8)continue;
-        if(majors.some(mx=>Math.abs(x-mx)<20))continue;
-        if(XINGS.some(gq=>Math.abs(x-gq[1])<8))continue;
-        if(Math.abs(x-WADA_S)<245&&Math.abs(z-WADA_OFF)<130)continue;   // 和田堀給水所
-        if(Math.hypot(x-PLAZA_S,z-PLAZA_OFF)<32)continue;
-        if(z<0&&Math.abs(x-SETAGAYA_X)<9)continue;
+        // 1棟につき数回だけ位置を引き直す(棄却で街区がすかすかにならないように)
+        let w=0,d=0,rad=0,x=0,z=0,p=null,put=false;
+        for(let tryN=0;tryN<6&&!put;tryN++){
+          w=6+Math.random()*9;d=6+Math.random()*9;rad=Math.hypot(w,d)/2;
+          x=x0+w/2+Math.random()*Math.max(1,(x1-x0-w));
+          z=bd[0]+d/2+Math.random()*Math.max(1,(bd[1]-bd[0]-d));
+          p=frame(x,z);
+          put=cityFree(x,z,rad,p.x,p.z)&&occFree(p.x,p.z,rad);
+        }
+        if(!put) continue;
         const nearSta=STA.some(st=>Math.abs(x-st.x)<180&&st.t!=='ctx'&&st.t!=='gnd');
         const h=(nearSta&&Math.random()<.28)?13+Math.random()*13:4+Math.random()*7.5;
-        const p=frame(x,z);e.set(0,-p.a,0);q.setFromEuler(e);
+        e.set(0,-p.a,0);q.setFromEuler(e);
         m4.compose(new THREE.Vector3(p.x,h/2,p.z),q,new THREE.Vector3(w,h,d));
         inst.setMatrixAt(i,m4);inst.setColorAt(i,col.setHex(pal[(Math.random()*pal.length)|0]));i++;
+        occAdd(p.x,p.z,rad); CITY.buildings.push({s:x,off:z,x:p.x,z:p.z,w:w,d:d,h:h,r:rad});
       }
     }
   }
@@ -1231,24 +1306,31 @@ tag('仙川橋梁(架替)',BRIDGE.s,20,-60);
   if(inst.instanceColor)inst.instanceColor.needsUpdate=true;scene.add(inst);
 }
 {
-  const N=760;
+  const N=1100;
   const crown=new THREE.InstancedMesh(new THREE.ConeGeometry(2.3,5.2,7),new THREE.MeshLambertMaterial({color:0xffffff}),N);
   const trunk=new THREE.InstancedMesh(new THREE.CylinderGeometry(.22,.32,2.2,5),M(0x6e5a44),N);
   const m4=new THREE.Matrix4(),q=new THREE.Quaternion(),col=new THREE.Color();
   let i=0;
-  const put=(s,off,sc,c)=>{if(i>=N)return;const p=frame(s,off);
+  // 樹冠の半径は 2.3*sc。占有半径はこれに合わせる(建物とも重ならない)
+  const put=(s,off,sc,c)=>{
+    if(i>=N)return false;
+    const p=frame(s,off), rad=2.3*sc;
+    if(!cityFree(s,off,rad,p.x,p.z))return false;
+    if(!occFree(p.x,p.z,rad))return false;
     m4.compose(new THREE.Vector3(p.x,1.1,p.z),q,new THREE.Vector3(1,1,1));trunk.setMatrixAt(i,m4);
     m4.compose(new THREE.Vector3(p.x,2.1+2.6*sc,p.z),q,new THREE.Vector3(sc,sc,sc));crown.setMatrixAt(i,m4);
-    crown.setColorAt(i,col.setHex(c));i++;};
+    crown.setColorAt(i,col.setHex(c));i++;
+    occAdd(p.x,p.z,rad); CITY.trees.push({s:s,off:off,x:p.x,z:p.z,r:rad});
+    return true;
+  };
+  // 街路樹(高架の両側=側道の外)。占有域に当たる区間は自動的に間引かれる
   for(let x=DOM.x0+40;x<DECK_END-30;x+=52)
-    for(const sg of[-1,1])put(x,sg*(deckHalf(x)+6.4),.85,0x7fa268);
-  for(let k=0;k<24;k++){const z=26+k*13;if(z>141&&z<175)continue;put(X(7.8)+42,z,1.05,0xecb8cd);}
-  for(let k=0;k<20;k++)put(JOSUI_X+(k-10)*7,(k-10)*34,.9,0x6f9160);
+    for(const sg of[-1,1])put(x,sg*(deckHalf(x)+8.2),.85,0x7fa268);
+  for(let k=0;k<24;k++)put(X(7.8)+42,26+k*13,1.05,0xecb8cd);      // 桜並木
+  for(let k=0;k<20;k++)put(JOSUI_X+(k-10)*7,(k-10)*34,.9,0x6f9160);// 玉川上水緑道
   let guard=0;
   while(i<N&&guard++<N*40){
     const x=DOM.x0+Math.random()*(DOM.x1-DOM.x0),z=(Math.random()*2-1)*DOM.z;
-    if(Math.abs(z)<deckHalf(x)+7)continue;
-    if(z>141&&z<175)continue;
     put(x,z,.7+Math.random()*.5,Math.random()<.5?0x7fa268:0x6f9160);
   }
   crown.count=i;trunk.count=i;
@@ -2145,10 +2227,37 @@ function placeTrain(t){
     if(inside) seatCar(c, s, zf, t.dir);      // 見えている車両だけ弦法で姿勢決定
   }
 }
-const inoCars=[];for(let j=0;j<5;j++)inoCars.push(makeCar('ino',(j===2),j===0,j===4));
-let inoZ=-430,inoDir=1;
-const setaCars=[];for(let j=0;j<2;j++){const c=makeCar('seta',(j===0),j===0,j===1);c.scale.set(.68,.85,.9);setaCars.push(c);}
-let setaZ=-360,setaDir=1;
+/* 交差鉄道の列車。折り返し範囲は「編成の最後尾まで線路の上に載る」ように決める
+   (編成長ぶんを引かずに ±440 まで走らせると、後ろの車両が線路の外へ出て宙に浮く)。 */
+const INO_CARS=5, INO_PITCH=20, INO_TRK=-3;      // 5両・車両間隔・走る線(掘割の南側)
+const INO_LIM=Math.min(-XR.U0,XR.U1)-(INO_CARS-1)*INO_PITCH-K8.LEN/2;
+const inoCars=[];for(let j=0;j<INO_CARS;j++)inoCars.push(makeCar('ino',(j===2),j===0,j===INO_CARS-1));
+let inoZ=-INO_LIM,inoDir=1;
+const SETA_CARS=2, SETA_PITCH=14;
+const setaCars=[];for(let j=0;j<SETA_CARS;j++){const c=makeCar('seta',(j===0),j===0,j===1);c.scale.set(.68,.85,.9);setaCars.push(c);}
+const SETA_LO=XR.SETA_U0+(SETA_CARS-1)*SETA_PITCH+K8.LEN/2*0.9, SETA_HI=XR.SETA_U1-K8.LEN/2*0.9-46;
+let setaZ=SETA_LO,setaDir=1;
+/* 交差鉄道の列車を進めて配置する。
+   車体の原点はレール面なので、y は道床のレール頭頂面 XR.RAILTOP に置く
+   (以前は .86 固定で、レール頭頂面 .89 より3cm沈み、車輪とレールの面が
+   同じ高さで重なってちらついていた)。 */
+function stepXRail(dt){
+  inoZ+=inoDir*13*dt;
+  if(inoZ>INO_LIM){inoZ=INO_LIM;inoDir=-1;}else if(inoZ<-INO_LIM){inoZ=-INO_LIM;inoDir=1;}
+  for(let j=0;j<inoCars.length;j++){
+    const u=inoZ-inoDir*j*INO_PITCH, c=inoCars[j];   // 井の頭線の実測軸に沿って走行
+    c.position.set(INO.x+INO.ax*u+INO.nx*INO_TRK, XR.RAILTOP, INO.z+INO.az*u+INO.nz*INO_TRK);
+    c.rotation.y=-INO.phi; lodCar(c);
+  }
+  setaZ+=setaDir*8*dt;
+  if(setaZ>SETA_HI){setaZ=SETA_HI;setaDir=-1;}else if(setaZ<SETA_LO){setaZ=SETA_LO;setaDir=1;}
+  for(let j=0;j<setaCars.length;j++){
+    const u=setaZ-setaDir*j*SETA_PITCH, c=setaCars[j];
+    c.position.set(SETA.x+SETA.ax*u, XR.RAILTOP, SETA.z+SETA.az*u);
+    c.rotation.y=-SETA.phi; lodCar(c);
+  }
+}
+stepXRail(0);           // 初期配置(列車走行OFFのままでも線路の上に載っている)
 const parkedCars=[];
 { // 滞泊編成:留置線の実測有効長に応じ両数を自動決定
   // 留置線は sx が j とともに増える(走行列車と逆)。cabF/cabR をそのまま使うと
@@ -2536,18 +2645,7 @@ function loop(now){
     }
     stepPSD(dt);          // ホームドア:停車中(発車3秒前まで)だけ開く
     for(const c of parkedCars) lodCar(c);   // 留置中の編成もLODを見直す
-    inoZ+=inoDir*13*dt;if(inoZ>430||inoZ<-430)inoDir*=-1;
-    for(let j=0;j<inoCars.length;j++){
-      const u=inoZ-inoDir*j*20;   // 井の頭線の実測軸に沿って走行
-      inoCars[j].position.set(INO.x+INO.ax*u+INO.nx*-3,.86,INO.z+INO.az*u+INO.nz*-3);
-      inoCars[j].rotation.y=-INO.phi;
-    }
-    setaZ+=setaDir*8*dt;if(setaZ>-60)setaDir=-1;if(setaZ<-350)setaDir=1;
-    for(let j=0;j<setaCars.length;j++){
-      const u=setaZ-setaDir*j*14;
-      setaCars[j].position.set(SETA.x+SETA.ax*u,.86,SETA.z+SETA.az*u);
-      setaCars[j].rotation.y=-SETA.phi;
-    }
+    stepXRail(dt);      // 井の頭線・世田谷線
   }
   if(rideOn){
     // 加減速の応答は一次遅れ(時定数0.75秒)。さらに速度による特性を加味する:
