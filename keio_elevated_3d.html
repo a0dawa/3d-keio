@@ -151,6 +151,7 @@
   <div id="masName" class="notch">N</div>
   <div class="v"><span id="spdVal">0</span><i>km/h</i><b id="spdKm">—</b></div>
   <div class="nxt"><b id="nxtName">—</b><span id="nxtDist">—</span></div>
+  <div class="nxt"><b>保安装置</b><span id="atcInfo"></span></div>
   <div class="ctl">
     <button id="btnUp" aria-label="制動側へ">▲<span>制動</span></button>
     <button id="btnDn" aria-label="力行側へ">▼<span>力行</span></button>
@@ -2462,8 +2463,53 @@ const NOTCHES=[
   {n:'力行 P1', s:'P1', a: 0.8, k:'p'},{n:'力行 P2', s:'P2', a: 1.6, k:'p'},
   {n:'力行 P3', s:'P3', a: 2.4, k:'p'},{n:'力行 P4', s:'P4', a: 3.3, k:'p'}
 ];
-const NIDX_N=8, NIDX_EB=0, VMAX=130;
+const NIDX_N=8, NIDX_EB=0, NIDX_B7=1, VMAX=130;
 let notch=NIDX_N, rideV=0;
+/* 保安装置(ATC相当)。前を走る列車との距離から許容速度を決め、超えていれば
+   マスコンの操作にかかわらず B7 で自動的に減速する。
+     距離 ATC.FAR(600m) …… ATC.VFAR(120km/h)まで
+     距離 ATC.NEAR(20m) …… 0km/h
+   その間は制動距離の式 v=√(2ad) と同じ形(√)でなめらかにつなぐ。
+   前の列車が待避線へ入った/600mより先/エリア外/列車走行OFF なら解除。 */
+const ATC={FAR:600, NEAR:20, VFAR:120, OFFTOL:1.5};
+let atcLim=null, atcOn=false;
+function atcLimit(s){
+  if(!trainsOn) return null;
+  let lim=null;
+  for(const t of trains){
+    if(t.dir!==1) continue;                                  // 運転モードは下り線を走る
+    if(t.x<DOM.x0||t.x>DOM.x1) continue;                     // エリア外(表示されていない)
+    if(Math.abs(runOff(t.x)-mainOff(t.x))>ATC.OFFTOL) continue;   // 待避線に入っている
+    const rear=t.x-(t.cars.length-1)*K8.PITCH-K8.LEN/2;      // 前の列車の最後尾
+    const d=rear-s;
+    if(d<=0||d>ATC.FAR) continue;                            // 後方/600mより先は対象外
+    const v=(d<=ATC.NEAR)?0:ATC.VFAR*Math.sqrt((d-ATC.NEAR)/(ATC.FAR-ATC.NEAR));
+    if(lim===null||v<lim) lim=v;
+  }
+  return lim;
+}
+// 運転モードの状態を出し入れする(検証から走らせるための入り口)
+function setRideState(o){
+  if(o.s!==undefined)rideS=o.s; if(o.v!==undefined)rideV=o.v;
+  if(o.notch!==undefined){notch=o.notch;cmdNotch=o.notch;}
+  if(o.acc!==undefined)accEff=o.acc;
+}
+function getRideState(){return {s:rideS,v:rideV,notch:notch,acc:accEff,lim:atcLim,atc:atcOn};}
+// 運転モードの1ステップ(速度と位置)。保安装置の判定もここで行う。
+function stepRide(dt){
+  atcLim=atcLimit(rideS);
+  atcOn=(atcLim!==null&&rideV>atcLim);
+  // 加減速の応答は一次遅れ(時定数0.75秒)。さらに速度による特性を加味する:
+  //   力行 : 60km/h までは設定どおり、以降は鈍化し 120km/h で半分
+  //   制動 : 120km/h では75%、速度が落ちるほど強まり 60km/h 以下で設定どおり
+  const aSet=NOTCHES[atcOn?NIDX_B7:notch].a;
+  // 保安装置の制動は指令どおりの減速度で効く(速度による鈍化を受けない)。
+  // 鈍化を受けると高速域でパターンに追従できず、頭打ちのまま接近してしまう。
+  const aCmd=atcOn?aSet:aSet*accCurve(rideV,aSet);
+  accEff += (aCmd-accEff)*Math.min(1, dt/NOTCH_LAG);
+  rideV=clamp(rideV+accEff*dt,0,VMAX);
+  rideS+=(rideV/3.6)*dt; if(rideS>7950){rideS=-250;}          // 終端で笹塚方へ戻る
+}
 // マスコン操作の遊び(反応遅れ0.75秒):cmdNotch=操作値 / notch=実際に効いている段
 let cmdNotch=NIDX_N, accEff=0; const NOTCH_LAG=0.75;   // accEff=実際に効いている加速度[km/h/s]
 let chaseOn=false,chaseIdx=0;const chaseEye=new THREE.Vector3();
@@ -2653,9 +2699,12 @@ function updSpd(){
     $('nxtName').textContent='終端(仙川)';
     $('nxtDist').textContent='—';
   }
-  const nd=NOTCHES[cmdNotch], mn=$('masName');
-  mn.textContent=nd.s;                      // P4 / N / B7 / EB のような短い段位表示
-  mn.className='notch '+nd.k;
+  const nd=NOTCHES[atcOn?NIDX_B7:cmdNotch], mn=$('masName');
+  // 保安装置が介入しているときは、操作段ではなく実際に効いている段を出す
+  mn.textContent=atcOn?'B7\u00a0ATC':nd.s;   // P4 / N / B7 / EB のような短い段位表示
+  mn.className='notch '+(atcOn?'e':nd.k);
+  const lb=$('atcInfo');
+  if(lb) lb.textContent=(atcLim===null)?'':('ATC '+Math.round(atcLim)+' km/h');
 }
 function setNotch(i){cmdNotch=clamp(i,0,NOTCHES.length-1);notch=cmdNotch;updSpd();}   // 操作は即時反映
 // 速度による加減速特性
@@ -2719,15 +2768,8 @@ function loop(now){
     stepXRail(dt);      // 井の頭線・世田谷線
   }
   if(rideOn){
-    // 加減速の応答は一次遅れ(時定数0.75秒)。さらに速度による特性を加味する:
-    //   力行 : 60km/h までは設定どおり、以降は鈍化し 120km/h で半分
-    //   制動 : 120km/h では75%、速度が落ちるほど強まり 60km/h 以下で設定どおり
-    const aSet=NOTCHES[notch].a;
-    const aCmd=aSet*accCurve(rideV,aSet);
-    accEff += (aCmd-accEff)*Math.min(1, dt/NOTCH_LAG);
-    rideV=clamp(rideV+accEff*dt,0,VMAX);
+    stepRide(dt);
     updSpd();
-    rideS+=(rideV/3.6)*dt;if(rideS>7950){rideS=-250;}            // 終端で笹塚方へ戻る
     // 視線=線路の接線方向(勾配も含む)。同じ軌道オフセット上の前後2点から方向を作るため、
     // 曲線でも画面中央が線路の正面を向く。
     const off=zDown(rideS), p=frame(rideS,off);   // 運転モードは本線(八幡山では外側の通過線)
