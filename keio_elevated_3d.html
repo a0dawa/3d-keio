@@ -2558,7 +2558,7 @@ let atcLim=null, atcOn=false;
    ・現示アップ(制限が緩む・待避などで解除)…… ATC_UP_LAG 秒待ってから効かせる
    遅らせるのは表示だけでなく実際の速度制限も同じ(実機の現示アップと同じ扱い)。
    表示はさらに ATC_DISP_STEP 刻みに丸める。 */
-const ATC_DISP_STEP=5, ATC_UP_LAG=10;
+const ATC_DISP_STEP=5, ATC_UP_LAG=20;
 let atcRaw=null, atcUpT=0;
 /* 戸閉灯:駅の停止位置の前後1m以内で停止したら DOOR_LAMP_SEC 秒だけ点灯する。
    点灯中はホームドアと客用扉が開き、マスコンの力行操作を受け付けない。 */
