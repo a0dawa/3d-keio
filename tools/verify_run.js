@@ -42,7 +42,7 @@ const REF = {
   ATC_FAR: 600, ATC_NEAR: 20, ATC_VFAR: 120,
   ATC_BRAKE: 'B7',         // 介入時に使う制動段
   ATC_DISP_STEP: 5,        // ATCの表示は5km/h刻み
-  ATC_UP_LAG: 10,          // 現示アップ(制限が緩む)は10秒遅れ。ダウンは即時
+  ATC_UP_LAG: 20,          // 現示アップ(制限が緩む)は20秒遅れ。ダウンは即時
   NOTCH_LAG: 1.0,          // 力行・制動の応答遅れ[秒]
   DOOR_LAMP_SEC: 25,       // 戸閉灯の点灯時間[秒]
   DOOR_STOP_TOL: 1.0,      // 停車と見なす停止位置からのずれ[m]
@@ -508,34 +508,38 @@ ok('上限速度を超えない', vmax <= REF.VMAX_KMH + 0.5, '≤' + REF.VMAX_K
       '即座に制限', down.lim === null ? '制限なし' : down.lim.toFixed(1) + 'km/h');
     const held0 = down.lim;
 
-    // (b) 現示アップ:列車を遠ざけても10秒間は前の(厳しい)制限のまま
+    // (b) 現示アップ:列車を遠ざけても ATC_UP_LAG 秒間は前の(厳しい)制限のまま。
+    //     サンプル時刻は遅れ量に比例させる(遅れ秒数を変えても検査が追従する)。
     const held = held0;
+    const tEarly = REF.ATC_UP_LAG - 5, tLate = REF.ATC_UP_LAG + 2;
     lead.x = s0 + 560 + (lead.x - rearOf(lead));             // 560m先=緩い現示へ
-    let up5 = null, up12 = null, g5 = false, g12 = false, t = 0;
-    for (let i = 0; i < 300; i++) {
+    let upEarly = null, upLate = null, gE = false, gL = false, t = 0;
+    for (let i = 0; i < Math.ceil(tLate / 0.05) + 40; i++) {
       X.stepRide(0.05); t += 0.05;
-      if (!g5 && t >= 5) { up5 = X.getRideState(); g5 = true; }
-      if (!g12 && t >= 12) { up12 = X.getRideState(); g12 = true; }
+      if (!gE && t >= tEarly) { upEarly = X.getRideState(); gE = true; }
+      if (!gL && t >= tLate) { upLate = X.getRideState(); gL = true; }
     }
     const kmh = (v) => (v === null || v === undefined) ? '—' : v.toFixed(1);
-    ok('現示アップは10秒遅れる',
-      up5.lim !== null && Math.abs(up5.lim - held) < 1e-9 && up12.lim !== null && up12.lim > held + 1,
+    ok('現示アップは' + REF.ATC_UP_LAG + '秒遅れる',
+      upEarly.lim !== null && Math.abs(upEarly.lim - held) < 1e-9 &&
+      upLate.lim !== null && upLate.lim > held + 1,
       REF.ATC_UP_LAG + '秒後に上がる',
-      '5秒後=' + kmh(up5.lim) + ' / 12秒後=' + kmh(up12.lim) + 'km/h');
-    ok('現示アップ前も瞬時値は上がっている', up5.raw !== null && up5.raw > held + 1, '瞬時値は上昇',
-      kmh(up5.raw) + 'km/h');
+      tEarly.toFixed(0) + '秒後=' + kmh(upEarly.lim) + ' / ' + tLate.toFixed(0) + '秒後=' + kmh(upLate.lim) + 'km/h');
+    ok('現示アップ前も瞬時値は上がっている', upEarly.raw !== null && upEarly.raw > held + 1, '瞬時値は上昇',
+      kmh(upEarly.raw) + 'km/h');
 
-    // (c) 解除(制限なしへ)も10秒待つ
+    // (c) 解除(制限なしへ)も ATC_UP_LAG 秒待つ
     lead.x = X.DOM.x1 - 5;
-    let rel5 = null, rel12 = null, h5 = false, h12 = false; t = 0;
-    for (let i = 0; i < 300; i++) {
+    let relEarly = null, relLate = null, hE = false, hL = false; t = 0;
+    for (let i = 0; i < Math.ceil(tLate / 0.05) + 40; i++) {
       X.stepRide(0.05); t += 0.05;
-      if (!h5 && t >= 5) { rel5 = X.getRideState(); h5 = true; }
-      if (!h12 && t >= 12) { rel12 = X.getRideState(); h12 = true; }
+      if (!hE && t >= tEarly) { relEarly = X.getRideState(); hE = true; }
+      if (!hL && t >= tLate) { relLate = X.getRideState(); hL = true; }
     }
     const km = (v) => (v === null || v === undefined) ? '—' : v.toFixed(1);
-    ok('解除も10秒遅れる', rel5.lim !== null && rel12.lim === null,
-      REF.ATC_UP_LAG + '秒後に解除', '5秒後=' + km(rel5.lim) + ' / 12秒後=' + km(rel12.lim));
+    ok('解除も' + REF.ATC_UP_LAG + '秒遅れる', relEarly.lim !== null && relLate.lim === null,
+      REF.ATC_UP_LAG + '秒後に解除',
+      tEarly.toFixed(0) + '秒後=' + km(relEarly.lim) + ' / ' + tLate.toFixed(0) + '秒後=' + km(relLate.lim));
   }
   for (const t of T) { t.x = X.DOM.x1 - 5; }
 
