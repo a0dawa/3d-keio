@@ -17,7 +17,7 @@ const X = require('./stub_three')(path,
   'setRideState:setRideState,getRideState:getRideState,setNotch:setNotch,NIDX_N:NIDX_N,' +
   'NOTCH_LAG:NOTCH_LAG,ATC_DISP_STEP:ATC_DISP_STEP,ATC_UP_LAG:ATC_UP_LAG,' +
   'ridePSDFor:ridePSDFor,mainOff:mainOff,' +
-  'DOOR_LAMP_SEC:DOOR_LAMP_SEC,DOOR_STOP_TOL:DOOR_STOP_TOL,stopPosOf:stopPosOf');
+  'DOOR_OPEN_SEC:DOOR_OPEN_SEC,DOOR_STOP_TOL:DOOR_STOP_TOL,stopPosOf:stopPosOf');
 
 /* ---- 期待値(検証側が独立して持つ) ---------------------------------------- */
 const REF = {
@@ -44,7 +44,9 @@ const REF = {
   ATC_DISP_STEP: 5,        // ATCの表示は5km/h刻み
   ATC_UP_LAG: 20,          // 現示アップ(制限が緩む)は20秒遅れ。ダウンは即時
   NOTCH_LAG: 1.0,          // 力行・制動の応答遅れ[秒]
-  DOOR_LAMP_SEC: 25,       // 戸閉灯の点灯時間[秒]
+  DOOR_OPEN_SEC: 25,       // 停車中に扉を開けている時間[秒]
+  // 戸閉灯は実物と同じ「扉が閉まっていれば点灯」。開いている間は消灯する
+  LAMP_ON_WHEN_CLOSED: true,
   DOOR_STOP_TOL: 1.0,      // 停車と見なす停止位置からのずれ[m]
 };
 
@@ -557,24 +559,27 @@ ok('上限速度を超えない', vmax <= REF.VMAX_KMH + 0.5, '≤' + REF.VMAX_K
         Math.abs(want.off - trackOff) < 2.5, '本線側(off≈' + trackOff.toFixed(2) + ')',
         a.psd ? 'off=' + a.psd.off.toFixed(2) : 'なし');
     }
-    ok('停車で戸閉灯が点く', a.lamp > 0 && a.lampSt === st, REF.DOOR_LAMP_SEC + '秒点灯',
-      a.lamp > 0 ? a.lamp.toFixed(1) + '秒 @' + (a.lampSt ? a.lampSt.n : '?') : '点かない');
+    ok('停車で扉が開く', a.open > 0 && a.openSt === st, REF.DOOR_OPEN_SEC + '秒開く',
+      a.open > 0 ? a.open.toFixed(1) + '秒 @' + (a.openSt ? a.openSt.n : '?') : '開かない');
+    // 戸閉灯は扉が開いている間は消灯(指示により極性を反転した)
+    ok('扉が開いている間は消灯', a.lamp === false, '消灯', a.lamp ? '点灯' : '消灯');
     // 点灯中は力行に入れられない
     X.setNotch(X.NOTCHES.length - 1);
-    ok('点灯中は力行できない', X.getRideState().notch <= X.NIDX_N, 'N以下',
+    ok('扉が開いている間は力行できない', X.getRideState().notch <= X.NIDX_N, 'N以下',
       X.NOTCHES[X.getRideState().notch].s);
     // ホームドアが開く(下り側)
     const psd = X.ridePSDFor(st);
     for (let i = 0; i < 120; i++) X.stepPSD(0.05);
     ok('自列車でホームドアが開く', psd.r > 0.95, '開度>0.95', psd.r.toFixed(3));
     // 25秒で消灯し、ホームドアも閉じる
-    for (let i = 0; i < Math.ceil(REF.DOOR_LAMP_SEC / 0.05) + 40; i++) X.stepRide(0.05);
+    for (let i = 0; i < Math.ceil(REF.DOOR_OPEN_SEC / 0.05) + 40; i++) X.stepRide(0.05);
     for (let i = 0; i < 120; i++) X.stepPSD(0.05);
     const b = X.getRideState();
-    ok('25秒で消灯する', b.lamp === 0, '消灯', b.lamp.toFixed(1) + '秒');
-    ok('消灯でホームドアも閉じる', psd.r < 0.05, '開度<0.05', psd.r.toFixed(3));
+    ok('25秒で扉が閉まる', b.open === 0, '閉まる', b.open.toFixed(1) + '秒');
+    ok('扉が閉まれば点灯', b.lamp === true, '点灯', b.lamp ? '点灯' : '消灯');
+    ok('扉扱い終了でホームドアも閉じる', psd.r < 0.05, '開度<0.05', psd.r.toFixed(3));
     X.setNotch(X.NIDX_N);
-    ok('消灯後は力行できる', (X.setNotch(X.NOTCHES.length - 1),
+    ok('扉が閉まれば力行できる', (X.setNotch(X.NOTCHES.length - 1),
       X.getRideState().notch === X.NOTCHES.length - 1), 'P4',
       X.NOTCHES[X.getRideState().notch].s);
   }
@@ -604,13 +609,15 @@ ok('上限速度を超えない', vmax <= REF.VMAX_KMH + 0.5, '≤' + REF.VMAX_K
     X.setRideState({ on: true, s: X.stopPosOf(st, 1) + REF.DOOR_STOP_TOL + 0.5,
       v: 0, notch: X.NIDX_N, acc: 0, reset: true });
     X.stepRide(0.05);
-    ok('停止位置から外れれば点かない', X.getRideState().lamp === 0, '消灯',
-      X.getRideState().lamp.toFixed(1) + '秒');
+    ok('停止位置から外れれば開かない', X.getRideState().open === 0, '開かない',
+      X.getRideState().open.toFixed(1) + '秒');
+    ok('走行中は戸閉灯が点灯', X.getRideState().lamp === true, '点灯',
+      X.getRideState().lamp ? '点灯' : '消灯');
     // 停止位置に居ても速度が完全に0でなければ点かない
     X.setRideState({ on: true, s: X.stopPosOf(st, 1), v: 0.3, notch: X.NIDX_N, acc: 0, reset: true });
     X.stepRide(0.05);
-    ok('0km/hでなければ点かない', X.getRideState().lamp === 0, '消灯',
-      X.getRideState().v.toFixed(2) + 'km/hで ' + X.getRideState().lamp.toFixed(1) + '秒');
+    ok('0km/hでなければ開かない', X.getRideState().open === 0, '開かない',
+      X.getRideState().v.toFixed(2) + 'km/hで ' + X.getRideState().open.toFixed(1) + '秒');
   }
   X.setRideState({ on: false, reset: true });
   for (let i = 0; i < T.length; i++) Object.assign(T[i], save[i]);
