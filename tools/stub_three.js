@@ -50,6 +50,25 @@ class Obj3D {
   traverse(f) { f(this); for (const c of this.children) if (c && c.traverse) c.traverse(f); }
 }
 class Group extends Obj3D {}
+class Scene extends Obj3D {}   // traverse を効かせて場面全体を走査できるようにする
+/* 平行光。影の追従(光の向き・写す範囲・テクセルへの吸着)を検査できるように、
+   position / target.position / shadow.camera を実体として持つ。 */
+class DirLight extends Obj3D {
+  constructor() {
+    super();
+    this.target = new Obj3D();
+    this.castShadow = false;
+    this.shadow = soft({
+      mapSize: soft({ x: 512, y: 512, set(a, b) { this.x = a; this.y = b; return this; } }),
+      camera: soft({
+        left: -5, right: 5, top: 5, bottom: -5, near: 0.5, far: 500,
+        updateProjectionMatrix() {},
+      }),
+      bias: 0, normalBias: 0,
+    });
+    return soft(this);
+  }
+}
 class Mesh extends Obj3D { constructor(g, mat) { super(); this.geometry = g; this.material = mat; } }
 // 位置と拡大率だけを記録する Matrix4。インスタンスの配置を後から測れるようにする。
 class M4 {
@@ -93,7 +112,7 @@ const Mat = (type) => class {
   constructor(o) { Object.assign(this, o || {}); this.type = type; return soft(this); }
 };
 const REAL = {
-  Vector3: V3, Object3D: Obj3D, Group, Mesh, BufferGeometry: BufGeo,
+  Vector3: V3, Object3D: Obj3D, Group, Scene, Mesh, BufferGeometry: BufGeo, DirectionalLight: DirLight,
   Matrix4: M4, InstancedMesh: Inst,
   Float32BufferAttribute: Attr, BufferAttribute: Attr,
   BoxGeometry: param('Box'), CylinderGeometry: param('Cyl'), PlaneGeometry: param('Plane'),

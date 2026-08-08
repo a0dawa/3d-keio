@@ -546,7 +546,8 @@ function kkOf(s){for(const K of KOUKU)if(s>=K.s0&&s<K.s1)return K;return null;}
 const canvas=document.getElementById('c');
 const renderer=new THREE.WebGLRenderer({canvas,antialias:true,powerPreference:'high-performance'});
 renderer.setPixelRatio(Math.min(devicePixelRatio,2));
-renderer.shadowMap.enabled=false;   // 影は使わない(負荷軽減)
+renderer.shadowMap.enabled=true;
+renderer.shadowMap.type=THREE.PCFSoftShadowMap;
 
 /* ---- 色管理 -----------------------------------------------------------------
    three.js r128 の既定は「材質の色をそのまま出力」で、照明の合成もsRGB値のまま
@@ -576,6 +577,58 @@ scene.fog=new THREE.Fog(srgb(0xd6e4ef),2600,11500);
 const camera=new THREE.PerspectiveCamera(46,2,2,30000);
 scene.add(new THREE.HemisphereLight(srgb(0xe4ecf4),srgb(0x8a8d90),.82));
 const sun=new THREE.DirectionalLight(srgb(0xfff4e0),.72);sun.position.set(2400,3200,1600);scene.add(sun);
+/* ---- 影 ---------------------------------------------------------------------
+   事業区間は約8.6km×幅±470m。1枚の影マップで全域を覆うとテクセルが数m角になり
+   使い物にならないので、**太陽の向きは固定したまま影の写す範囲だけをカメラに
+   追従**させる。範囲(半径 R)は視点から注視点までの距離に応じて広げる
+   (寄れば精細・引けば広く)。
+
+   影がちらつく(クロールする)のは、カメラが動くたびに影マップの画素境界と
+   物の縁の位置関係がずれるため。**注視点を影テクセルの格子に載せて**防ぐ。
+   格子は光源座標系で取る必要があるので、光の正規直交基底 F/Rt/Up を作って丸める。 */
+const SH_MAP=2048;                 // 影マップの一辺[px]
+const SH_MIN=180, SH_MAX=600;      // 影を写す半径の下限・上限[m]
+                                   // (上限は影テクセルが0.6mを超えない大きさ)
+const SUN_DIST=1400;               // 注視点から光源までの距離[m]
+const SUN_V={x:2400,y:3200,z:1600};                       // 太陽の方向(位置ベクトル)
+const dot3=(a,b)=>a.x*b.x+a.y*b.y+a.z*b.z;
+const norm3=v=>{const l=Math.hypot(v.x,v.y,v.z);return {x:v.x/l,y:v.y/l,z:v.z/l};};
+const cross3=(a,b)=>({x:a.y*b.z-a.z*b.y, y:a.z*b.x-a.x*b.z, z:a.x*b.y-a.y*b.x});
+const SUN_N=norm3(SUN_V);                                  // 注視点→光源(単位)
+const SUN_F={x:-SUN_N.x,y:-SUN_N.y,z:-SUN_N.z};            // 光源→注視点(視線)
+const SUN_RT=norm3(cross3(SUN_F,{x:0,y:1,z:0}));           // 影カメラの横軸
+const SUN_UP=norm3(cross3(SUN_RT,SUN_F));                  // 影カメラの縦軸
+sun.castShadow=true;
+sun.shadow.mapSize.set(SH_MAP,SH_MAP);
+sun.shadow.camera.near=SUN_DIST-SH_MAX-120;
+sun.shadow.camera.far =SUN_DIST+SH_MAX+120;
+sun.shadow.bias=-0.0004;
+sun.shadow.normalBias=0.5;         // 斜面のアクネ(縞)対策。桁の側面で出やすい
+scene.add(sun.target);
+let shadowR=SH_MIN;
+// 影を写す半径[m]。視点が離れるほど広く取る(引いたときに影が途切れないように)
+function shadowRadius(dist){return clamp(dist*0.55,SH_MIN,SH_MAX);}
+/* 注視点(fx,fz)を中心に影の範囲を置き直す。太陽の"向き"は変えない
+   (向きが変わると視点を動かすたびに影が回ってしまう)。 */
+function sunFollow(fx,fz,dist){
+  const R=shadowRadius(dist);
+  if(R!==shadowR){
+    shadowR=R;
+    const c=sun.shadow.camera;
+    c.left=-R;c.right=R;c.top=R;c.bottom=-R;c.updateProjectionMatrix();
+  }
+  const texel=2*shadowR/SH_MAP;                 // 影マップ1画素の実寸[m]
+  const p={x:fx,y:0,z:fz};
+  const a=Math.round(dot3(p,SUN_RT)/texel)*texel;   // 光源座標系で格子に載せる
+  const b=Math.round(dot3(p,SUN_UP)/texel)*texel;
+  const c=dot3(p,SUN_F);
+  const t={x:SUN_RT.x*a+SUN_UP.x*b+SUN_F.x*c,
+           y:SUN_RT.y*a+SUN_UP.y*b+SUN_F.y*c,
+           z:SUN_RT.z*a+SUN_UP.z*b+SUN_F.z*c};
+  sun.target.position.set(t.x,t.y,t.z);
+  sun.target.updateMatrixWorld();
+  sun.position.set(t.x+SUN_N.x*SUN_DIST, t.y+SUN_N.y*SUN_DIST, t.z+SUN_N.z*SUN_DIST);
+}
 
 /* 材質は必ずこの工場を通す(色を素通しで書くとその面だけ不自然に明るくなる)。
    色を持つテクスチャも canvasTex を通す。 */
@@ -598,7 +651,7 @@ const MAT={
   hdoor:M(0xcfd2cc), pole:M(0x7b828a), wall:M(0xa8adb3), water:M(0xa9c6c2),
   ballast:M(0x9a938a,DS), sleeper:M(0x6e675f,DS), gateW:M(0xf2f3f5), gateR:M(0xd93b3b),
   glass:M(0x9fc4d8,{transparent:true,opacity:.72,side:THREE.DoubleSide}),
-  ao:mkMat('MeshBasicMaterial',{color:0x18202a,transparent:true,opacity:.13}),
+  ao:mkMat('MeshBasicMaterial',{color:0x18202a,transparent:true,opacity:.06}),
 };
 const wireMat=mkMat('LineBasicMaterial',{color:0x3d434a});
 // 車両の塗色はジオメトリで表現(makeCar内で色指定)。旧テクスチャ方式は廃止。
@@ -696,8 +749,9 @@ function cyl(r,h,mat,s,y,off,seg){
 
 /* ============ 4. 地表・道路・水緑・施設(平面図準拠) ============ */
 // 地表面(ワールド絶対座標で配置する数少ない要素。線形を動かしたらここも確認)
-{const g=new THREE.Mesh(new THREE.BoxGeometry(11000,1,5200),MAT.ground);
- g.position.set(-3600,-.5,650);scene.add(g);}
+const groundMesh=(function(){
+ const g=new THREE.Mesh(new THREE.BoxGeometry(11000,1,5200),MAT.ground);
+ g.position.set(-3600,-.5,650);scene.add(g);return g;})();
 // 幹線(線路と並走:甲州街道・旧甲州街道・首都高4号)
 strip(DOM.x0-300,DOM.x1+300,60,x=>[x,.12,145],x=>[x,.12,171],MAT.roadMajor);      // 甲州街道
 strip(4200,DOM.x1+200,60,x=>[x,.12,88],x=>[x,.12,98],MAT.road);                   // 旧甲州街道
@@ -2939,11 +2993,28 @@ const IS_MOBILE=/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)||
 if(IS_MOBILE){
   renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));   // 解像度上限で描画負荷を抑える
   LOD_NEAR=260;                                             // 高精細モデルの適用範囲を短縮
+  renderer.shadowMap.enabled=false;sun.castShadow=false;    // 影は1パス増えるので無効
   const lockLandscape=()=>{                                 // 可能なら横画面に固定
     if(screen.orientation&&screen.orientation.lock) screen.orientation.lock('landscape').catch(()=>{});
   };
   addEventListener('pointerdown',lockLandscape,{once:true});
 }
+
+/* 影の「落とす/受ける」は最後に一括で設定する。生成箇所ごとに付けると
+   必ず付け忘れが出て、その物だけ影が無いという分かりにくい不整合になる。
+   ・地表は受けるだけ(巨大な板なので落とす側に入れても無駄)
+   ・線(架線・き電線)とラベル(Sprite)は対象外 */
+const SHADOW_STAT={cast:0,recv:0};
+function applyShadows(){
+  SHADOW_STAT.cast=0;SHADOW_STAT.recv=0;
+  scene.traverse(function(o){
+    if(!(o.isMesh||o.isInstancedMesh))return;
+    o.receiveShadow=true;SHADOW_STAT.recv++;
+    if(o===groundMesh){o.castShadow=false;return;}
+    o.castShadow=true;SHADOW_STAT.cast++;
+  });
+}
+applyShadows();
 
 let last=performance.now();
 function loop(now){
@@ -2995,6 +3066,9 @@ function loop(now){
     applyCam();
   }
   syncNav();
+  // 影の写す範囲を注視点へ追従させる(太陽の向きは変えない)
+  sunFollow(cam.tx,cam.tz,
+    Math.hypot(camera.position.x-cam.tx,camera.position.y,camera.position.z-cam.tz));
   renderer.render(scene,camera);
 }
 trains.forEach(placeTrain);
