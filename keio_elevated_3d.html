@@ -571,9 +571,21 @@ renderer.outputEncoding=THREE.sRGBEncoding;
 renderer.toneMapping=THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure=TONE_EXPO;
 
+/* ---- 空の色 -----------------------------------------------------------------
+   空ドームもフォグも地物と同じ経路(リニア→ACES→sRGB)を通るので、16進を
+   そのまま書くと画面上では沈む。「こう見せたい色」から逆算した値を書く
+   (逆算は tools/tune_sky.js。TONE_EXPO を変えたら引き直すこと)。
+
+     天頂   見え方 #9cc0e8  ← 著作 #71a7ff
+     地平   見え方 #d6e4ef  ← 著作 #c2f3ff   ※従来の背景色と同じ見え方
+     地平下 見え方 #c6d0d6  ← 著作 #adc0cd
+     太陽側 見え方 #f2e6d4  ← 著作 #fffabf   (太陽の方向をほのかに暖色へ)
+
+   フォグは**地平と同じ値**にする。同じ経路を通るので、遠景は空へ継ぎ目なく溶ける。 */
+const SKY={TOP:0x71a7ff, HOR:0xc2f3ff, BOT:0xadc0cd, SUN:0xfffabf};
 const scene=new THREE.Scene();
-scene.background=srgb(0xd6e4ef);
-scene.fog=new THREE.Fog(srgb(0xd6e4ef),2600,11500);
+scene.background=srgb(SKY.HOR);
+scene.fog=new THREE.Fog(srgb(SKY.HOR),2600,11500);
 const camera=new THREE.PerspectiveCamera(46,2,2,30000);
 scene.add(new THREE.HemisphereLight(srgb(0xe4ecf4),srgb(0x8a8d90),.82));
 const sun=new THREE.DirectionalLight(srgb(0xfff4e0),.72);sun.position.set(2400,3200,1600);scene.add(sun);
@@ -642,7 +654,53 @@ function canvasTex(cv){
   t.encoding=THREE.sRGBEncoding;    // 色を持つテクスチャはsRGBとして読む
   return t;
 }
+/* ---- 空のテクスチャ(正距円筒) ------------------------------------------------
+   天頂→地平→地平下のグラデーションに、太陽の方向のほのかな暖色を重ねる。
+   球面のUVに合わせて画素ごとに向きを求める(SphereGeometry の並びに一致):
+     行 yy=0 が天頂、yy=h が天底。列 xx が方位角。
+   同じテクスチャを空ドームの map と、レール等の envMap の両方に使う
+   (mapping は envMap のときだけ効くので、map として使っても支障がない)。   */
+const SKY_TEX_W=512, SKY_TEX_H=256;
+function skyTexture(){
+  const cv=document.createElement('canvas');cv.width=SKY_TEX_W;cv.height=SKY_TEX_H;
+  const ctx=cv.getContext('2d'), img=ctx.createImageData(SKY_TEX_W,SKY_TEX_H), d=img.data;
+  const C=h=>[(h>>16)&255,(h>>8)&255,h&255];
+  const top=C(SKY.TOP), hor=C(SKY.HOR), bot=C(SKY.BOT), sunc=C(SKY.SUN);
+  for(let yy=0;yy<SKY_TEX_H;yy++){
+    const th=(yy+0.5)/SKY_TEX_H*Math.PI;          // 天頂からの角度
+    const cy=Math.cos(th), sy=Math.sin(th);
+    // 地平(cy=0)を境に、上は天頂色へ・下は地平下色へ寄せる
+    const t=(cy>=0)?Math.pow(cy,0.55):Math.pow(-cy,0.75);
+    const a=(cy>=0)?top:bot;
+    for(let xx=0;xx<SKY_TEX_W;xx++){
+      const ph=(xx+0.5)/SKY_TEX_W*Math.PI*2;
+      const dx=-Math.cos(ph)*sy, dy=cy, dz=Math.sin(ph)*sy;
+      const g=Math.pow(Math.max(0,dx*SUN_N.x+dy*SUN_N.y+dz*SUN_N.z),7)*0.85;   // 太陽まわりの輝き
+      const i=(yy*SKY_TEX_W+xx)*4;
+      for(let k=0;k<3;k++){
+        const base=hor[k]+(a[k]-hor[k])*t;
+        d[i+k]=Math.min(255,base+(sunc[k]-base)*g);
+      }
+      d[i+3]=255;
+    }
+  }
+  ctx.putImageData(img,0,0);
+  const tex=canvasTex(cv);
+  tex.mapping=THREE.EquirectangularReflectionMapping;   // envMap として使うため
+  return tex;
+}
 const M=(c,o={})=>mkMat('MeshLambertMaterial',Object.assign({color:c},o));
+const SKY_TEX=skyTexture();
+/* 空ドーム。カメラの遠方面(30000)の内側・場面(約11000)の外側に置く。
+   ・フォグは掛けない(掛けると空まで一様に塗り潰される)
+   ・トーンマッピングは地物と同じに通す(通さないと地平でフォグと色が合わない)
+   ・影の対象から外す(裏面の巨大な球なので、入れると世界中が影になる) */
+const SKY_R=16000;
+const skyDome=(function(){
+  const m=new THREE.Mesh(new THREE.SphereGeometry(SKY_R,32,16),
+    mkMat('MeshBasicMaterial',{map:SKY_TEX,side:THREE.BackSide,fog:false,depthWrite:false}));
+  m.renderOrder=-1;scene.add(m);return m;
+})();
 const DS={side:THREE.DoubleSide};
 const MAT={
   deckNew:M(0xc9cdd2,DS), deckOld:M(0x9aa0a6,DS), pier:M(0xbfc3c8), barrier:M(0xe8eaec,DS),
@@ -654,6 +712,12 @@ const MAT={
   ao:mkMat('MeshBasicMaterial',{color:0x18202a,transparent:true,opacity:.06}),
 };
 const wireMat=mkMat('LineBasicMaterial',{color:0x3d434a});
+/* 空を映すと効きの大きい材質にだけ環境マップを掛ける。
+   レール頭頂面が光る/ガラスと水面が空を映す、という鉄道の絵の"らしさ"が出る。
+   車体は帯の彩度が落ちるので、ここでは掛けない(④で Standard へ移すときに扱う)。 */
+for(const [k,r] of [['rail',0.30],['glass',0.42],['water',0.45]]){
+  MAT[k].envMap=SKY_TEX; MAT[k].combine=THREE.MixOperation; MAT[k].reflectivity=r;
+}
 // 車両の塗色はジオメトリで表現(makeCar内で色指定)。旧テクスチャ方式は廃止。
 function patTex(draw,w,h,rx,ry){
   const cv=document.createElement('canvas');cv.width=w;cv.height=h;
@@ -3010,6 +3074,8 @@ function applyShadows(){
   scene.traverse(function(o){
     if(!(o.isMesh||o.isInstancedMesh))return;
     o.receiveShadow=true;SHADOW_STAT.recv++;
+    // 空ドームは裏面の巨大な球。影の対象に入れると世界中が影になる
+    if(o===skyDome){o.castShadow=false;o.receiveShadow=false;SHADOW_STAT.recv--;return;}
     if(o===groundMesh){o.castShadow=false;return;}
     o.castShadow=true;SHADOW_STAT.cast++;
   });
