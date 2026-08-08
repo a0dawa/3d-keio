@@ -133,6 +133,14 @@ const param = (type) => class extends BufGeo {
 const Mat = (type) => class {
   constructor(o) { Object.assign(this, o || {}); this.type = type; return soft(this); }
 };
+// 環境マップの前処理器。scene.environment を実体として測れるようにする
+class PMREM {
+  constructor() { return soft(this); }
+  compileEquirectangularShader() {}
+  fromEquirectangular(t) { const o = new Tex(); o.mapping = 306 /* CubeUVReflectionMapping */;
+    o.source = t; return soft({ texture: o }); }
+  dispose() {}
+}
 const REAL = {
   Vector3: V3, Object3D: Obj3D, Group, Scene, Mesh, BufferGeometry: BufGeo, DirectionalLight: DirLight,
   PerspectiveCamera: PerspCam, CanvasTexture: Tex, Texture: Tex,
@@ -141,7 +149,8 @@ const REAL = {
   BoxGeometry: param('Box'), CylinderGeometry: param('Cyl'), PlaneGeometry: param('Plane'),
   SphereGeometry: param('Sph'), ConeGeometry: param('Cone'), CircleGeometry: param('Cir'),
   MeshLambertMaterial: Mat('lambert'), MeshBasicMaterial: Mat('basic'),
-  MeshPhongMaterial: Mat('phong'), LineBasicMaterial: Mat('line'),
+  MeshPhongMaterial: Mat('phong'), MeshStandardMaterial: Mat('standard'),
+  LineBasicMaterial: Mat('line'), PMREMGenerator: PMREM,
   DoubleSide: 2, FrontSide: 0, BackSide: 1,
   // three.js の定数(実値)。スタブが Proxy を返すと材質の設定を数値で検査できない
   LinearEncoding: 3000, sRGBEncoding: 3001,

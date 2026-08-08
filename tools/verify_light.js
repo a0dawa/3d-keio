@@ -17,7 +17,8 @@ const X = require('./stub_three')(path,
   'SUN_V:SUN_V,SUN_N:SUN_N,SUN_F:SUN_F,SUN_RT:SUN_RT,SUN_UP:SUN_UP,' +
   'SH_MAP:SH_MAP,SH_MIN:SH_MIN,SH_MAX:SH_MAX,SUN_DIST:SUN_DIST,' +
   'groundMesh:groundMesh,SHADOW_STAT:SHADOW_STAT,DOM:DOM,' +
-  'SKY:SKY,SKY_TEX:SKY_TEX,SKY_R:SKY_R,skyDome:skyDome,MAT:MAT,camera:camera,scene:scene');
+  'SKY:SKY,SKY_TEX:SKY_TEX,SKY_R:SKY_R,skyDome:skyDome,MAT:MAT,camera:camera,scene:scene,' +
+  'CARMAT:CARMAT,TRIMMAT:TRIMMAT,M_PN:M_PN,M_SH:M_SH,M_PANS:M_PANS,M_BOG:M_BOG,ENV_TEX:ENV_TEX');
 
 /* ---- 期待値(検証側が独立して持つ) ---------------------------------------- */
 const REF = {
@@ -28,7 +29,7 @@ const REF = {
   MIN_ELEV: 25,       // 太陽高度の下限[°](低すぎると影が伸びて破綻する)
   MAX_ELEV: 70,
   SCENE_R: 5600,      // 場面の広がり(地表11000×5200の外接半径の目安)[m]
-  ENVMAP: ['rail', 'glass', 'water'],   // 空を映す材質(車体は④で扱う)
+  ENVMAP: ['rail', 'glass', 'water'],   // 空を映す材質
 };
 
 const rows = [];
@@ -176,21 +177,48 @@ const len = (v) => Math.hypot(v.x, v.y, v.z);
     ['TOP', 'HOR', 'BOT'].map((k) => '#' + X.SKY[k].toString(16)).join(' '));
 }
 
-/* ---- 8. 環境マップ -------------------------------------------------------- */
+/* ---- 8. 材質と環境マップ ---------------------------------------------------
+   金属・ガラスは物理ベース(Standard)で空を映す。
+   一方、車体は**塗色を守るため Standard にしてはいけない**:
+     ・Standard は環境光の拡散が加わり、帯が持ち上がる(実測 最大72/255)
+     ・Phong でも envMap を混ぜると、緑成分0の赤帯に空が数%入るだけで大きく動く
+       (reflectivity 0.03 で 37/255)
+   Phong で envMap を持たせなければ拡散は Lambert と完全に同一(差0/255)で、
+   鏡面ハイライトだけが増える。 */
 {
+  const STD = 'standard';
   let bad = null;
   for (const k of REF.ENVMAP) {
     const m = X.MAT[k];
-    if (!m || m.envMap !== X.SKY_TEX) { bad = bad || [k, '空を映していない']; continue; }
-    if (!(m.reflectivity > 0 && m.reflectivity < 1)) bad = bad || [k, '反射率' + m.reflectivity];
+    if (!m || m.type !== STD) { bad = bad || [k, '物理ベースでない']; continue; }
+    if (!(m.envMapIntensity > 0)) bad = bad || [k, '環境の強さ' + m.envMapIntensity];
+    if (!(m.roughness >= 0 && m.roughness <= 1)) bad = bad || [k, '粗さ' + m.roughness];
   }
-  ok('空を映す材質', bad === null, REF.ENVMAP.join('/'), bad ? bad.join(' ') : REF.ENVMAP.join('/'));
-  // envMap は正距円筒として読ませる必要がある(指定を忘れると立方体として解釈される)
-  ok('環境マップの写像', X.SKY_TEX.mapping === 303 /* EquirectangularReflectionMapping */,
-    'Equirectangular', String(X.SKY_TEX.mapping));
-  // 車体は帯の彩度が落ちるので掛けない(④でStandardへ移すときに扱う)
-  ok('車体には掛けない', !/CARMAT\.envMap|TRIMMAT\.envMap/.test(X.__html), '掛けない',
-    /CARMAT\.envMap|TRIMMAT\.envMap/.test(X.__html) ? '掛けている' : '掛けない');
+  ok('空を映す材質', bad === null, REF.ENVMAP.join('/') + 'がStandard',
+    bad ? bad.join(' ') : REF.ENVMAP.join('/'));
+  // scene.environment は PMREM 済みでなければ粗さを反映できない
+  ok('環境マップがPMREM済み', X.scene.environment && X.scene.environment.mapping === 306,
+    'CubeUV(306)', X.scene.environment ? String(X.scene.environment.mapping) : 'なし');
+  // 元になった空は正距円筒として読ませる必要がある
+  ok('空の写像', X.SKY_TEX.mapping === 303 /* Equirectangular */, 'Equirectangular(303)',
+    String(X.SKY_TEX.mapping));
+  // 金属部品(パンタ・台車)も物理ベースに
+  let bm = null;
+  for (const [nm, m] of [['パンタ枠', X.M_PN], ['舟体', X.M_SH], ['すり板', X.M_PANS], ['台車', X.M_BOG]]) {
+    if (m.type !== STD) { bm = bm || [nm, m.type]; continue; }
+    if (!(m.metalness >= 0.5)) bm = bm || [nm, '金属度' + m.metalness];
+  }
+  ok('金属部品が物理ベース', bm === null, 'Standard・金属度≥0.5', bm ? bm.join(' ') : '4点すべて');
+  /* 車体:帯を守るための2条件。Phong であること・envMap を持たないこと。
+     どちらか欠けると帯が動く。 */
+  let bb = null;
+  for (const [nm, m] of [['車体', X.CARMAT], ['トリム', X.TRIMMAT]]) {
+    if (m.type !== 'phong') bb = bb || [nm, m.type + 'になっている'];
+    else if ('envMap' in m) bb = bb || [nm, 'envMapを持っている'];
+    else if (!(m.shininess > 0)) bb = bb || [nm, 'ハイライトが無い'];
+  }
+  ok('車体は帯を動かさない材質', bb === null, 'Phong・envMapなし',
+    bb ? bb.join(' ') : 'Phong・envMapなし・ハイライトあり');
 }
 
 /* ---- 9. 色を持つテクスチャが sRGB として読まれているか -----------------------
