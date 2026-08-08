@@ -646,7 +646,7 @@ function sunFollow(fx,fz,dist){
    色を持つテクスチャも canvasTex を通す。 */
 function mkMat(kind,o){
   const q=Object.assign({},o);
-  for(const k of ['color','emissive']) if(typeof q[k]==='number') q[k]=srgb(q[k]);
+  for(const k of ['color','emissive','specular']) if(typeof q[k]==='number') q[k]=srgb(q[k]);
   return new THREE[kind](q);
 }
 function canvasTex(cv){
@@ -695,6 +695,26 @@ const SKY_TEX=skyTexture();
    ・フォグは掛けない(掛けると空まで一様に塗り潰される)
    ・トーンマッピングは地物と同じに通す(通さないと地平でフォグと色が合わない)
    ・影の対象から外す(裏面の巨大な球なので、入れると世界中が影になる) */
+/* Standard材質の映り込みに使う環境マップ。生の正距円筒のままでは粗さを
+   反映できないので、PMREM(粗さ別にぼかした版)へ変換して scene.environment に置く。
+   ※ Lambert/Phong は scene.environment を見ないので、そちらは material.envMap を使う。 */
+const ENV_TEX=(function(){
+  const g=new THREE.PMREMGenerator(renderer);
+  g.compileEquirectangularShader();
+  const t=g.fromEquirectangular(SKY_TEX).texture;
+  g.dispose();
+  return t;
+})();
+scene.environment=ENV_TEX;
+/* 物理ベース(Standard)の材質。金属・ガラス・水面など「空を映すと効く」ものに使う。
+   metalness を上げると拡散が (1-metalness) 倍になるので、**塗色を守りたい面には
+   使わない**(車体は下の mkPhong を使う)。 */
+function mkStd(o){return mkMat('MeshStandardMaterial',o);}
+/* 拡散は Lambert と完全に同じまま、鏡面ハイライトだけを足す材質。
+   Standard にすると環境光の拡散が加わって帯が持ち上がり、Phong でも envMap を
+   混ぜると彩度の高い帯(緑成分0の赤など)が大きく動く。
+   車体は **envMap を持たせず** ハイライトだけで金属感を出す。 */
+function mkPhong(o){return mkMat('MeshPhongMaterial',o);}
 const SKY_R=16000;
 const skyDome=(function(){
   const m=new THREE.Mesh(new THREE.SphereGeometry(SKY_R,32,16),
@@ -704,20 +724,21 @@ const skyDome=(function(){
 const DS={side:THREE.DoubleSide};
 const MAT={
   deckNew:M(0xc9cdd2,DS), deckOld:M(0x9aa0a6,DS), pier:M(0xbfc3c8), barrier:M(0xe8eaec,DS),
-  slab:M(0x686d74,DS), rail:M(0xe6e9ee,DS), ground:M(0xb9d0a2),   // 地表=薄緑(やや濃いめ) road:M(0x8f949a), roadMajor:M(0x7c8187),
+  slab:M(0x686d74,DS),
+  // レール頭頂面は磨かれて空を映す。鉄道の絵で最も効く金属面
+  rail:mkStd({color:srgb(0xe6e9ee),side:THREE.DoubleSide,metalness:0.85,roughness:0.30,envMapIntensity:1.0}),
+  ground:M(0xb9d0a2),   // 地表=薄緑(やや濃いめ) road:M(0x8f949a), roadMajor:M(0x7c8187),
   roadPlan:M(0xb4b9c0), sidewalk:M(0xb9c3a6,DS), green:M(0x9cb98a), plat:M(0xc7c8c3), canopy:M(0xdfdfd8),
-  hdoor:M(0xcfd2cc), pole:M(0x7b828a), wall:M(0xa8adb3), water:M(0xa9c6c2),
+  hdoor:M(0xcfd2cc), pole:M(0x7b828a), wall:M(0xa8adb3),
+  water:mkStd({color:srgb(0xa9c6c2),metalness:0.0,roughness:0.14,envMapIntensity:1.0}),
   ballast:M(0x9a938a,DS), sleeper:M(0x6e675f,DS), gateW:M(0xf2f3f5), gateR:M(0xd93b3b),
-  glass:M(0x9fc4d8,{transparent:true,opacity:.72,side:THREE.DoubleSide}),
+  glass:mkStd({color:srgb(0x9fc4d8),transparent:true,opacity:.72,side:THREE.DoubleSide,
+               metalness:0.0,roughness:0.06,envMapIntensity:1.0}),
   ao:mkMat('MeshBasicMaterial',{color:0x18202a,transparent:true,opacity:.06}),
 };
 const wireMat=mkMat('LineBasicMaterial',{color:0x3d434a});
-/* 空を映すと効きの大きい材質にだけ環境マップを掛ける。
-   レール頭頂面が光る/ガラスと水面が空を映す、という鉄道の絵の"らしさ"が出る。
-   車体は帯の彩度が落ちるので、ここでは掛けない(④で Standard へ移すときに扱う)。 */
-for(const [k,r] of [['rail',0.30],['glass',0.42],['water',0.45]]){
-  MAT[k].envMap=SKY_TEX; MAT[k].combine=THREE.MixOperation; MAT[k].reflectivity=r;
-}
+// レール・ガラス・水面は Standard なので scene.environment から空を映す
+// (envMapIntensity は材質側で指定済み)。
 // 車両の塗色はジオメトリで表現(makeCar内で色指定)。旧テクスチャ方式は廃止。
 function patTex(draw,w,h,rx,ry){
   const cv=document.createElement('canvas');cv.width=w;cv.height=h;
@@ -2123,8 +2144,11 @@ function setCarDoors(c,r,side){
 /* ---- 9-8. ジオメトリのLODと材質 -------------------------------------------- */
 const LODP={hi:{roof:40, mid:0.22, nose:0.030, fill:14, face:0.06, faceC:40},
             lo:{roof:12, mid:0.90, nose:0.20,  fill:4,  face:0.30, faceC:12}};
-const CARMAT =mkMat('MeshLambertMaterial',{vertexColors:true, side:THREE.DoubleSide});
-const TRIMMAT=mkMat('MeshLambertMaterial',{vertexColors:true, side:THREE.DoubleSide});
+/* 車体・トリムは Phong。拡散は Lambert と完全に同一なので**帯の見え方は変わらない**。
+   環境マップは持たせない(緑成分0の赤帯に空を数%混ぜるだけで色が大きく動くため)。
+   金属感は鏡面ハイライトだけで出す。 */
+const CARMAT =mkPhong({vertexColors:true, side:THREE.DoubleSide, specular:0x3a4046, shininess:55});
+const TRIMMAT=mkPhong({vertexColors:true, side:THREE.DoubleSide, specular:0x3a4046, shininess:55});
 const CARGEO={}, CARGEO_LO={}, TRIMGEO={};
 for(const k of ['mid','cf','cr']){
   const cf=k==='cf', cr=k==='cr';
@@ -2140,8 +2164,16 @@ const FACEGEO={f:buildFaceGeo(1), r:buildFaceGeo(-1)};
    [A] 台車は東急車輛製 TS-823A(電動)/TS-824(付随)。車体直結式空気ばね(ボルスタレス)。
    [A] パンタグラフは東洋電機製 PT-4201(菱形)。                                */
 const M_AC =M(0x9199a0), M_ACL=M(0xa6adb3), M_DUCT=M(0x8b9299),
-      M_UND=M(0x474d55), M_BOG=M(0x3f444b), M_WHL=M(0x5d636a), M_DISC=M(0x8a9098),
-      M_AIR =M(0x2f343a), M_PN =M(0x565d64), M_SH=M(0xb9bec4), M_INS=M(0xd8cdbc),
+      M_UND=M(0x474d55),
+      // 台車・車輪・ブレーキディスクは金属。暗色なので帯への影響は無い
+      M_BOG=mkStd({color:srgb(0x3f444b),metalness:0.70,roughness:0.52,envMapIntensity:0.8}),
+      M_WHL=mkStd({color:srgb(0x5d636a),metalness:0.75,roughness:0.42,envMapIntensity:0.8}),
+      M_DISC=mkStd({color:srgb(0x8a9098),metalness:0.80,roughness:0.30,envMapIntensity:0.9}),
+      M_AIR =M(0x2f343a),
+      // パンタの枠・舟体は金属。空を映すと架線まわりが引き締まる
+      M_PN =mkStd({color:srgb(0x565d64),metalness:0.80,roughness:0.38,envMapIntensity:1.0}),
+      M_SH =mkStd({color:srgb(0xb9bec4),metalness:0.85,roughness:0.30,envMapIntensity:1.0}),
+      M_INS=M(0xd8cdbc),
       M_LCASE=M(0xb9bec4,{side:THREE.DoubleSide}),                    // ケース枠=シルバー
       M_HL =mkMat('MeshLambertMaterial',{color:0xffffff,emissive:0xc8ced6}),   // 前照灯(白)
       M_TL =mkMat('MeshLambertMaterial',{color:0xd8342e,emissive:0x63120f}),   // 尾灯(赤)
@@ -2209,7 +2241,8 @@ const G_PSHO=new THREE.BoxGeometry(0.26,0.05,PT.SHOEZ);           // 舟体
 const G_PSTR=new THREE.BoxGeometry(0.09,0.025,PT.SHOEZ-0.18);     // すり板(2本)
 const G_PHRN=new THREE.BoxGeometry(0.07,0.05,0.30);               // ホーン
 const G_PSPR=new THREE.CylinderGeometry(0.06,0.06,0.24,8);        // 復元ばね
-const M_PANS=M(0x9aa1a8);                              // すり板(銅系のため明るめ)
+// すり板(銅系のため明るめ)。架線と擦れて磨かれている
+const M_PANS=mkStd({color:srgb(0x9aa1a8),metalness:0.85,roughness:0.25,envMapIntensity:1.0});
 const PANTO_FROM_END=3.0;                              // パンタの取付位置(車端からの距離[m])
 /* パンタを載せる車両。西端から数えた両数(1始まり)で指定する。
    編成の向きで j の意味が変わる(下りは j=0 が西端、上りは j=0 が東端)ので、
