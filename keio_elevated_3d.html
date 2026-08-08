@@ -547,14 +547,49 @@ const canvas=document.getElementById('c');
 const renderer=new THREE.WebGLRenderer({canvas,antialias:true,powerPreference:'high-performance'});
 renderer.setPixelRatio(Math.min(devicePixelRatio,2));
 renderer.shadowMap.enabled=false;   // 影は使わない(負荷軽減)
-const scene=new THREE.Scene();
-scene.background=new THREE.Color(0xd6e4ef);
-scene.fog=new THREE.Fog(0xd6e4ef,2600,11500);
-const camera=new THREE.PerspectiveCamera(46,2,2,30000);
-scene.add(new THREE.HemisphereLight(0xe4ecf4,0x8a8d90,.82));   // 地表が白飛びしない露出に
-const sun=new THREE.DirectionalLight(0xfff4e0,.72);sun.position.set(2400,3200,1600);scene.add(sun);
 
-const M=(c,o={})=>new THREE.MeshLambertMaterial(Object.assign({color:c},o));
+/* ---- 色管理 -----------------------------------------------------------------
+   three.js r128 の既定は「材質の色をそのまま出力」で、照明の合成もsRGB値のまま
+   行われる。これは物理的に誤りで、明るい面がすぐ飽和して白へ張り付く
+   (実測:地表・桁・ホーム・上屋・レールの5面が 255,255,255 に潰れていた)。
+   正しい経路に直す:
+     著作値(sRGB) → リニアへ変換 → 照明計算 → トーンマッピング → sRGBで出力
+
+   ・色は今までどおり sRGB の16進で書く。変換は srgb()/mkMat() が行う
+   ・色を持つテクスチャは encoding=sRGBEncoding を指定する(canvasTex)
+   ・頂点カラー(PAL)・インスタンスカラーもリニアへ変換する
+   変換を通し忘れた色だけが不自然に明るくなるので、検証で漏れを検出する。      */
+const s2l=v=>(v<=0.04045)?v/12.92:Math.pow((v+0.055)/1.055,2.4);   // sRGB→リニア
+const setSrgb=(c,h)=>c.setRGB(s2l(((h>>16)&255)/255),s2l(((h>>8)&255)/255),s2l((h&255)/255));
+const srgb=h=>setSrgb(new THREE.Color(),h);
+/* 露出。描画を見られないので、r128 のシェーダ(ACESFilmicToneMapping)と同じ式を
+   別スクリプトで再現し、"白飛びしていない中間調の表示輝度"が変更前後で一致する
+   値を数値的に解いて決めた(代表15面で輝度RMS差 0.030 / 白飛び 5面→0面)。 */
+const TONE_EXPO=1.18;
+renderer.outputEncoding=THREE.sRGBEncoding;
+renderer.toneMapping=THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure=TONE_EXPO;
+
+const scene=new THREE.Scene();
+scene.background=srgb(0xd6e4ef);
+scene.fog=new THREE.Fog(srgb(0xd6e4ef),2600,11500);
+const camera=new THREE.PerspectiveCamera(46,2,2,30000);
+scene.add(new THREE.HemisphereLight(srgb(0xe4ecf4),srgb(0x8a8d90),.82));
+const sun=new THREE.DirectionalLight(srgb(0xfff4e0),.72);sun.position.set(2400,3200,1600);scene.add(sun);
+
+/* 材質は必ずこの工場を通す(色を素通しで書くとその面だけ不自然に明るくなる)。
+   色を持つテクスチャも canvasTex を通す。 */
+function mkMat(kind,o){
+  const q=Object.assign({},o);
+  for(const k of ['color','emissive']) if(typeof q[k]==='number') q[k]=srgb(q[k]);
+  return new THREE[kind](q);
+}
+function canvasTex(cv){
+  const t=new THREE.CanvasTexture(cv);
+  t.encoding=THREE.sRGBEncoding;    // 色を持つテクスチャはsRGBとして読む
+  return t;
+}
+const M=(c,o={})=>mkMat('MeshLambertMaterial',Object.assign({color:c},o));
 const DS={side:THREE.DoubleSide};
 const MAT={
   deckNew:M(0xc9cdd2,DS), deckOld:M(0x9aa0a6,DS), pier:M(0xbfc3c8), barrier:M(0xe8eaec,DS),
@@ -563,59 +598,59 @@ const MAT={
   hdoor:M(0xcfd2cc), pole:M(0x7b828a), wall:M(0xa8adb3), water:M(0xa9c6c2),
   ballast:M(0x9a938a,DS), sleeper:M(0x6e675f,DS), gateW:M(0xf2f3f5), gateR:M(0xd93b3b),
   glass:M(0x9fc4d8,{transparent:true,opacity:.72,side:THREE.DoubleSide}),
-  ao:new THREE.MeshBasicMaterial({color:0x18202a,transparent:true,opacity:.13}),
+  ao:mkMat('MeshBasicMaterial',{color:0x18202a,transparent:true,opacity:.13}),
 };
-const wireMat=new THREE.LineBasicMaterial({color:0x3d434a});
+const wireMat=mkMat('LineBasicMaterial',{color:0x3d434a});
 // 車両の塗色はジオメトリで表現(makeCar内で色指定)。旧テクスチャ方式は廃止。
 function patTex(draw,w,h,rx,ry){
   const cv=document.createElement('canvas');cv.width=w;cv.height=h;
   draw(cv.getContext('2d'));
-  const t=new THREE.CanvasTexture(cv);
+  const t=canvasTex(cv);
   t.wrapS=THREE.RepeatWrapping;t.wrapT=THREE.RepeatWrapping;t.repeat.set(rx,ry);
   return t;
 }
 // --- 公式パース(2019.5.30)の側面意匠を再現するテクスチャ群 ---
 // 代田橋:木質の縦フィン(高さ不揃い)/明大前:グレーパネル+紫アクセント/桜上水:金属リブ+木質
 // 上北沢:落ち着いた横帯+ガラス/芦花公園:木質縦格子(書架)/千歳烏山:粗目格子/下高井戸:温色の大庇
-const finMat=new THREE.MeshLambertMaterial({map:patTex(c=>{
+const finMat=mkMat('MeshLambertMaterial',{map:patTex(c=>{
   c.fillStyle='#6f665c';c.fillRect(0,0,128,128);
   for(let x=0;x<128;x+=8){const h=26+((x*37)%46);   // 縦フィン(上端が波打つ)
     c.fillStyle=(x/8)%2?'#c39a5f':'#b08a52';
     c.fillRect(x,h,6,128-h);}
 },128,128,26,1)});
-const meidaiMat=new THREE.MeshLambertMaterial({map:patTex(c=>{
+const meidaiMat=mkMat('MeshLambertMaterial',{map:patTex(c=>{
   c.fillStyle='#8f959c';c.fillRect(0,0,128,128);
   for(let i=0;i<8;i++)for(let j=0;j<4;j++){
     const r=(i*7+j*13)%11;
     c.fillStyle=r<2?'#7b3f9d':r<4?'#cfd4d9':r<6?'#aeb4ba':'#9aa1a8';
     c.fillRect(i*16+2,j*32+3,12,26);}
 },128,128,9,1)});
-const ribMat=new THREE.MeshLambertMaterial({map:patTex(c=>{
+const ribMat=mkMat('MeshLambertMaterial',{map:patTex(c=>{
   c.fillStyle='#b9bcc0';c.fillRect(0,0,128,128);
   for(let x=0;x<128;x+=10){c.fillStyle=(x/10)%2?'#a7abaf':'#c9ccd0';c.fillRect(x,0,8,128);}
 },128,128,12,1)});
-const kamiMat=new THREE.MeshLambertMaterial({map:patTex(c=>{
+const kamiMat=mkMat('MeshLambertMaterial',{map:patTex(c=>{
   c.fillStyle='#7f8ea3';c.fillRect(0,0,128,128);
   c.fillStyle='#9fb0c2';c.fillRect(0,10,128,30);
   c.fillStyle='#6c7b8f';c.fillRect(0,74,128,44);
 },128,128,10,1)});
-const shelfMat=new THREE.MeshLambertMaterial({map:patTex(c=>{
+const shelfMat=mkMat('MeshLambertMaterial',{map:patTex(c=>{
   c.fillStyle='#3f2f22';c.fillRect(0,0,128,128);
   for(let x=0;x<128;x+=9){const w=5+((x*13)%3);      // 木質縦格子=書架
     c.fillStyle=(x/9)%3===0?'#a8763f':(x/9)%3===1?'#c69a5c':'#8d5f31';
     c.fillRect(x,0,w,128);}
 },128,128,24,1)});
-const brickMat=new THREE.MeshLambertMaterial({map:patTex(c=>{
+const brickMat=mkMat('MeshLambertMaterial',{map:patTex(c=>{
   c.fillStyle='#a8604f';c.fillRect(0,0,128,64);
   c.strokeStyle='#c9a08f';c.lineWidth=3;
   for(let y=0;y<=64;y+=16){c.beginPath();c.moveTo(0,y);c.lineTo(128,y);c.stroke();}
   for(let r=0;r<4;r++)for(let x=(r%2)*16;x<=128;x+=32){c.beginPath();c.moveTo(x,r*16);c.lineTo(x,r*16+16);c.stroke();}
 },128,64,10,3)});
-const woodMat=new THREE.MeshLambertMaterial({map:patTex(c=>{
+const woodMat=mkMat('MeshLambertMaterial',{map:patTex(c=>{
   c.fillStyle='#9c8a6a';c.fillRect(0,0,128,128);
   for(let x=0;x<128;x+=16){c.fillStyle=(x/16)%2?'#8a7a5c':'#a5926f';c.fillRect(x,0,14,128);}
 },128,128,8,1)});
-const latticeMat=new THREE.MeshLambertMaterial({map:patTex(c=>{
+const latticeMat=mkMat('MeshLambertMaterial',{map:patTex(c=>{
   c.fillStyle='#5d4a36';c.fillRect(0,0,128,128);            // 格子の奥(影)
   c.fillStyle='#c99a63';                                     // 温かみのある粗目格子
   for(let x=0;x<128;x+=26)c.fillRect(x,0,11,128);
@@ -999,7 +1034,10 @@ function textSprite(main,sub,big){
     ctx.font='700 '+fs+'px "Hiragino Sans","Yu Gothic UI",sans-serif';}
   ctx.fillText(main,280,sub?82:72);
   if(sub){ctx.fillStyle='#e4007f';ctx.font='600 36px "Hiragino Sans",sans-serif';ctx.fillText(sub,280,150);}
-  const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(cv),depthTest:false}));
+  // 駅名等のラベルは画面上のUIなので、トーンマッピングの対象から外して
+  // 描いたとおりの色で出す(掛けると地の白が 255→231 に沈む)。
+  const sp=new THREE.Sprite(new THREE.SpriteMaterial({
+    map:canvasTex(cv),depthTest:false,toneMapped:false}));
   sp.renderOrder=10;scene.add(sp);return sp;
 }
 const MAT_TACTILE=M(0xe0b93c);     // 点字ブロック(黄)
@@ -1061,7 +1099,7 @@ function signTex(t){
   c.fillStyle='#e4007f';c.fillRect(0,72,512,8);
   c.fillStyle='#1c2733';c.font='700 50px "Hiragino Sans","Yu Gothic UI",sans-serif';
   c.textAlign='center';c.fillText(t,256,52);
-  return new THREE.CanvasTexture(cv);
+  return canvasTex(cv);
 }
 
 for(const s of STA){
@@ -1174,7 +1212,7 @@ for(const s of STA){
       for(let i2=0;i2<21;i2++){const lx=c0-105+210*i2/20;
         box(.6,y+6.4,.6,M(0xd7d8d3),lx,(y+6.4)/2,g*(hw-.32));}      // 柱形リズム
       const sg=new THREE.Mesh(new THREE.BoxGeometry(24,1.9,.24),
-        new THREE.MeshLambertMaterial({map:signTex('KEIO '+s.n)}));
+        mkMat('MeshLambertMaterial',{map:signTex('KEIO '+s.n)}));
       const q2=frame(c0,g*(hw+.12));sg.position.set(q2.x,y+4.7,q2.z);sg.rotation.y=-q2.a;add(sg);
     }
     cbox(c0-108,c0+108,0,hw-.3,y+6.55,y+7.0,MAT.canopy);
@@ -1230,7 +1268,7 @@ tag('仙川橋梁(架替)',BRIDGE.s,20,-60);
       byG.get(g).push([s,zo]);
     }
   }
-  const insMat=new THREE.MeshLambertMaterial({color:0xd9cfc0});
+  const insMat=mkMat('MeshLambertMaterial',{color:0xd9cfc0});
   for(const [g,list] of byG){
     if(!list.length) continue;
     const iI=new THREE.InstancedMesh(new THREE.CylinderGeometry(.075,.075,1,8),insMat,list.length);
@@ -1320,7 +1358,7 @@ function occAdd(px,pz,r){
 }
 const CITY={buildings:[],trees:[]};    // 検証用の登録簿
 {
-  const N=5200,inst=new THREE.InstancedMesh(new THREE.BoxGeometry(1,1,1),new THREE.MeshLambertMaterial({color:0xffffff}),N);
+  const N=5200,inst=new THREE.InstancedMesh(new THREE.BoxGeometry(1,1,1),mkMat('MeshLambertMaterial',{color:0xffffff}),N);
   const m4=new THREE.Matrix4(),q=new THREE.Quaternion(),e=new THREE.Euler(),col=new THREE.Color();
   const pal=[0xd8d2c6,0xcfc9bf,0xc6c8cc,0xdad7cf,0xbfb8ab,0xd2cdd0];
   const bands=[[-462,-346],[-334,-241],[-229,-136],[-124,-68],[-56,-27],[27,60],[72,126],
@@ -1347,7 +1385,7 @@ const CITY={buildings:[],trees:[]};    // 検証用の登録簿
         const h=(nearSta&&Math.random()<.28)?13+Math.random()*13:4+Math.random()*7.5;
         e.set(0,-p.a,0);q.setFromEuler(e);
         m4.compose(new THREE.Vector3(p.x,h/2,p.z),q,new THREE.Vector3(w,h,d));
-        inst.setMatrixAt(i,m4);inst.setColorAt(i,col.setHex(pal[(Math.random()*pal.length)|0]));i++;
+        inst.setMatrixAt(i,m4);inst.setColorAt(i,setSrgb(col,pal[(Math.random()*pal.length)|0]));i++;
         occAdd(p.x,p.z,rad); CITY.buildings.push({s:x,off:z,x:p.x,z:p.z,w:w,d:d,h:h,r:rad});
       }
     }
@@ -1357,7 +1395,7 @@ const CITY={buildings:[],trees:[]};    // 検証用の登録簿
 }
 {
   const N=1100;
-  const crown=new THREE.InstancedMesh(new THREE.ConeGeometry(2.3,5.2,7),new THREE.MeshLambertMaterial({color:0xffffff}),N);
+  const crown=new THREE.InstancedMesh(new THREE.ConeGeometry(2.3,5.2,7),mkMat('MeshLambertMaterial',{color:0xffffff}),N);
   const trunk=new THREE.InstancedMesh(new THREE.CylinderGeometry(.22,.32,2.2,5),M(0x6e5a44),N);
   const m4=new THREE.Matrix4(),q=new THREE.Quaternion(),col=new THREE.Color();
   let i=0;
@@ -1369,7 +1407,7 @@ const CITY={buildings:[],trees:[]};    // 検証用の登録簿
     if(!occFree(p.x,p.z,rad))return false;
     m4.compose(new THREE.Vector3(p.x,1.1,p.z),q,new THREE.Vector3(1,1,1));trunk.setMatrixAt(i,m4);
     m4.compose(new THREE.Vector3(p.x,2.1+2.6*sc,p.z),q,new THREE.Vector3(sc,sc,sc));crown.setMatrixAt(i,m4);
-    crown.setColorAt(i,col.setHex(c));i++;
+    crown.setColorAt(i,setSrgb(col,c));i++;
     occAdd(p.x,p.z,rad); CITY.trees.push({s:s,off:off,x:p.x,z:p.z,r:rad});
     return true;
   };
@@ -1451,7 +1489,10 @@ const noseZSide=(z,hw)=>hw>0.01?NZ_SIDE*(z/hw)*(z/hw):0;   // 側面への回り
 /* ---- 9-2. 配色 ------------------------------------------------------------
    [A] 車体は軽量ステンレス。前頭部〜乗務員扉のみ普通鋼でアイボリー塗装。
        帯は京王レッドと京王ブルー。                                            */
-const PAL={
+/* 車体の頂点カラー。値は sRGB(仕様書や色見本と同じ表記)で書き、
+   下で一括してリニアへ変換する。頂点カラーはシェーダでそのまま使われるため、
+   ここを変換し忘れると車体だけが浮いて明るくなる。 */
+const PAL_SRGB={
   stl  :[0.66,0.69,0.72],      // 軽量ステンレス(ヘアライン)
   roof :[0.57,0.60,0.63],      // 屋根(灰色塗り屋根)
   door :[0.72,0.75,0.78],      // 客用扉(無塗装ステンレス。地よりわずかに明るい)
@@ -1465,6 +1506,7 @@ const PAL={
   skirt:[0.333,0.333,0.333],   // [D] 排障器(スカート)#555555
   void :[0.045,0.050,0.055],   // 戸袋の奥(車内)。帯を通さず一様に暗くする
 };
+const PAL=(function(){const o={};for(const k in PAL_SRGB)o[k]=PAL_SRGB[k].map(s2l);return o;})();
 
 /* ---- 9-3. 帯([D] §6) --------------------------------------------------------
    京王ブルー(細い帯・下) Y=900〜950 / 京王レッド(太い帯・上) Y=950〜1100。
@@ -1963,8 +2005,8 @@ function setCarDoors(c,r,side){
 /* ---- 9-8. ジオメトリのLODと材質 -------------------------------------------- */
 const LODP={hi:{roof:40, mid:0.22, nose:0.030, fill:14, face:0.06, faceC:40},
             lo:{roof:12, mid:0.90, nose:0.20,  fill:4,  face:0.30, faceC:12}};
-const CARMAT =new THREE.MeshLambertMaterial({vertexColors:true, side:THREE.DoubleSide});
-const TRIMMAT=new THREE.MeshLambertMaterial({vertexColors:true, side:THREE.DoubleSide});
+const CARMAT =mkMat('MeshLambertMaterial',{vertexColors:true, side:THREE.DoubleSide});
+const TRIMMAT=mkMat('MeshLambertMaterial',{vertexColors:true, side:THREE.DoubleSide});
 const CARGEO={}, CARGEO_LO={}, TRIMGEO={};
 for(const k of ['mid','cf','cr']){
   const cf=k==='cf', cr=k==='cr';
@@ -1983,10 +2025,10 @@ const M_AC =M(0x9199a0), M_ACL=M(0xa6adb3), M_DUCT=M(0x8b9299),
       M_UND=M(0x474d55), M_BOG=M(0x3f444b), M_WHL=M(0x5d636a), M_DISC=M(0x8a9098),
       M_AIR =M(0x2f343a), M_PN =M(0x565d64), M_SH=M(0xb9bec4), M_INS=M(0xd8cdbc),
       M_LCASE=M(0xb9bec4,{side:THREE.DoubleSide}),                    // ケース枠=シルバー
-      M_HL =new THREE.MeshLambertMaterial({color:0xffffff,emissive:0xc8ced6}),   // 前照灯(白)
-      M_TL =new THREE.MeshLambertMaterial({color:0xd8342e,emissive:0x63120f}),   // 尾灯(赤)
-      M_SIGNT=new THREE.MeshLambertMaterial({color:0xc60052,emissive:0x4d0020,side:THREE.DoubleSide}),
-      M_SIGND=new THREE.MeshLambertMaterial({color:0xf0f0ee,emissive:0x54544e,side:THREE.DoubleSide}),
+      M_HL =mkMat('MeshLambertMaterial',{color:0xffffff,emissive:0xc8ced6}),   // 前照灯(白)
+      M_TL =mkMat('MeshLambertMaterial',{color:0xd8342e,emissive:0x63120f}),   // 尾灯(赤)
+      M_SIGNT=mkMat('MeshLambertMaterial',{color:0xc60052,emissive:0x4d0020,side:THREE.DoubleSide}),
+      M_SIGND=mkMat('MeshLambertMaterial',{color:0xf0f0ee,emissive:0x54544e,side:THREE.DoubleSide}),
       M_CPL=M(0x3a3f45), M_HOOD=M(0x23262a);
 /* 屋根上:集中式冷房装置 48.84kW を1両1基。
    キセ(外箱)は低く幅広で、天面に凝縮器ファンのグリルが2つ並ぶ。

@@ -196,6 +196,42 @@ def main():
     print('%-18s %14s %14s %8s  %s' % ('帯の並び順', '/'.join(want),
                                        '/'.join(seq), '-', 'OK' if ok else 'NG'))
 
+    # ---- 色管理:著作値(sRGB)→リニア→トーンマッピング→sRGB出力 の経路 ----
+    # 変換を通し忘れた色はその面だけ不自然に明るくなる。ソースで漏れを探す。
+    for label, pat in (
+        ('sRGBで出力する', r'renderer\.outputEncoding\s*=\s*THREE\.sRGBEncoding'),
+        ('トーンマッピング', r'renderer\.toneMapping\s*=\s*THREE\.ACESFilmicToneMapping'),
+        ('露出を指定', r'renderer\.toneMappingExposure\s*=\s*TONE_EXPO'),
+        ('sRGB→リニアの式', r'v<=0\.04045\)\?v/12\.92:Math\.pow\(\(v\+0\.055\)/1\.055,2\.4\)'),
+    ):
+        found = re.search(pat, src) is not None
+        ng += 0 if found else 1
+        print('%-18s %14s %14s %8s  %s' % (label, 'あり', 'あり' if found else 'なし', '-',
+                                           'OK' if found else 'NG'))
+
+    # 材質を工場(mkMat)経由にせず、16進の色を直接書いている箇所が無いこと
+    direct = re.findall(
+        r'new THREE\.(?:Mesh\w*Material|LineBasicMaterial|SpriteMaterial|PointsMaterial)\('
+        r'[^)]*?(?:color|emissive)\s*:\s*0x', src)
+    ng += 0 if not direct else 1
+    print('%-18s %14s %14s %8s  %s' % ('色の素通しが無い', '0箇所',
+                                       '%d箇所' % len(direct), '-',
+                                       'OK' if not direct else 'NG'))
+    # 色を持つテクスチャは canvasTex を通す(encoding の指定漏れを防ぐ)
+    ctex = len(re.findall(r'new THREE\.CanvasTexture\(', src))
+    ok = (ctex == 1) and ('t.encoding=THREE.sRGBEncoding' in src)
+    ng += 0 if ok else 1
+    print('%-18s %14s %14s %8s  %s' % ('テクスチャの色空間', 'canvasTexに集約',
+                                       'canvasTexに集約' if ok else '%d箇所が直接生成' % ctex,
+                                       '-', 'OK' if ok else 'NG'))
+    # 頂点カラー・インスタンスカラーもリニアへ変換していること
+    ok = ('const PAL=(function(){' in src and 'PAL_SRGB[k].map(s2l)' in src
+          and 'setHex(' not in src)
+    ng += 0 if ok else 1
+    print('%-18s %14s %14s %8s  %s' % ('頂点/インスタンス色', 'リニアへ変換',
+                                       'リニアへ変換' if ok else '未変換あり', '-',
+                                       'OK' if ok else 'NG'))
+
     # 曲線追従の直方体(cbox)に上面と下面の両方があること。
     # 下面が無いと、駅の上屋を下から見たときに何も無いように見える(運転モードで発覚)。
     cb = re.search(r'function cbox\(([\s\S]*?)\n\}', src)
