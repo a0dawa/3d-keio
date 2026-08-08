@@ -51,6 +51,28 @@ class Obj3D {
 }
 class Group extends Obj3D {}
 class Scene extends Obj3D {}   // traverse を効かせて場面全体を走査できるようにする
+// 透視投影カメラ。near/far を実値で持ち、空ドームが遠方面の内側にあるか等を測れる
+class PerspCam extends Obj3D {
+  constructor(fov, aspect, near, far) {
+    super();
+    this.fov = fov; this.aspect = aspect; this.near = near; this.far = far;
+    this.up = new V3(0, 1, 0);
+    return soft(this);
+  }
+}
+/* テクスチャ。色空間(encoding)と写像(mapping)を実値で持つ。
+   ここを実体にしないと「色テクスチャをsRGBとして読んでいるか」
+   「環境マップを正距円筒として読ませているか」を検査できない。 */
+class Tex {
+  constructor() {
+    this.encoding = 3000;   // LinearEncoding
+    this.mapping = 300;     // UVMapping
+    this.wrapS = 1001; this.wrapT = 1001;
+    this.repeat = soft({ x: 1, y: 1, set(a, b) { this.x = a; this.y = b; return this; } });
+    this.needsUpdate = false;
+    return soft(this);
+  }
+}
 /* 平行光。影の追従(光の向き・写す範囲・テクセルへの吸着)を検査できるように、
    position / target.position / shadow.camera を実体として持つ。 */
 class DirLight extends Obj3D {
@@ -113,6 +135,7 @@ const Mat = (type) => class {
 };
 const REAL = {
   Vector3: V3, Object3D: Obj3D, Group, Scene, Mesh, BufferGeometry: BufGeo, DirectionalLight: DirLight,
+  PerspectiveCamera: PerspCam, CanvasTexture: Tex, Texture: Tex,
   Matrix4: M4, InstancedMesh: Inst,
   Float32BufferAttribute: Attr, BufferAttribute: Attr,
   BoxGeometry: param('Box'), CylinderGeometry: param('Cyl'), PlaneGeometry: param('Plane'),
@@ -120,6 +143,13 @@ const REAL = {
   MeshLambertMaterial: Mat('lambert'), MeshBasicMaterial: Mat('basic'),
   MeshPhongMaterial: Mat('phong'), LineBasicMaterial: Mat('line'),
   DoubleSide: 2, FrontSide: 0, BackSide: 1,
+  // three.js の定数(実値)。スタブが Proxy を返すと材質の設定を数値で検査できない
+  LinearEncoding: 3000, sRGBEncoding: 3001,
+  UVMapping: 300, EquirectangularReflectionMapping: 303,
+  MultiplyOperation: 0, MixOperation: 1, AddOperation: 2,
+  NoToneMapping: 0, ACESFilmicToneMapping: 4,
+  BasicShadowMap: 0, PCFShadowMap: 1, PCFSoftShadowMap: 2,
+  RepeatWrapping: 1000, ClampToEdgeWrapping: 1001,
 };
 
 function install() {

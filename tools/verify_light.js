@@ -16,7 +16,8 @@ const X = require('./stub_three')(path,
   'sun:sun,sunFollow:sunFollow,shadowRadius:shadowRadius,' +
   'SUN_V:SUN_V,SUN_N:SUN_N,SUN_F:SUN_F,SUN_RT:SUN_RT,SUN_UP:SUN_UP,' +
   'SH_MAP:SH_MAP,SH_MIN:SH_MIN,SH_MAX:SH_MAX,SUN_DIST:SUN_DIST,' +
-  'groundMesh:groundMesh,SHADOW_STAT:SHADOW_STAT,DOM:DOM');
+  'groundMesh:groundMesh,SHADOW_STAT:SHADOW_STAT,DOM:DOM,' +
+  'SKY:SKY,SKY_TEX:SKY_TEX,SKY_R:SKY_R,skyDome:skyDome,MAT:MAT,camera:camera,scene:scene');
 
 /* ---- 期待値(検証側が独立して持つ) ---------------------------------------- */
 const REF = {
@@ -26,6 +27,8 @@ const REF = {
   OBJ_TOP: 40,        // 影を落としうる最も高い物[m](建物26m+高架12m を包む)
   MIN_ELEV: 25,       // 太陽高度の下限[°](低すぎると影が伸びて破綻する)
   MAX_ELEV: 70,
+  SCENE_R: 5600,      // 場面の広がり(地表11000×5200の外接半径の目安)[m]
+  ENVMAP: ['rail', 'glass', 'water'],   // 空を映す材質(車体は④で扱う)
 };
 
 const rows = [];
@@ -145,6 +148,69 @@ const len = (v) => Math.hypot(v.x, v.y, v.z);
   ok('影を落とす物がある', X.SHADOW_STAT.cast > 0, '>0', X.SHADOW_STAT.cast + '件');
   ok('受ける物は落とす物以上', X.SHADOW_STAT.recv >= X.SHADOW_STAT.cast,
     '受≧落', X.SHADOW_STAT.recv + ' / ' + X.SHADOW_STAT.cast);
+}
+
+/* ---- 7. 空 ---------------------------------------------------------------
+   空ドームは「場面の外・カメラの遠方面の内」に無いと、見切れるか描かれない。
+   フォグの色は地平と同じでないと、遠景と空の境目に線が出る。 */
+{
+  const d = X.skyDome;
+  ok('空ドームがある', !!(d && d.geometry), 'あり', d && d.geometry ? 'あり' : 'なし');
+  ok('空ドームの大きさ', X.SKY_R > REF.SCENE_R && X.SKY_R < X.camera.far,
+    REF.SCENE_R + 'm < R < ' + X.camera.far + 'm', X.SKY_R + 'm');
+  const m = d.material;
+  ok('空にフォグを掛けない', m.fog === false, 'false', String(m.fog));
+  ok('空は裏面を描く', m.side === 1 /* THREE.BackSide */, 'BackSide', String(m.side));
+  // トーンマッピングを通さないと、地平でフォグ(通す)と色が合わず境目が出る
+  ok('空もトーンマッピングを通す', m.toneMapped !== false, '通す',
+    m.toneMapped === false ? '通さない' : '通す');
+  // 影の対象から外れていること(裏面の巨大な球なので入れると世界中が影になる)
+  ok('空は影の対象外', d.castShadow === false && d.receiveShadow === false,
+    'cast/recv とも false', d.castShadow + ' / ' + d.receiveShadow);
+  // フォグの色は地平と同じ値か(ソースで確認。同じ経路を通るので見え方も一致する)
+  const okFog = /scene\.fog=new THREE\.Fog\(srgb\(SKY\.HOR\)/.test(X.__html);
+  ok('フォグ=地平の色', okFog, 'SKY.HOR', okFog ? 'SKY.HOR' : '別の色');
+  // 天頂と地平下は地平と違う色(=グラデーションになっている)
+  ok('空がグラデーション', X.SKY.TOP !== X.SKY.HOR && X.SKY.BOT !== X.SKY.HOR,
+    '天頂≠地平≠地平下',
+    ['TOP', 'HOR', 'BOT'].map((k) => '#' + X.SKY[k].toString(16)).join(' '));
+}
+
+/* ---- 8. 環境マップ -------------------------------------------------------- */
+{
+  let bad = null;
+  for (const k of REF.ENVMAP) {
+    const m = X.MAT[k];
+    if (!m || m.envMap !== X.SKY_TEX) { bad = bad || [k, '空を映していない']; continue; }
+    if (!(m.reflectivity > 0 && m.reflectivity < 1)) bad = bad || [k, '反射率' + m.reflectivity];
+  }
+  ok('空を映す材質', bad === null, REF.ENVMAP.join('/'), bad ? bad.join(' ') : REF.ENVMAP.join('/'));
+  // envMap は正距円筒として読ませる必要がある(指定を忘れると立方体として解釈される)
+  ok('環境マップの写像', X.SKY_TEX.mapping === 303 /* EquirectangularReflectionMapping */,
+    'Equirectangular', String(X.SKY_TEX.mapping));
+  // 車体は帯の彩度が落ちるので掛けない(④でStandardへ移すときに扱う)
+  ok('車体には掛けない', !/CARMAT\.envMap|TRIMMAT\.envMap/.test(X.__html), '掛けない',
+    /CARMAT\.envMap|TRIMMAT\.envMap/.test(X.__html) ? '掛けている' : '掛けない');
+}
+
+/* ---- 9. 色を持つテクスチャが sRGB として読まれているか -----------------------
+   ソースの見た目ではなく、場面に実際に載っている材質を走査して確かめる。
+   1枚でも指定が漏れると、その面だけ不自然に明るくなる。                     */
+{
+  const SRGB = 3001;                 // THREE.sRGBEncoding(検証側が独立に持つ)
+  const seen = new Set();
+  let bad = null, n = 0;
+  X.scene.traverse(function (o) {
+    const m = o.material; if (!m || typeof m !== 'object') return;
+    for (const slot of ['map', 'envMap']) {
+      const t = m[slot];
+      if (!t || typeof t.encoding !== 'number' || seen.has(t)) continue;
+      seen.add(t); n++;
+      if (t.encoding !== SRGB && !bad) bad = [slot, 'encoding=' + t.encoding];
+    }
+  });
+  ok('テクスチャがsRGB', bad === null && n > 0, n + '枚すべてsRGB',
+    bad ? bad.join(' ') : n + '枚すべてsRGB');
 }
 
 /* ---- 出力 ---------------------------------------------------------------- */
