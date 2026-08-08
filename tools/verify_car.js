@@ -10,7 +10,7 @@
 const path = process.argv[2] || 'keio_elevated_3d.html';
 
 const X = require('./stub_three')(path,
-  'K8:K8,PAL:PAL,BANDS:BANDS,WIN:WIN,FWIN:FWIN,' +
+  'K8:K8,PAL:PAL,PAL_SRGB:PAL_SRGB,TONE_EXPO:TONE_EXPO,BANDS:BANDS,WIN:WIN,FWIN:FWIN,' +
   'CARGEO:CARGEO,TRIMGEO:TRIMGEO,FACEGEO:FACEGEO,makeCar:makeCar,sideWindows:sideWindows,' +
   'shapeAt:shapeAt,frontX:frontX,frontXAt:frontXAt,frontHalfAt:frontHalfAt,' +
   'glassHalf:glassHalf,noseZ:noseZ,SPX:SPX,SPY:SPY,fz:fz,fy:fy,' +
@@ -109,6 +109,37 @@ function checkRange(name, ref, got, tol) {
   if (!ok) ng++;
   rows.push([name, ref[0].toFixed(2) + '-' + ref[1].toFixed(2),
     got ? got[0].toFixed(2) + '-' + got[1].toFixed(2) : '-', tol.toFixed(3), 'm', ok ? 'OK' : 'NG']);
+}
+
+/* ---- 色管理:頂点カラーがリニアへ変換されているか -----------------------------
+   仕様書[D]の色見本(sRGBの16進)から、検証側が独立に sRGB→リニアの式を適用して
+   突き合わせる。変換を通し忘れると車体だけが浮いて明るくなる。            */
+{
+  const s2l = (v) => (v <= 0.04045) ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  // [D] の色見本(sRGB)。モデルからは読まない
+  const SRC = {
+    red: 0xC60052,     // 京王レッド
+    navy: 0x0033A0,    // 京王ブルー
+    ivory: 0xF0EFEA,   // アイボリーホワイト
+    skirt: 0x555555,   // 排障器
+  };
+  let bad = null, same = 0;
+  for (const k in SRC) {
+    const h = SRC[k];
+    const want = [(h >> 16) & 255, (h >> 8) & 255, h & 255].map((v) => s2l(v / 255));
+    const got = X.PAL[k];
+    if (!got) { bad = bad || [k, 'PALに無い']; continue; }
+    for (let i = 0; i < 3; i++)
+      if (Math.abs(got[i] - want[i]) > 0.004 && !bad)
+        bad = [k, want[i].toFixed(3) + '≠' + got[i].toFixed(3)];
+    // sRGBのまま(=未変換)でないことも確かめる
+    const raw = [(h >> 16) & 255, (h >> 8) & 255, h & 255].map((v) => v / 255);
+    if (raw.every((v, i) => Math.abs(v - got[i]) < 0.004)) same++;
+  }
+  pass('頂点カラーがリニア', bad === null && same === 0,
+    bad ? bad.join(' ') : Object.keys(SRC).length + '色すべて変換済み');
+  // 露出は数値で決めた値(TEMPLATE/CLAUDE.mdに根拠を記録)
+  pass('トーンマッピングの露出', Math.abs(X.TONE_EXPO - 1.18) < 1e-9, String(X.TONE_EXPO));
 }
 
 // (1) 車体の外形寸法 — 中間車の車体ロフトの外接箱
