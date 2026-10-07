@@ -43,6 +43,9 @@ class Obj3D {
     this.children = []; this.position = new V3(); this.rotation = new V3();
     this.scale = new V3(1, 1, 1); this.quaternion = soft({ setFromRotationMatrix() {} });
     this.userData = {}; this.visible = true;
+    // three.js と同じ型の目印。走査で「メッシュだけ」を厳密に選ぶために要る
+    // (Proxy の既定値は何でも真になるので、=== true で比べられる実値を置く)
+    this.isMesh = false;
     return soft(this);
   }
   add(...o) { for (const c of o) this.children.push(c); return this; }
@@ -142,7 +145,9 @@ class HemiLight extends Obj3D {
     return soft(this);
   }
 }
-class Mesh extends Obj3D { constructor(g, mat) { super(); this.geometry = g; this.material = mat; } }
+class Mesh extends Obj3D {
+  constructor(g, mat) { super(); this.geometry = g; this.material = mat; this.isMesh = true; }
+}
 // 位置と拡大率だけを記録する Matrix4。インスタンスの配置を後から測れるようにする。
 class M4 {
   constructor() { this.p = null; this.s = null; return soft(this); }

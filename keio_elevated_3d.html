@@ -751,7 +751,12 @@ const MAT={
   slab:M(0x686d74,DS),
   // レール頭頂面は磨かれて空を映す。鉄道の絵で最も効く金属面
   rail:mkStd({color:srgb(0xe6e9ee),side:THREE.DoubleSide,metalness:0.85,roughness:0.30,envMapIntensity:1.0}),
-  ground:M(0xb9d0a2),   // 地表=薄緑(やや濃いめ) road:M(0x8f949a), roadMajor:M(0x7c8187),
+  ground:M(0xb9d0a2),   // 地表=薄緑(やや濃いめ)
+  // ※ 行末コメントに road/roadMajor を飲み込ませていた(定義が消え、three.js の
+  //   既定材質=無照明の白になっていた)。昼は他も明るいので気づかず、夜に光った。
+  //   MATは1行1項目にする。
+  road:M(0x8f949a),
+  roadMajor:M(0x7c8187),
   roadPlan:M(0xb4b9c0), sidewalk:M(0xb9c3a6,DS), green:M(0x9cb98a), plat:M(0xc7c8c3), canopy:M(0xdfdfd8),
   hdoor:M(0xcfd2cc), pole:M(0x7b828a), wall:M(0xa8adb3),
   water:mkStd({color:srgb(0xa9c6c2),metalness:0.0,roughness:0.14,envMapIntensity:1.0}),
@@ -3311,7 +3316,7 @@ const CINE=(function(){
   // 駅のフォーカス:駅を見下ろしながらゆっくり回り込む(u=0〜1)
   function shotStation(st,u,th0){
     const p=frame(st.x,0), y=railY(st.x);
-    const th=(th0===undefined?0.9:th0)+u*0.6, ph=0.70, r=255;
+    const th=(th0===undefined?0.9:th0)+u*0.6, ph=0.92, r=205;
     aimAt(p.x+r*Math.sin(ph)*Math.cos(th), y+r*Math.cos(ph), p.z+r*Math.sin(ph)*Math.sin(th),
           p.x, y+5, p.z);
   }
@@ -3332,7 +3337,51 @@ const CINE=(function(){
       {const e=document.getElementById(id); if(e)e.style.display='none';}
     for(const sp of staLabels.concat(tagLabels,xingLabels)) sp.visible=false;
   }
+  /* 画面の左下に出す字幕。駅名と「時刻・季節」を出す。
+     3D内のスプライトではなくDOMに置く:撮影の画像にはそのまま写り、
+     解像度を変えても字の大きさが崩れない。 */
+  let capEl=null;
+  function caption(main,sub){
+    if(!capEl){
+      capEl=document.createElement('div');
+      capEl.style.cssText='position:fixed;left:2.2%;bottom:5%;z-index:60;'+
+        'font-family:"IPAGothic","Noto Sans JP",sans-serif;color:#fff;'+
+        'text-shadow:0 1px 3px rgba(0,0,0,.85),0 0 10px rgba(0,0,0,.5);'+
+        'line-height:1.25;pointer-events:none;letter-spacing:.04em';
+      document.body.appendChild(capEl);
+    }
+    capEl.style.display=(main||sub)?'block':'none';
+    capEl.innerHTML='<div style="font-size:3.1vh;font-weight:bold">'+(main||'')+
+      '</div><div style="font-size:1.9vh;opacity:.88">'+(sub||'')+'</div>';
+  }
+  /* 撮影用の見通し距離。前面展望は線路の先にある物が全部画角へ入るので、
+     描画の呼び出し回数が他の画(約1,500)の5倍に跳ね上がる。遠方面とフォグを
+     縮めて霞ませると見た目を保ったまま軽くなる。far=0 で時刻の既定へ戻す。
+     遠方面を縮めると空ドーム(R=16,000m)が切り落とされるので、
+     render() でドームをカメラの真上へ移し、遠方面の内側へ縮める。 */
+  let farCut=0;
+  function setFar(far,fogNear,fogFar){
+    farCut=far||0;
+    const t=TIME[curTime]||TIME.noon;
+    camera.far = farCut ? farCut : 30000;
+    scene.fog.near = farCut ? fogNear : t.fog[0];
+    scene.fog.far  = farCut ? fogFar  : t.fog[1];
+    camera.updateProjectionMatrix();
+    skyDome.scale.setScalar(farCut ? Math.min(1,farCut*0.92/SKY_R) : 1);
+  }
+  /* 影の品質。影は1パス増えるうえ影マップの解像度ぶん描き直すので、
+     撮影の所要時間に最も効く。size を変えたら影マップは作り直させる。 */
+  function setShadow(on,size){
+    renderer.shadowMap.enabled=!!on; sun.castShadow=!!on;
+    if(size){
+      sun.shadow.mapSize.set(size,size);
+      if(sun.shadow.map){sun.shadow.map.dispose();sun.shadow.map=null;}
+    }
+  }
   function render(){
+    // 空は無限遠のものなので、カメラの真上へ平行移動して描く
+    // (置きっぱなしだと区間の端で太陽の輝きの向きがずれる)
+    skyDome.position.set(camera.position.x,0,camera.position.z);
     sunFollow(cam.tx,cam.tz,
       Math.hypot(camera.position.x-cam.tx,camera.position.y,camera.position.z-cam.tz));
     renderer.render(scene,camera);
@@ -3344,7 +3393,7 @@ const CINE=(function(){
     label:()=>TIME[curTime].n+'・'+SEASON[curSeason].n,
     step:dt=>stepWorld(dt),
     shotStation:shotStation, shotFront:shotFront, shotAerial:shotAerial,
-    render:render,
+    render:render, caption:caption, setFar:setFar, setShadow:setShadow,
     stations:STA.map(s=>({n:s.n,x:s.x})),
     setSize(w,h){renderer.setPixelRatio(1);renderer.setSize(w,h,false);
       camera.aspect=w/h;camera.updateProjectionMatrix();},
