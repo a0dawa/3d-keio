@@ -339,6 +339,89 @@ const TPROP = {};
     reddest + ' ' + warm[reddest].toFixed(2) + ' / ' + greenest + ' ' + warm[greenest].toFixed(2));
 }
 
+/* ---- 5b. 季節の天候(冬=雪 / 春=桜の花びら) --------------------------------
+   見た目は人が見るしかないが、壊れ方は数値で捕まえられる:
+     ・季節と天候が食い違う(夏に雪が降る/冬なのに降らない)
+     ・粒がカメラから離れて置かれる(前面展望で途中から降らなくなる)
+     ・粒が落ちない/毎回違う場所に降る(撮り直しで別の映像になる)
+     ・目の前の1粒が画面を覆う
+     ・夜に白い粒が光って見える                                            */
+{
+  const F = C.fx;
+  ok('天候の装置', !!(F && F.snow && F.petal && typeof F.update === 'function'),
+    '雪・花びら', F ? 'あり' : 'なし');
+  // 季節との対応(検証側の期待:冬だけ雪、春だけ花びら)
+  const WANT = { winter: [true, false], spring: [false, true], summer: [false, false], autumn: [false, false] };
+  let mis = null;
+  C.setTime('noon');
+  for (const se of C.seasons) {
+    C.setSeason(se);
+    const got = [F.snow.p.visible === true, F.petal.p.visible === true];
+    const w = WANT[se] || [false, false];
+    if (got[0] !== w[0] || got[1] !== w[1]) mis = mis || se + ' 雪' + got[0] + '/花' + got[1];
+  }
+  ok('季節と天候の対応', mis === null, '冬=雪・春=桜・夏秋=なし', mis === null ? '4季節OK' : mis);
+  ok('桜は雪よりほのか', F.petal.n * 5 <= F.snow.n, '花びら≤雪の1/5',
+    F.petal.n + ' / ' + F.snow.n);
+
+  // 粒の置き方:カメラの周り BOX 四方に収まり、時間で落ち、同じ時刻なら同じ位置
+  const S0 = C.stations[3];
+  const at = (o, t, camS) => {
+    C.shotFront(camS);
+    o.p.visible = true; F.update(t);
+    return { pos: Float32Array.from(o.pos), cam: { x: X.camera.position.x, y: X.camera.position.y, z: X.camera.position.z } };
+  };
+  for (const [nm, o] of [['雪', F.snow], ['花びら', F.petal]]) {
+    const a = at(o, 12.0, S0.x), b = at(o, 12.0 + 1 / 12, S0.x), a2 = at(o, 12.0, S0.x);
+    let out = 0, fall = 0, n = 0, near = 0, same = true;
+    for (let i = 0; i < o.n; i++) {
+      const x = a.pos[i * 3], y = a.pos[i * 3 + 1], z = a.pos[i * 3 + 2];
+      if (a.pos[i * 3] !== a2.pos[i * 3] || a.pos[i * 3 + 1] !== a2.pos[i * 3 + 1]) same = false;
+      if (y < -1) continue;                      // 近すぎて退けた粒
+      n++;
+      if (Math.abs(x - a.cam.x) > F.BOX / 2 + 1e-6 || Math.abs(z - a.cam.z) > F.BOX / 2 + 1e-6
+          || y < 0 || Math.abs(y - a.cam.y) > F.V / 2 + 1e-6) out++;
+      if (Math.hypot(x - a.cam.x, y - a.cam.y, z - a.cam.z) < F.NEAR) near++;
+      const yb = b.pos[i * 3 + 1];
+      if (yb > -1 && yb < y) fall++;
+    }
+    ok(nm + 'がカメラの周りに', out === 0 && n > o.n * 0.5, 'BOX内・上下V内・地上',
+      n + '粒中 外 ' + out);
+    ok(nm + 'が落ちる', fall > n * 0.9, '1コマで9割以上が下へ', (100 * fall / Math.max(1, n)).toFixed(1) + '%');
+    ok(nm + 'が再現する', same, '同じ時刻=同じ位置', same ? '一致' : '不一致');
+    // 1コマでは近くに粒が来ないこともあるので、60コマ(5秒)ぶん走査する
+    for (let f = 1; f <= 60; f++) {
+      const c = at(o, 12.0 + f / 12, S0.x + f * 6);
+      for (let i = 0; i < o.n; i++) {
+        const y = c.pos[i * 3 + 1]; if (y < -1) continue;
+        if (Math.hypot(c.pos[i * 3] - c.cam.x, y - c.cam.y, c.pos[i * 3 + 2] - c.cam.z) < F.NEAR) near++;
+      }
+    }
+    ok(nm + 'が目の前に無い', near === 0, '0粒(' + F.NEAR + 'm以内・60コマ)', near + '粒');
+    // カメラが大きく動いても付いてくる(前面展望で途中から降らなくなる不具合)
+    const far = at(o, 12.0, S0.x + 1500);
+    let out2 = 0;
+    for (let i = 0; i < o.n; i++) {
+      const x = far.pos[i * 3], z = far.pos[i * 3 + 2];
+      if (far.pos[i * 3 + 1] < -1) continue;
+      if (Math.abs(x - far.cam.x) > F.BOX / 2 + 1e-6 || Math.abs(z - far.cam.z) > F.BOX / 2 + 1e-6) out2++;
+    }
+    ok(nm + 'がカメラに付いてくる', out2 === 0, '1.5km先でもBOX内', '外 ' + out2);
+  }
+  // 撮影のコマ送りで天候の時計も進む
+  const t0 = C.fxTime(); C.step(0.5);
+  ok('天候の時計がコマ送りで進む', Math.abs(C.fxTime() - t0 - 0.5) < 1e-9, '+0.5秒',
+    '+' + (C.fxTime() - t0).toFixed(3) + '秒');
+  // 夜は粒の色を落とす
+  C.setTime('noon'); C.setSeason('winter');
+  const dayL = lum(F.snow.p.material.color);
+  C.setTime('night');
+  const ngtL = lum(F.snow.p.material.color);
+  ok('夜は雪が光らない', ngtL < dayL * 0.6, '昼の6割未満', ngtL.toFixed(3) + ' / ' + dayL.toFixed(3));
+  ok('雪は影の対象外', F.snow.p.castShadow !== true, 'castShadowなし', String(F.snow.p.castShadow === true));
+  C.setTime('noon'); C.setSeason('summer');
+}
+
 /* ---- 6. 駅のフォーカス ---------------------------------------------------- */
 {
   let bad = null, moved = 0, sameR = true;
