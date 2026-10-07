@@ -241,6 +241,31 @@ const len = (v) => Math.hypot(v.x, v.y, v.z);
     bad ? bad.join(' ') : n + '枚すべてsRGB');
 }
 
+/* ---- 10. 材質を渡し忘れたメッシュが無いか -----------------------------------
+   `new THREE.Mesh(geo)` と材質を省くと、three.js は**無照明の白**を既定で充てる。
+   昼は周りも明るいので気づかないが、夜にすると白く光る。
+   実際に MAT の定義が行末コメントに飲み込まれて road/roadMajor が undefined になり、
+   道路が無照明の白板として敷かれていた(2026-10)。
+   個々の名前ではなく「材質が無いメッシュが1つも無いこと」で面として押さえる。 */
+{
+  let miss = 0, first = null;
+  X.scene.traverse(function (o) {
+    if (o.isMesh !== true) return;              // メッシュだけを厳密に選ぶ
+    const m = o.material;
+    if (m && typeof m === 'object' && (m.type || Array.isArray(m))) return;
+    miss++;
+    if (!first) {
+      const g = o.geometry || {};
+      first = (typeof g.type === 'string' ? g.type : 'ジオメトリ') + ' を材質なしで作っている';
+    }
+  });
+  ok('材質の渡し忘れ', miss === 0, '0件', miss === 0 ? '0件' : miss + '件 / ' + first);
+  // MAT の項目がすべて材質になっているか(飲み込まれた項目は undefined になる)
+  const empty = Object.keys(X.MAT).filter((k) => !X.MAT[k] || !X.MAT[k].type);
+  ok('MATの項目が揃う', empty.length === 0, '全項目が材質',
+    empty.length ? empty.join(',') + ' が未定義' : Object.keys(X.MAT).length + '項目');
+}
+
 /* ---- 出力 ---------------------------------------------------------------- */
 console.log('=== 照明と影の検証 ===');
 console.log('(sunFollow を実際に呼び、光の向き・写す範囲・テクセル吸着を測定)\n');

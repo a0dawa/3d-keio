@@ -74,7 +74,7 @@ const C = X.CINE;
 /* ---- 1. 撮影モードの装置が揃っているか ------------------------------------ */
 {
   for (const k of ['begin', 'setTime', 'setSeason', 'step', 'render',
-                   'shotStation', 'shotFront', 'shotAerial', 'setSize', 'label', 'stats'])
+                   'shotStation', 'shotFront', 'shotAerial', 'setSize', 'label', 'stats', 'caption'])
     ok('API ' + k, typeof C[k] === 'function', '関数', typeof C[k]);
   ok('時刻の数', C.times.length >= REF.N_TIME, '≥' + REF.N_TIME + '種', C.times.length + '種');
   ok('季節の数', C.seasons.length >= REF.N_SEASON, '≥' + REF.N_SEASON + '種', C.seasons.length + '種');
