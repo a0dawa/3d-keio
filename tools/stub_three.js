@@ -57,8 +57,30 @@ class PerspCam extends Obj3D {
     super();
     this.fov = fov; this.aspect = aspect; this.near = near; this.far = far;
     this.up = new V3(0, 1, 0);
+    this.look = new V3(0, 0, 0);   // lookAt で与えられた注視点(撮影モードの検査に使う)
     return soft(this);
   }
+  // 行列は組まないが「どこを見ているか」だけは実値で残す
+  lookAt(x, y, z) {
+    if (x && typeof x === 'object') this.look.set(x.x, x.y, x.z);
+    else this.look.set(x, y, z);
+    return this;
+  }
+  updateProjectionMatrix() { return this; }
+}
+/* 描画器。影の設定・色空間・露出を実値で持つ(ここを Proxy にすると、
+   トーンマッピングの逆算のように露出を読む処理が検査できない)。 */
+class Renderer {
+  constructor() {
+    this.shadowMap = soft({ enabled: false, type: 0 });
+    this.outputEncoding = 3000; this.toneMapping = 0; this.toneMappingExposure = 1;
+    this.info = soft({ render: soft({ calls: 0, triangles: 0 }) });
+    this.domElement = anything;
+    this.frames = 0;
+    return soft(this);
+  }
+  setPixelRatio() {} setSize() {} setClearColor() {} compile() {}
+  render() { this.frames++; }
 }
 /* テクスチャ。色空間(encoding)と写像(mapping)を実値で持つ。
    ここを実体にしないと「色テクスチャをsRGBとして読んでいるか」
@@ -76,8 +98,10 @@ class Tex {
 /* 平行光。影の追従(光の向き・写す範囲・テクセルへの吸着)を検査できるように、
    position / target.position / shadow.camera を実体として持つ。 */
 class DirLight extends Obj3D {
-  constructor() {
+  constructor(color, intensity) {
     super();
+    this.color = (color && color.setRGB) ? color : new Color();
+    this.intensity = (intensity === undefined) ? 1 : intensity;
     this.target = new Obj3D();
     this.castShadow = false;
     this.shadow = soft({
@@ -88,6 +112,33 @@ class DirLight extends Obj3D {
       }),
       bias: 0, normalBias: 0,
     });
+    return soft(this);
+  }
+}
+/* 色。r/g/b を**リニア値**で実体として持つ(HTMLは srgb()/setSrgb() で必ず
+   リニアへ変換してから渡すので、ここに入る値はリニアである)。
+   Proxy のままだと「時刻ごとに光の色が本当に変わったか」を測れない。 */
+class Color {
+  constructor() { this.r = 1; this.g = 1; this.b = 1; return soft(this); }
+  setRGB(r, g, b) { this.r = r; this.g = g; this.b = b; return this; }
+  copy(c) { return this.setRGB(c.r, c.g, c.b); }
+  clone() { return new Color().copy(this); }
+  getHex() {
+    const l2s = (v) => (v <= 0.0031308) ? v * 12.92 : 1.055 * Math.pow(v, 1 / 2.4) - 0.055;
+    const q = (v) => Math.max(0, Math.min(255, Math.round(l2s(Math.max(0, v)) * 255)));
+    return (q(this.r) << 16) | (q(this.g) << 8) | q(this.b);
+  }
+}
+class Fog {
+  constructor(c, near, far) { this.color = c; this.near = near; this.far = far; return soft(this); }
+}
+// 半球光。撮影モードが時刻ごとに色と強さを差し替えるので実体で持つ
+class HemiLight extends Obj3D {
+  constructor(sky, ground, intensity) {
+    super();
+    this.color = (sky && sky.setRGB) ? sky : new Color();
+    this.groundColor = (ground && ground.setRGB) ? ground : new Color();
+    this.intensity = (intensity === undefined) ? 1 : intensity;
     return soft(this);
   }
 }
@@ -107,10 +158,13 @@ class M4 {
 class Inst extends Mesh {
   constructor(g, mat, n) {
     super(g, mat);
-    this.count = n; this.mats = [];
+    this.count = n; this.mats = []; this.cols = [];
     this.instanceMatrix = soft({ needsUpdate: false });
+    this.instanceColor = soft({ needsUpdate: false });
     return soft(this);
   }
+  // インスタンスの色も記録する(季節の着色が本当に全数へ行き渡ったかを測る)
+  setColorAt(i, c) { this.cols[i] = (c && c.getHex) ? c.getHex() : null; }
   setMatrixAt(i, m) {
     this.mats[i] = (m && m.p) ? { p: { x: m.p.x, y: m.p.y, z: m.p.z },
                                   s: m.s ? { x: m.s.x, y: m.s.y, z: m.s.z } : null } : null;
@@ -143,9 +197,9 @@ class PMREM {
 }
 const REAL = {
   Vector3: V3, Object3D: Obj3D, Group, Scene, Mesh, BufferGeometry: BufGeo, DirectionalLight: DirLight,
-  PerspectiveCamera: PerspCam, CanvasTexture: Tex, Texture: Tex,
-  Matrix4: M4, InstancedMesh: Inst,
-  Float32BufferAttribute: Attr, BufferAttribute: Attr,
+  PerspectiveCamera: PerspCam, CanvasTexture: Tex, Texture: Tex, WebGLRenderer: Renderer,
+  Matrix4: M4, InstancedMesh: Inst, Color, Fog,
+  Float32BufferAttribute: Attr, BufferAttribute: Attr, HemisphereLight: HemiLight,
   BoxGeometry: param('Box'), CylinderGeometry: param('Cyl'), PlaneGeometry: param('Plane'),
   SphereGeometry: param('Sph'), ConeGeometry: param('Cone'), CircleGeometry: param('Cir'),
   MeshLambertMaterial: Mat('lambert'), MeshBasicMaterial: Mat('basic'),
