@@ -151,6 +151,11 @@ class HemiLight extends Obj3D {
     return soft(this);
   }
 }
+// 点群(雪・花びら)。位置の配列と表示状態を実体で持つ
+class Points extends Obj3D {
+  constructor(g, mat) { super(); this.geometry = g; this.material = mat; this.isPoints = true;
+    this.frustumCulled = true; return soft(this); }
+}
 class Mesh extends Obj3D {
   constructor(g, mat) { super(); this.geometry = g; this.material = mat; this.isMesh = true; }
 }
@@ -202,7 +207,7 @@ const Mat = (type) => class {
   constructor(o) {
     Object.assign(this, o || {});
     this.type = type;
-    if (type !== 'basic' && type !== 'line' && !(this.emissive && this.emissive.setRGB))
+    if (type !== 'basic' && type !== 'line' && type !== 'points' && !(this.emissive && this.emissive.setRGB))
       this.emissive = new Color().setRGB(0, 0, 0);
     return soft(this);
   }
@@ -224,7 +229,7 @@ const REAL = {
   SphereGeometry: param('Sph'), ConeGeometry: param('Cone'), CircleGeometry: param('Cir'),
   MeshLambertMaterial: Mat('lambert'), MeshBasicMaterial: Mat('basic'),
   MeshPhongMaterial: Mat('phong'), MeshStandardMaterial: Mat('standard'),
-  LineBasicMaterial: Mat('line'), PMREMGenerator: PMREM,
+  LineBasicMaterial: Mat('line'), PMREMGenerator: PMREM, Points, PointsMaterial: Mat('points'),
   DoubleSide: 2, FrontSide: 0, BackSide: 1,
   // three.js の定数(実値)。スタブが Proxy を返すと材質の設定を数値で検査できない
   LinearEncoding: 3000, sRGBEncoding: 3001,

@@ -3493,6 +3493,84 @@ const CINE=(function(){
      **夜は地表と緑を暗く落とす**(`GROUND_NIGHT`)。落とさないと、夜なのに
      昼と同じ鮮やかな緑の地面が広がって、灯りを足しても夜に見えない。
      時刻と季節のどちらを変えても呼ぶ(片方だけだと前の時刻の明るさが残る)。 */
+  /* ---- 季節の天候:冬=雪 / 春=桜の花びら(ほのかに) -----------------------
+     【設計方針】
+     ・粒は**世界に固定した場**として持ち、カメラの周り BOX 四方だけを切り出して描く
+       (水平は剰余で巡回させる)。カメラが速く動いても粒が一緒に流されず、
+       前面展望では正しく後ろへ流れていく
+     ・位置は**時刻 t だけの関数**(乱数は生成時に一度だけ)。撮影の世界時間と同じ
+       fxT で進めるので、撮り直しても並列に撮っても同じ粒が同じ場所に降る
+     ・カメラのごく近く(NEAR 未満)の粒は描かない。目の前の1粒が画面を覆う
+     ・点群は照明を受けないので、夜は色を落とす(昼の白のままだと夜に光って見える) */
+  let fxT=0;
+  const FX=(function(){
+    // 粒を描くのはカメラの周り BOX 四方・上下 V の範囲だけ。広く取ると大半の粒が
+    // 遠くて1画素未満になり、480×270では何も降っていないように見える(実測)
+    const BOX=120, V=90, NEAR=5;
+    function tex(draw){
+      const cv=document.createElement('canvas');cv.width=cv.height=64;
+      draw(cv.getContext('2d'));return canvasTex(cv);
+    }
+    const snowTex=tex(function(c){
+      const g=c.createRadialGradient(32,32,2,32,32,30);
+      g.addColorStop(0,'rgba(255,255,255,1)');g.addColorStop(0.5,'rgba(255,255,255,0.75)');
+      g.addColorStop(1,'rgba(255,255,255,0)');c.fillStyle=g;c.fillRect(0,0,64,64);
+    });
+    const petalTex=tex(function(c){        // 先端に切れ込みのある花びら
+      c.translate(32,32);c.rotate(0.6);c.fillStyle='rgba(255,255,255,1)';
+      c.beginPath();c.ellipse(0,0,24,14,0,0,Math.PI*2);c.fill();
+      c.globalCompositeOperation='destination-out';
+      c.beginPath();c.arc(27,0,7,0,Math.PI*2);c.fill();
+    });
+    function make(n,map,hex,size,opacity){
+      const pos=new Float32Array(n*3), seed=new Float32Array(n*4);
+      for(let i=0;i<n*4;i++) seed[i]=Math.random();
+      const g=new THREE.BufferGeometry();
+      g.setAttribute('position',new THREE.BufferAttribute(pos,3));
+      const m=new THREE.PointsMaterial({map:map,color:srgb(hex),size:size,sizeAttenuation:true,
+        transparent:true,opacity:opacity,depthWrite:false,alphaTest:0.02});
+      const p=new THREE.Points(g,m);
+      p.frustumCulled=false; p.visible=false; scene.add(p);
+      return {p:p,pos:pos,seed:seed,n:n,base:srgb(hex)};
+    }
+    // 落下速度[m/s]・横揺れの振幅[m]と周期・風で流れる速さ[m/s]
+    const SPEC={
+      snow :{n:13000,fall:1.1, sway:0.6, freq:0.7, drift:0.25},
+      petal:{n:1200, fall:0.7, sway:1.8, freq:1.3, drift:0.9},   // ほのかに=雪の1/10
+    };
+    const snow =make(SPEC.snow.n, snowTex, 0xffffff,0.62,0.95);
+    const petal=make(SPEC.petal.n,petalTex,0xf6b8cc,0.55,0.95);
+    // 中心 c・周期 L で v を巡回させる([c-L/2, c+L/2) に収める)
+    const wrap=(v,c,L)=>c+((((v-c+L/2)%L)+L)%L)-L/2;
+    function place(o,k,t){
+      const cx=camera.position.x, cy=camera.position.y, cz=camera.position.z;
+      const a=o.pos, s=o.seed;
+      for(let i=0;i<o.n;i++){
+        const r0=s[i*4], r1=s[i*4+1], r2=s[i*4+2], r3=s[i*4+3];
+        const sp=k.fall*(0.7+0.6*r3), ph=r3*6.2832, sw=k.sway*(0.5+r2);
+        const y=cy+V/2-((((r1*V+sp*t)%V)+V)%V);          // 上下もカメラ基準で巡回
+        const x=wrap(r0*BOX+k.drift*t+sw*Math.sin(t*k.freq+ph),cx,BOX);
+        const z=wrap(r2*BOX+sw*Math.cos(t*k.freq*0.8+ph*1.3),cz,BOX);
+        const near=Math.hypot(x-cx,y-cy,z-cz)<NEAR;
+        a[i*3]=x; a[i*3+1]=(near||y<0)?-50:y; a[i*3+2]=z;   // 近すぎる粒・地中の粒は退ける
+      }
+      o.p.geometry.attributes.position.needsUpdate=true;
+    }
+    return {
+      set(season,night){
+        snow.p.visible=(season==='winter'); petal.p.visible=(season==='spring');
+        const d=night?0.45:1;
+        snow.p.material.color.copy(snow.base).multiplyScalar(d);
+        petal.p.material.color.copy(petal.base).multiplyScalar(d);
+      },
+      update(t){
+        if(snow.p.visible) place(snow,SPEC.snow,t);
+        if(petal.p.visible) place(petal,SPEC.petal,t);
+      },
+      snow:snow, petal:petal, SPEC:SPEC, BOX:BOX, V:V, NEAR:NEAR,
+    };
+  })();
+
   const GROUND_NIGHT=0.40;
   function applyLook(){
     const s=SEASON[curSeason]||SEASON.summer;
@@ -3507,6 +3585,7 @@ const CINE=(function(){
       CITY.crown.setColorAt(i,col);
     }
     if(CITY.crown.instanceColor)CITY.crown.instanceColor.needsUpdate=true;
+    FX.set(curSeason, dark<1);    // 冬=雪 / 春=桜。夜は粒の色を落とす
   }
   function setSeason(k){ curSeason=k; applyLook(); }
 
@@ -3592,6 +3671,7 @@ const CINE=(function(){
     skyDome.position.set(camera.position.x,0,camera.position.z);
     sunFollow(cam.tx,cam.tz,
       Math.hypot(camera.position.x-cam.tx,camera.position.y,camera.position.z-cam.tz));
+    FX.update(fxT);              // 雪・花びらを今の時刻とカメラ位置で置き直す
     renderer.render(scene,camera);
   }
   return {
@@ -3599,9 +3679,10 @@ const CINE=(function(){
     setTime:setTime, setSeason:setSeason,
     times:Object.keys(TIME), seasons:Object.keys(SEASON),
     label:()=>TIME[curTime].n+'・'+SEASON[curSeason].n,
-    step:dt=>stepWorld(dt),
+    step:dt=>{stepWorld(dt);fxT+=dt;},   // 天候の粒も同じ世界時間で進める
     shotStation:shotStation, shotFront:shotFront, shotAerial:shotAerial,
     render:render, caption:caption, setFar:setFar, setShadow:setShadow,
+    fx:FX, fxTime:()=>fxT,
     stations:STA.map(s=>({n:s.n,x:s.x})),
     setSize(w,h){renderer.setPixelRatio(1);renderer.setSize(w,h,false);
       camera.aspect=w/h;camera.updateProjectionMatrix();},
