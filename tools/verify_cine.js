@@ -235,6 +235,38 @@ const TPROP = {};
     for (let i = 0; i < dayT.length; i++) if ((ngtT[i] & 255) < (dayT[i] & 255)) dark++;
     ok('夜は樹木が暗い', dark === dayT.length, dayT.length + '本すべて', dark + '本');
   }
+  /* 灯りの強さ(利用者指示:2.5倍)。発光色は1を超えるリニア値になっているはず。
+     灯具(街灯・ホーム照明)の色と、窓明かりの最も明るい建物で見る */
+  {
+    const GAIN = 2.5;                    // 検証側が独立に持つ倍率
+    // 灯具=不透明の発光体(暈けや窓明かりは加算合成なので transparent:true)
+    const heads = N.group.children.filter((m) => m.material && m.material.color
+      && typeof m.material.color.r === 'number' && m.material.transparent !== true);
+    const minHead = heads.length ? Math.min.apply(null, heads.map((m) => lum(m.material.color))) : 0;
+    ok('灯具が2.5倍の明るさ', heads.length >= 2 && minHead > 0.75 * GAIN,
+      '輝度>' + (0.75 * GAIN).toFixed(2) + '(リニア)', heads.length + '種 最小 ' + minHead.toFixed(2));
+  }
+  /* 地上の街灯が建物・樹木に埋まっていないこと。夜の灯りは街並みの登録簿に
+     載らないので、街を増やすと灯具が家の中に入りうる(建物を倍増したときの罠) */
+  {
+    const LAMP_CLEAR = 1.0;   // 灯具の周りに確保する離れ[m](検証側の値)
+    const items = X.CITY.buildings.concat(X.CITY.trees);
+    let inside = 0, n = 0, first = null;
+    for (const m of N.group.children) {
+      if (!m.mats || !m.material || m.material.transparent === true) continue;
+      for (const t of m.mats) {
+        if (!t || Math.abs(t.p.y - 5.2) > 0.01) continue;      // 地上の街灯だけ
+        n++;
+        for (const it of items) {
+          if (Math.hypot(t.p.x - it.x, t.p.z - it.z) < it.r + LAMP_CLEAR) {
+            inside++; if (!first) first = '(' + t.p.x.toFixed(0) + ',' + t.p.z.toFixed(0) + ')'; break;
+          }
+        }
+      }
+    }
+    ok('街灯が建物・樹木に埋まらない', n > 0 && inside === 0, '離れ1m未満が0基',
+      inside === 0 ? n + '基すべて外' : inside + '基 例' + first);
+  }
   // 灯りは影を落とさない(落とすと光るものが黒い塊になる)
   let bad = null, n = 0;
   for (const m of N.group.children) {

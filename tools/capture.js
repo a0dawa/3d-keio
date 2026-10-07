@@ -121,7 +121,7 @@ function storyboard(stations) {
       const a = S[i].x, b = S[i + 1].x, mid = a + (b - a) * FRONT_SHARE;
       push({ kind: 'front', sta: S[i], time: look[0], season: look[1],
              s0: a, s1: mid, n: Math.round(OPT.frontSec * OPT.fps),
-             main: S[i].n + ' → ' + S[i + 1].n, sub2: '前面展望' });
+             main: S[i].n + ' → ' + S[i + 1].n });   // 前面展望は表記しない(利用者指示)
       push({ kind: 'aerial', sta: S[i], time: look[0], season: look[1],
              s0: mid, s1: b, n: Math.round(OPT.airSec * OPT.fps),
              main: S[i].n + ' → ' + S[i + 1].n, sub2: '俯瞰展望' });
