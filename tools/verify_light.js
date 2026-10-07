@@ -260,6 +260,13 @@ const len = (v) => Math.hypot(v.x, v.y, v.z);
     }
   });
   ok('材質の渡し忘れ', miss === 0, '0件', miss === 0 ? '0件' : miss + '件 / ' + first);
+  /* 地表のすぐ上に敷く面(道路・側道・緑道)は、遠方で深度の分解能が足りず
+     地表と奥行きを取り合って画素単位でちらつく。地表だけを深度方向へ
+     押し下げて、距離によらず上の面が勝つようにしておく。 */
+  const gm = X.MAT.ground;
+  ok('地表を深度方向へ押し下げ', gm.polygonOffset === true && gm.polygonOffsetUnits > 0,
+    'polygonOffset ON・units>0',
+    (gm.polygonOffset === true ? 'ON' : 'OFF') + ' / units=' + (gm.polygonOffsetUnits || 0));
   // MAT の項目がすべて材質になっているか(飲み込まれた項目は undefined になる)
   const empty = Object.keys(X.MAT).filter((k) => !X.MAT[k] || !X.MAT[k].type);
   ok('MATの項目が揃う', empty.length === 0, '全項目が材質',
