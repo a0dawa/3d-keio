@@ -1530,7 +1530,20 @@ function occAdd(px,pz,r){
 }
 const CITY={buildings:[],trees:[]};    // 検証用の登録簿
 {
-  const N=5200,inst=new THREE.InstancedMesh(new THREE.BoxGeometry(1,1,1),mkMat('MeshLambertMaterial',{color:0xffffff}),N);
+  /* 棟数は利用者指示で約2倍(約1万棟)。数を増やすぶん**1棟を実際の街の大きさへ
+     縮める**:世田谷・杉並の沿線は 間口7〜11m・2〜3階建ての戸建てが大半で、
+     アパートが混じり、駅前だけ中高層がまとまる。棄却(cityFree/occFree)は
+     従来どおりなので、既存の建物・樹木・線路・道路・河川とは重ならない。 */
+  const N=11500,inst=new THREE.InstancedMesh(new THREE.BoxGeometry(1,1,1),mkMat('MeshLambertMaterial',{color:0xffffff}),N);
+  // 建物の種別 [割合, 間口, 奥行, 高さ] (間口・奥行・高さは [最小,幅])
+  const KIND_GEN=[[0.70,[7,3.5],[7,4],[6,3.5]],     // 戸建て(2〜3階)
+                  [0.24,[11,7],[8,5],[7,5]],        // アパート・低層集合住宅
+                  [0.06,[10,6],[10,6],[4,2]]];      // 店舗・倉庫(平屋)
+  const KIND_STA=[[0.40,[12,8],[10,6],[14,16]],     // 駅前の中高層(マンション・ビル)
+                  [0.35,[9,5],[8,5],[8,6]],         // 駅前の商店・低層ビル
+                  [0.25,[7,3.5],[7,4],[6,3.5]]];    // 戸建て
+  const pickKind=T=>{let r=Math.random();for(const k of T){if((r-=k[0])<=0)return k;}return T[T.length-1];};
+  const rr=v=>v[0]+Math.random()*v[1];
   const m4=new THREE.Matrix4(),q=new THREE.Quaternion(),e=new THREE.Euler(),col=new THREE.Color();
   const pal=[0xd8d2c6,0xcfc9bf,0xc6c8cc,0xdad7cf,0xbfb8ab,0xd2cdd0];
   const bands=[[-462,-346],[-334,-241],[-229,-136],[-124,-68],[-56,-27],[27,60],[72,126],
@@ -1540,21 +1553,23 @@ const CITY={buildings:[],trees:[]};    // 検証用の登録簿
   for(let ci=0;ci<NSx.length-1;ci++){
     const x0=NSx[ci]+4,x1=NSx[ci+1]-4;if(x1-x0<9)continue;
     for(const bd of bands){
-      const nb=1+Math.floor((x1-x0)*(bd[1]-bd[0])/1150);   // 街区あたりの棟数(密度)
+      const nb=1+Math.floor((x1-x0)*(bd[1]-bd[0])/430);    // 街区あたりの棟数(密度。旧1150)
       for(let k=0;k<nb;k++){
         if(i>=N)break outer;
         // 1棟につき数回だけ位置を引き直す(棄却で街区がすかすかにならないように)
-        let w=0,d=0,rad=0,x=0,z=0,p=null,put=false;
-        for(let tryN=0;tryN<6&&!put;tryN++){
-          w=6+Math.random()*9;d=6+Math.random()*9;rad=Math.hypot(w,d)/2;
+        let w=0,d=0,h=0,rad=0,x=0,z=0,p=null,put=false;
+        const midX=(x0+x1)/2;
+        const nearSta=STA.some(st=>Math.abs(midX-st.x)<180&&st.t!=='ctx'&&st.t!=='gnd');
+        const kd=pickKind(nearSta?KIND_STA:KIND_GEN);
+        for(let tryN=0;tryN<12&&!put;tryN++){
+          w=rr(kd[1]);d=rr(kd[2]);rad=Math.hypot(w,d)/2;
           x=x0+w/2+Math.random()*Math.max(1,(x1-x0-w));
           z=bd[0]+d/2+Math.random()*Math.max(1,(bd[1]-bd[0]-d));
           p=frame(x,z);
           put=cityFree(x,z,rad,p.x,p.z)&&occFree(p.x,p.z,rad);
         }
         if(!put) continue;
-        const nearSta=STA.some(st=>Math.abs(x-st.x)<180&&st.t!=='ctx'&&st.t!=='gnd');
-        const h=(nearSta&&Math.random()<.28)?13+Math.random()*13:4+Math.random()*7.5;
+        h=rr(kd[3]);
         e.set(0,-p.a,0);q.setFromEuler(e);
         m4.compose(new THREE.Vector3(p.x,h/2,p.z),q,new THREE.Vector3(w,h,d));
         inst.setMatrixAt(i,m4);inst.setColorAt(i,setSrgb(col,pal[(Math.random()*pal.length)|0]));i++;
@@ -1566,7 +1581,8 @@ const CITY={buildings:[],trees:[]};    // 検証用の登録簿
   if(inst.instanceColor)inst.instanceColor.needsUpdate=true;scene.add(inst);
 }
 {
-  const N=1100;
+  // 本数は利用者指示で約2倍。街路樹の間隔を実際に近く詰め、残りは庭木として小さめに散らす
+  const N=2300;
   const crown=new THREE.InstancedMesh(new THREE.ConeGeometry(2.3,5.2,7),mkMat('MeshLambertMaterial',{color:0xffffff}),N);
   const trunk=new THREE.InstancedMesh(new THREE.CylinderGeometry(.22,.32,2.2,5),M(0x6e5a44),N);
   const m4=new THREE.Matrix4(),q=new THREE.Quaternion(),col=new THREE.Color();
@@ -1586,14 +1602,17 @@ const CITY={buildings:[],trees:[]};    // 検証用の登録簿
     return true;
   };
   // 街路樹(高架の両側=側道の外)。占有域に当たる区間は自動的に間引かれる
-  for(let x=DOM.x0+40;x<DECK_END-30;x+=52)
+  for(let x=DOM.x0+40;x<DECK_END-30;x+=26)
     for(const sg of[-1,1])put(x,sg*(deckHalf(x)+8.2),.85,0x7fa268);
+  // 甲州街道の歩道の街路樹(車道 off 145〜171 の外側)
+  for(let x=DOM.x0+20;x<DOM.x1-20;x+=23)
+    for(const o of[139.5,176.5])put(x,o,.8,0x6f9160);
   for(let k=0;k<24;k++)put(X(7.8)+42,26+k*13,1.05,0xecb8cd,'桜');  // 桜並木
   for(let k=0;k<20;k++)put(JOSUI_X+(k-10)*7,(k-10)*34,.9,0x6f9160);// 玉川上水緑道
   let guard=0;
   while(i<N&&guard++<N*40){
     const x=DOM.x0+Math.random()*(DOM.x1-DOM.x0),z=(Math.random()*2-1)*DOM.z;
-    put(x,z,.7+Math.random()*.5,Math.random()<.5?0x7fa268:0x6f9160);
+    put(x,z,.55+Math.random()*.5,Math.random()<.5?0x7fa268:0x6f9160);   // 庭木は小ぶり
   }
   crown.count=i;trunk.count=i;
   crown.instanceMatrix.needsUpdate=true;trunk.instanceMatrix.needsUpdate=true;
@@ -1617,6 +1636,11 @@ const CITY={buildings:[],trees:[]};    // 検証用の登録簿
 
    昼は `visible=false` で完全に無効。影の対象からも外す(光るものは影を落とさない)。 */
 const NIGHT_STAT={win:0,lamp:0,plat:0};     // 検証用(灯りの数)
+/* 灯りの強さ。窓・街灯・ホーム照明・emissive のすべてに一律で掛ける
+   (利用者指示で2.5倍)。色はリニア値に掛けるので、トーンマッピングを通った
+   画面上では白へ寄りながら明るくなる(飽和で色が飛ぶのを ACES が和らげる) */
+const LIGHT_GAIN=2.5;
+const glow=h=>srgb(h).multiplyScalar(LIGHT_GAIN);
 const NIGHT=(function(){
   const G=new THREE.Group(); G.visible=false; G.name='night'; scene.add(G);
 
@@ -1674,7 +1698,7 @@ const NIGHT=(function(){
                    new THREE.Vector3(b.w*1.006,b.h*1.002,b.d*1.006));
         im.setMatrixAt(i,m4);
         const v=0.30+Math.random()*0.80;      // 建物ごとの灯りの強さ
-        im.setColorAt(i,col.setRGB(v,v*0.94,v*0.82));
+        im.setColorAt(i,col.setRGB(v,v*0.94,v*0.82).multiplyScalar(LIGHT_GAIN));
       });
       im.instanceMatrix.needsUpdate=true;
       if(im.instanceColor)im.instanceColor.needsUpdate=true;
@@ -1688,7 +1712,7 @@ const NIGHT=(function(){
     const pts=[];
     for(let x=DOM.x0+30;x<DECK_END-20;x+=34)
       for(const sg of[-1,1]) pts.push([x,sg*(deckHalf(x)+5.4)]);
-    for(let x=DOM.x0-200;x<DOM.x1+200;x+=46) pts.push([x,141],[x,175]);
+    for(let x=DOM.x0-200;x<DOM.x1+200;x+=46) pts.push([x,143],[x,173]);
     // 高架の上(架線柱の位置)。前面展望で奥へ伸びる灯りの列になる
     for(const x of POLE_S){
       if(x<DOM.x0||x>DECK_END) continue;
@@ -1696,9 +1720,14 @@ const NIGHT=(function(){
     }
     const m4=new THREE.Matrix4(),q=new THREE.Quaternion(),sc=new THREE.Vector3(1,1,1);
     const head=new THREE.InstancedMesh(new THREE.SphereGeometry(0.42,8,6),
-      mkMat('MeshBasicMaterial',{color:0xffe3ad,fog:false}),pts.length);
+      mkMat('MeshBasicMaterial',{color:glow(0xffe3ad),fog:false}),pts.length);
     const halo=new THREE.InstancedMesh(new THREE.SphereGeometry(1.7,8,6),
-      lit({color:0xffd27a,opacity:0.20}),pts.length);
+      lit({color:glow(0xffd27a),opacity:0.20}),pts.length);
+    // 地上の街灯は建物・樹木に埋まる位置を除く(高架上の灯りは対象外)
+    for(let k=pts.length-1;k>=0;k--){
+      const p=pts[k]; if(p[2]!==undefined) continue;
+      const f=frame(p[0],p[1]); if(!occFree(f.x,f.z,1.0)) pts.splice(k,1);
+    }
     pts.forEach(function(p,i){
       const f=frame(p[0],p[1]);
       m4.compose(new THREE.Vector3(f.x,(p[2]===undefined?5.2:p[2]),f.z),q,sc);
@@ -1716,9 +1745,9 @@ const NIGHT=(function(){
       for(let x=pl.x0+5;x<pl.x1-5;x+=7) pts.push([x,pl.off,pl.y+3.3]);
     const m4=new THREE.Matrix4(),q=new THREE.Quaternion(),sc=new THREE.Vector3(1,1,1);
     const lamp=new THREE.InstancedMesh(new THREE.BoxGeometry(1.5,0.12,0.42),
-      mkMat('MeshBasicMaterial',{color:0xfff0cf,fog:false}),pts.length);
+      mkMat('MeshBasicMaterial',{color:glow(0xfff0cf),fog:false}),pts.length);
     const halo=new THREE.InstancedMesh(new THREE.BoxGeometry(2.6,0.9,1.9),
-      lit({color:0xffe6b8,opacity:0.16}),pts.length);
+      lit({color:glow(0xffe6b8),opacity:0.16}),pts.length);
     pts.forEach(function(p,i){
       const f=frame(p[0],p[1]);
       m4.compose(new THREE.Vector3(f.x,p[2],f.z),q,sc);
@@ -1746,15 +1775,15 @@ const NIGHT=(function(){
     G.visible=!!on;
     for(const [k,hex] of EMI){
       const m=MAT[k]; if(!m||!m.emissive) continue;
-      m.emissive.copy(srgb(on?hex:0x000000));
+      m.emissive.copy(on?glow(hex):srgb(0x000000));
     }
     // 車両:前照灯・尾灯を強め、車内灯のぶんだけ車体を浮かせる
     if(typeof M_HL!=='undefined'){
-      M_HL.emissive.copy(srgb(on?0xffffff:0xc8ced6));
-      M_TL.emissive.copy(srgb(on?0xd8342e:0x63120f));
-      CARMAT.emissive.copy(srgb(on?0x15171b:0x000000));
-      TRIMMAT.emissive.copy(srgb(on?0x2a2d33:0x000000));
-      XM_WIN.emissive.copy(srgb(on?0x8a7a4e:0x000000));
+      M_HL.emissive.copy(on?glow(0xffffff):srgb(0xc8ced6));
+      M_TL.emissive.copy(on?glow(0xd8342e):srgb(0x63120f));
+      CARMAT.emissive.copy(on?glow(0x15171b):srgb(0x000000));
+      TRIMMAT.emissive.copy(on?glow(0x2a2d33):srgb(0x000000));
+      XM_WIN.emissive.copy(on?glow(0x8a7a4e):srgb(0x000000));
     }
   }
   // 「夜の灯り」の目印。影の一括設定(applyShadows)がここを見て対象から外す。
