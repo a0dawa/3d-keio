@@ -23,7 +23,8 @@ const X = require('./stub_three')(path,
   'sun:sun, hemi:hemi, scene:scene, camera:camera, cam:cam, renderer:renderer,' +
   'MAT:MAT, CITY:CITY, STA:STA, frame:frame, railY:railY, mainOff:mainOff,' +
   'SKY:()=>SKY, SKY_TEX:SKY_TEX, skyDome:skyDome, env:()=>scene.environment,' +
-  'sunFollow:sunFollow, SH_MAP:SH_MAP, DOM:DOM, srgb:srgb, zRunDown:zRunDown');
+  'sunFollow:sunFollow, SH_MAP:SH_MAP, DOM:DOM, srgb:srgb, zRunDown:zRunDown,' +
+  'NIGHT:NIGHT, NIGHT_STAT:NIGHT_STAT, PLATS:PLATS');
 
 /* ---- 期待値(検証側が独立して持つ) ---------------------------------------- */
 const REF = {
@@ -182,6 +183,68 @@ const TPROP = {};
   }
   ok('時刻で太陽が動く', minSep > REF.SUN_SEP, '>' + REF.SUN_SEP + '°',
     pair + ' ' + minSep.toFixed(1) + '°');
+}
+
+/* ---- 3b. 夜の灯り ----------------------------------------------------------
+   夜は太陽を弱めるだけだと何も見えない。窓・街灯・ホームの灯りが自発光で
+   足されていること、**昼には完全に消えている**ことを見る。
+   消し忘れると昼の建物に窓の格子が浮いて、絵が一気に安っぽくなる。 */
+{
+  const N = X.NIGHT, S = X.NIGHT_STAT;
+  ok('夜の灯りの装置', !!(N && N.group && typeof N.set === 'function'), 'NIGHT あり',
+    N ? 'あり' : 'なし');
+  // 窓明かりは全建物に行き渡っていること(高層/低層で分けているので合計で見る)
+  ok('窓明かりの数', S.win === X.CITY.buildings.length,
+    X.CITY.buildings.length + '棟', S.win + '棟');
+  ok('街灯の数', S.lamp > 200, '>200基', S.lamp + '基');
+  ok('ホーム照明の数', S.plat > 20 * X.PLATS.length / 2, 'ホーム1面あたり十数基',
+    S.plat + '基 / ' + X.PLATS.length + '面');
+  // 昼夜で表示と emissive が切り替わること
+  C.setTime(C.times.find((k) => k !== 'night') || 'noon');
+  const dayVis = N.group.visible, dayEmi = lum(X.MAT.plat.emissive);
+  C.setTime('night');
+  const ngtVis = N.group.visible, ngtEmi = lum(X.MAT.plat.emissive);
+  ok('夜に灯りが点く', ngtVis === true && ngtEmi > 0, '表示ON・emissive>0',
+    ngtVis + ' / ' + ngtEmi.toFixed(4));
+  ok('昼に灯りが消える', dayVis === false && dayEmi === 0, '表示OFF・emissive=0',
+    dayVis + ' / ' + dayEmi.toFixed(4));
+  /* 夜は地表と緑も暗くなること。灯りを足しても、地面が昼のままの鮮やかな緑だと
+     夜に見えない。**時刻と季節はどちらを先に指定しても同じ結果**になること
+     (片方でしか塗り直さないと、後から変えたほうで上書きされて明るいままになる) */
+  {
+    let bright = null, order = null;
+    for (const se of C.seasons) {
+      C.setTime('noon'); C.setSeason(se);
+      const day = lum(X.MAT.ground.color);
+      C.setTime('night');                       // 時刻をあとから変える
+      const n1 = lum(X.MAT.ground.color);
+      C.setSeason(se);                          // 季節をあとから変える
+      const n2 = lum(X.MAT.ground.color);
+      if (!(n1 < day * 0.6)) bright = bright || se + ' 夜 ' + n1.toFixed(3) + ' / 昼 ' + day.toFixed(3);
+      if (Math.abs(n1 - n2) > 1e-9) order = order || se + ' ' + n1.toFixed(3) + ' ≠ ' + n2.toFixed(3);
+    }
+    ok('夜は地表が暗い', bright === null, '昼の6割未満', bright === null ? '全季節OK' : bright);
+    ok('時刻と季節の指定順に依らない', order === null, '同じ色',
+      order === null ? '全季節で一致' : order);
+    // 樹木も暗くなること
+    C.setTime('noon'); C.setSeason('summer');
+    const dayT = X.CITY.crown.cols.slice();
+    C.setTime('night'); C.setSeason('summer');
+    const ngtT = X.CITY.crown.cols;
+    let dark = 0;
+    for (let i = 0; i < dayT.length; i++) if ((ngtT[i] & 255) < (dayT[i] & 255)) dark++;
+    ok('夜は樹木が暗い', dark === dayT.length, dayT.length + '本すべて', dark + '本');
+  }
+  // 灯りは影を落とさない(落とすと光るものが黒い塊になる)
+  let bad = null, n = 0;
+  for (const m of N.group.children) {
+    n++;
+    if (m.castShadow === true) bad = bad || '影を落とす設定になっている';
+    if (m.material && m.material.fog === true && m.material.blending === undefined)
+      bad = bad || '灯りにフォグが掛かっている';
+  }
+  ok('灯りが影を落とさない', bad === null && n > 0, n + '件すべてOK',
+    bad === null ? n + '件' : bad);
 }
 
 /* ---- 4. 夜は昼より暗いこと ------------------------------------------------

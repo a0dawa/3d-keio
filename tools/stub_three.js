@@ -48,7 +48,11 @@ class Obj3D {
     this.isMesh = false;
     return soft(this);
   }
-  add(...o) { for (const c of o) this.children.push(c); return this; }
+  add(...o) {
+    // 親子関係も実体で持つ(「この群に属するか」で分岐する処理を検査できる)
+    for (const c of o) { this.children.push(c); if (c && typeof c === 'object') c.parent = this; }
+    return this;
+  }
   remove() { return this; }
   traverse(f) { f(this); for (const c of this.children) if (c && c.traverse) c.traverse(f); }
 }
@@ -126,6 +130,8 @@ class Color {
   setRGB(r, g, b) { this.r = r; this.g = g; this.b = b; return this; }
   copy(c) { return this.setRGB(c.r, c.g, c.b); }
   clone() { return new Color().copy(this); }
+  multiplyScalar(s) { return this.setRGB(this.r * s, this.g * s, this.b * s); }
+  getHexString() { return ('000000' + this.getHex().toString(16)).slice(-6); }
   getHex() {
     const l2s = (v) => (v <= 0.0031308) ? v * 12.92 : 1.055 * Math.pow(v, 1 / 2.4) - 0.055;
     const q = (v) => Math.max(0, Math.min(255, Math.round(l2s(Math.max(0, v)) * 255)));
@@ -189,8 +195,17 @@ class BufGeo {
 const param = (type) => class extends BufGeo {
   constructor(...a) { super(); this.type = type; this.p = a; return soft(this); }
 };
+/* 材質。three.js は Lambert/Phong/Standard に必ず emissive(黒のColor)を持たせるので、
+   省略されたときも実体を置く。ここが Proxy のままだと
+   「夜に emissive を足して昼に戻す」といった処理を数値で検査できない。 */
 const Mat = (type) => class {
-  constructor(o) { Object.assign(this, o || {}); this.type = type; return soft(this); }
+  constructor(o) {
+    Object.assign(this, o || {});
+    this.type = type;
+    if (type !== 'basic' && type !== 'line' && !(this.emissive && this.emissive.setRGB))
+      this.emissive = new Color().setRGB(0, 0, 0);
+    return soft(this);
+  }
 };
 // 環境マップの前処理器。scene.environment を実体として測れるようにする
 class PMREM {

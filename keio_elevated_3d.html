@@ -751,7 +751,11 @@ const MAT={
   slab:M(0x686d74,DS),
   // レール頭頂面は磨かれて空を映す。鉄道の絵で最も効く金属面
   rail:mkStd({color:srgb(0xe6e9ee),side:THREE.DoubleSide,metalness:0.85,roughness:0.30,envMapIntensity:1.0}),
-  ground:M(0xb9d0a2),   // 地表=薄緑(やや濃いめ)
+  /* 地表。道路・側道・緑道は地表のわずか上(0.1〜0.3m)に敷くので、遠方では
+     深度の分解能が足りずに地表と奥行きを取り合い、画素単位でちらつく
+     (24bit深度・near=2mだと約2km先で分解能が0.12mを超える)。
+     **地表だけを深度方向へ押し下げて**、距離によらず上の面が必ず勝つようにする。 */
+  ground:M(0xb9d0a2,{polygonOffset:true,polygonOffsetFactor:1,polygonOffsetUnits:4}),
   // ※ 行末コメントに road/roadMajor を飲み込ませていた(定義が消え、three.js の
   //   既定材質=無照明の白になっていた)。昼は他も明るいので気づかず、夜に光った。
   //   MATは1行1項目にする。
@@ -1597,6 +1601,167 @@ const CITY={buildings:[],trees:[]};    // 検証用の登録簿
   scene.add(crown);scene.add(trunk);
   CITY.crown=crown; CITY.trunk=trunk;   // 季節の着色が実体を触れるように残す
 }
+
+/* ============ 8b. 夜の灯り ============
+   【設計方針】夜は太陽を弱めるだけだと全体が沈んで何も見えない。実際の夜景が
+   見えるのは「地物が暗くても、窓・街灯・ホームの灯りが**自分で光っている**」から。
+   そこで光源を増やすのではなく、**自発光(発光する面)を足す**。
+   点光源を増やすと1つごとに全フラグメントの計算が増えるが、自発光の面は
+   ただの描画なので、5,000棟ぶんでも描画の呼び出しは数回で済む。
+
+   ・窓明かり … 建物の**側面4枚だけ**の薄い殻を建物と同じ位置に重ね、
+     窓格子のテクスチャを**加算合成**で乗せる。黒い画素は何も足さないので
+     昼夜の切替は group.visible だけでよい。屋根に窓が出ないよう天地面は作らない
+   ・街灯/ホーム … 発光色の小さな球と箱。フォグを掛けない(霞の向こうでも灯りは見える)
+   ・ホーム・上屋・車両 … 既存の材質に emissive を足して「照らされている」ように見せる
+
+   昼は `visible=false` で完全に無効。影の対象からも外す(光るものは影を落とさない)。 */
+const NIGHT_STAT={win:0,lamp:0,plat:0};     // 検証用(灯りの数)
+const NIGHT=(function(){
+  const G=new THREE.Group(); G.visible=false; G.name='night'; scene.add(G);
+
+  /* ---- 窓格子のテクスチャ(消えている部屋を混ぜる) ---- */
+  function winTex(cols,rows){
+    const cw=12,ch=12;
+    const cv=document.createElement('canvas');cv.width=cols*cw;cv.height=rows*ch;
+    const cx=cv.getContext('2d');
+    cx.fillStyle='#000000';cx.fillRect(0,0,cv.width,cv.height);
+    const warm=['#ffe7b4','#ffd890','#fff3d2','#ffdca0','#cfe0ff'];
+    for(let r=0;r<rows;r++)for(let c=0;c<cols;c++){
+      if(Math.random()<0.42) continue;                 // 消灯している部屋
+      cx.fillStyle=warm[(Math.random()*warm.length)|0];
+      cx.fillRect(c*cw+3,r*ch+3,cw-6,ch-7);
+    }
+    return canvasTex(cv);
+  }
+  /* ---- 単位立方体の側面4枚。UVは面ごとに0〜1(窓格子が面ごとに1回入る) ---- */
+  function sideShell(){
+    const P=[],U=[],I=[];
+    const F=[[[-.5,-.5, .5],[ .5,-.5, .5],[ .5,.5, .5],[-.5,.5, .5]],
+             [[ .5,-.5,-.5],[-.5,-.5,-.5],[-.5,.5,-.5],[ .5,.5,-.5]],
+             [[ .5,-.5, .5],[ .5,-.5,-.5],[ .5,.5,-.5],[ .5,.5, .5]],
+             [[-.5,-.5,-.5],[-.5,-.5, .5],[-.5,.5, .5],[-.5,.5,-.5]]];
+    F.forEach(function(q,fi){
+      const b=fi*4;
+      q.forEach(v=>P.push(v[0],v[1],v[2]));
+      U.push(0,0, 1,0, 1,1, 0,1);
+      I.push(b,b+1,b+2, b,b+2,b+3);
+    });
+    const g=new THREE.BufferGeometry();
+    g.setAttribute('position',new THREE.Float32BufferAttribute(P,3));
+    g.setAttribute('uv',new THREE.Float32BufferAttribute(U,2));
+    g.setIndex(I);g.computeVertexNormals();return g;
+  }
+  // 加算合成なので黒=透明。奥行きは書かない(建物の面と取り合わない)
+  const lit=o=>mkMat('MeshBasicMaterial',Object.assign(
+    {blending:THREE.AdditiveBlending,transparent:true,depthWrite:false,fog:false},o));
+
+  /* ---- 建物の窓明かり ---- */
+  {
+    const SHELL=sideShell();
+    // 低層と高層で窓の段数を変える(1枚のテクスチャだと高層の窓が間延びする)
+    const lots=[{t:winTex(4,4),  pick:b=>b.h<=12, mesh:null},
+                {t:winTex(4,11), pick:b=>b.h>12,  mesh:null}];
+    const m4=new THREE.Matrix4(),q=new THREE.Quaternion(),e=new THREE.Euler(),col=new THREE.Color();
+    for(const lo of lots){
+      const list=CITY.buildings.filter(lo.pick);
+      if(!list.length) continue;
+      const im=new THREE.InstancedMesh(SHELL,lit({map:lo.t}),list.length);
+      list.forEach(function(b,i){
+        e.set(0,-frame(b.s,b.off).a,0);q.setFromEuler(e);
+        // わずかに外へ出して、建物の面と同じ奥行きにならないようにする
+        m4.compose(new THREE.Vector3(b.x,b.h/2,b.z),q,
+                   new THREE.Vector3(b.w*1.006,b.h*1.002,b.d*1.006));
+        im.setMatrixAt(i,m4);
+        const v=0.30+Math.random()*0.80;      // 建物ごとの灯りの強さ
+        im.setColorAt(i,col.setRGB(v,v*0.94,v*0.82));
+      });
+      im.instanceMatrix.needsUpdate=true;
+      if(im.instanceColor)im.instanceColor.needsUpdate=true;
+      G.add(im);lo.mesh=im;
+    }
+    NIGHT_STAT.win=lots.reduce((a,l)=>a+(l.mesh?l.mesh.count:0),0);
+  }
+
+  /* ---- 街灯(高架の側道の外側と甲州街道) ---- */
+  {
+    const pts=[];
+    for(let x=DOM.x0+30;x<DECK_END-20;x+=34)
+      for(const sg of[-1,1]) pts.push([x,sg*(deckHalf(x)+5.4)]);
+    for(let x=DOM.x0-200;x<DOM.x1+200;x+=46) pts.push([x,141],[x,175]);
+    // 高架の上(架線柱の位置)。前面展望で奥へ伸びる灯りの列になる
+    for(const x of POLE_S){
+      if(x<DOM.x0||x>DECK_END) continue;
+      for(const sg of[-1,1]) pts.push([x,sg*(deckHalf(x)-0.7),railY(x)+5.6]);
+    }
+    const m4=new THREE.Matrix4(),q=new THREE.Quaternion(),sc=new THREE.Vector3(1,1,1);
+    const head=new THREE.InstancedMesh(new THREE.SphereGeometry(0.42,8,6),
+      mkMat('MeshBasicMaterial',{color:0xffe3ad,fog:false}),pts.length);
+    const halo=new THREE.InstancedMesh(new THREE.SphereGeometry(1.7,8,6),
+      lit({color:0xffd27a,opacity:0.20}),pts.length);
+    pts.forEach(function(p,i){
+      const f=frame(p[0],p[1]);
+      m4.compose(new THREE.Vector3(f.x,(p[2]===undefined?5.2:p[2]),f.z),q,sc);
+      head.setMatrixAt(i,m4);halo.setMatrixAt(i,m4);
+    });
+    head.instanceMatrix.needsUpdate=true;halo.instanceMatrix.needsUpdate=true;
+    G.add(head);G.add(halo);
+    NIGHT_STAT.lamp=pts.length;
+  }
+
+  /* ---- ホームの照明(上屋の下に等間隔で並べる) ---- */
+  {
+    const pts=[];
+    for(const pl of PLATS)
+      for(let x=pl.x0+5;x<pl.x1-5;x+=7) pts.push([x,pl.off,pl.y+3.3]);
+    const m4=new THREE.Matrix4(),q=new THREE.Quaternion(),sc=new THREE.Vector3(1,1,1);
+    const lamp=new THREE.InstancedMesh(new THREE.BoxGeometry(1.5,0.12,0.42),
+      mkMat('MeshBasicMaterial',{color:0xfff0cf,fog:false}),pts.length);
+    const halo=new THREE.InstancedMesh(new THREE.BoxGeometry(2.6,0.9,1.9),
+      lit({color:0xffe6b8,opacity:0.16}),pts.length);
+    pts.forEach(function(p,i){
+      const f=frame(p[0],p[1]);
+      m4.compose(new THREE.Vector3(f.x,p[2],f.z),q,sc);
+      lamp.setMatrixAt(i,m4);halo.setMatrixAt(i,m4);
+    });
+    lamp.instanceMatrix.needsUpdate=true;halo.instanceMatrix.needsUpdate=true;
+    G.add(lamp);G.add(halo);
+    NIGHT_STAT.plat=pts.length;
+  }
+
+  /* ---- 昼夜の切替 -----------------------------------------------------------
+     発光する面(G)の表示に加え、既存の材質へ emissive を足して
+     「照らされている」ように見せる。昼は必ず 0 に戻す。
+     ※ 車両の材質(9章)はここより後で定義されるが、呼ばれるのは読み込み後なので
+       参照して差し支えない。 */
+  const EMI=[
+    ['plat',   0x1b1812], ['canopy', 0x272318], ['hdoor', 0x17150f],
+    ['wall',   0x121109], ['glass',  0x1a1b14],
+    // 高架の上は街灯が照らしている体。前面展望で路盤とレールが見えないと
+    // 「真っ暗な板の上を走る」絵になる
+    ['slab',   0x101216], ['deckNew', 0x101216], ['deckOld', 0x0e1014],
+    ['barrier',0x14161b], ['rail',    0x1d2026], ['pole', 0x0e1014],
+  ];
+  function set(on){
+    G.visible=!!on;
+    for(const [k,hex] of EMI){
+      const m=MAT[k]; if(!m||!m.emissive) continue;
+      m.emissive.copy(srgb(on?hex:0x000000));
+    }
+    // 車両:前照灯・尾灯を強め、車内灯のぶんだけ車体を浮かせる
+    if(typeof M_HL!=='undefined'){
+      M_HL.emissive.copy(srgb(on?0xffffff:0xc8ced6));
+      M_TL.emissive.copy(srgb(on?0xd8342e:0x63120f));
+      CARMAT.emissive.copy(srgb(on?0x15171b:0x000000));
+      TRIMMAT.emissive.copy(srgb(on?0x2a2d33:0x000000));
+      XM_WIN.emissive.copy(srgb(on?0x8a7a4e:0x000000));
+    }
+  }
+  // 「夜の灯り」の目印。影の一括設定(applyShadows)がここを見て対象から外す。
+  // 親子関係ではなく目印で判定する(群を入れ子にしても取りこぼさない)
+  G.traverse(function(o){o.userData.night=true;});
+  return {group:G, set:set, stat:NIGHT_STAT};
+})();
 
 /* ============ 9. 列車(京王8000系) ============ */
 /* 【設計方針】旧実装からの全面作り直し
@@ -3142,6 +3307,8 @@ function applyShadows(){
     // 空ドームは裏面の巨大な球。影の対象に入れると世界中が影になる
     if(o===skyDome){o.castShadow=false;o.receiveShadow=false;SHADOW_STAT.recv--;return;}
     if(o===groundMesh){o.castShadow=false;return;}
+    // 夜の灯りは「光っている面」なので影を落とさない(落とすと灯りが黒い塊になる)
+    if(o.userData.night){o.castShadow=false;o.receiveShadow=false;SHADOW_STAT.recv--;return;}
     o.castShadow=true;SHADOW_STAT.cast++;
   });
 }
@@ -3260,9 +3427,11 @@ const CINE=(function(){
     evening:{n:'夕',  az:168, el:14, sun:0xffb070, si:0.60,
              hs:0xe9d9cf, hg:0x87807c, hi:0.62, expo:1.18,
              sky:{top:0x7d9ec8, hor:0xf2c89a, bot:0xb8a89c, glow:0xffd9a0}, fog:[1800,9000]},
-    night  :{n:'夜',  az:115, el:48, sun:0x9fb4d8, si:0.17,
-             hs:0x33405e, hg:0x161b26, hi:0.26, expo:1.45,
-             sky:{top:0x18243c, hor:0x3b4a66, bot:0x222a38, glow:0x5f7196}, fog:[1500,7000]},
+    // 夜は「暗いが見える」ようにする。地物を照らすのではなく灯りを足す(8b章)ので、
+    // 環境光はほんの少し上げるだけでよい。lights:true が NIGHT を有効にする
+    night  :{n:'夜',  az:115, el:48, sun:0xa8bcdc, si:0.10, lights:true,
+             hs:0x3a4766, hg:0x171c27, hi:0.26, expo:1.26,
+             sky:{top:0x16213a, hor:0x3f4d6c, bot:0x262e3f, glow:0x66779c}, fog:[1800,8200]},
   };
   /* ---- 季節(樹木と地表の色。いずれも"見せたい色"ではなく直接の着色) ---- */
   const SEASON={
@@ -3288,19 +3457,29 @@ const CINE=(function(){
     scene.fog.color.copy(srgb(SKY.HOR));
     scene.fog.near=t.fog[0]; scene.fog.far=t.fog[1];
     scene.background.copy(srgb(SKY.HOR));
+    NIGHT.set(!!t.lights);      // 窓・街灯・ホームの灯り(8b章)
+    applyLook();                // 地表・樹木は時刻でも明るさが変わる
   }
-  function setSeason(k){
-    const s=SEASON[k]||SEASON.summer; curSeason=k;
-    MAT.ground.color.copy(srgb(s.ground));
+  /* 地表と樹木の色を今の「季節 × 時刻」で塗り直す。
+     **夜は地表と緑を暗く落とす**(`GROUND_NIGHT`)。落とさないと、夜なのに
+     昼と同じ鮮やかな緑の地面が広がって、灯りを足しても夜に見えない。
+     時刻と季節のどちらを変えても呼ぶ(片方だけだと前の時刻の明るさが残る)。 */
+  const GROUND_NIGHT=0.40;
+  function applyLook(){
+    const s=SEASON[curSeason]||SEASON.summer;
+    const dark=(TIME[curTime]&&TIME[curTime].lights)?GROUND_NIGHT:1;
+    MAT.ground.color.copy(srgb(s.ground)).multiplyScalar(dark);
     // 樹木は登録簿の順=インスタンスの順。種別(桜/一般)で色を選ぶ
     const col=new THREE.Color();
     for(let i=0;i<CITY.trees.length;i++){
       const tr=CITY.trees[i];
       const h=(tr.kind==='桜')?s.sakura:s.tree[(i*7)%s.tree.length];
-      CITY.crown.setColorAt(i,setSrgb(col,h));
+      setSrgb(col,h).multiplyScalar(dark);
+      CITY.crown.setColorAt(i,col);
     }
     if(CITY.crown.instanceColor)CITY.crown.instanceColor.needsUpdate=true;
   }
+  function setSeason(k){ curSeason=k; applyLook(); }
 
   /* ---- カメラ ---------------------------------------------------------- */
   function aimAt(px,py,pz,lx,ly,lz){

@@ -41,6 +41,10 @@ const OPT = {
   html: String(opt('html', 'keio_elevated_3d.html')),
   out: String(opt('out', 'capture')),
   w: +opt('w', 480), h: +opt('h', 270), fps: +opt('fps', 12),
+  // 超過標本化。描いてから出力の大きさへ縮めると、細い線(道路の縁・架線・
+  // レール・点字ブロック)のちらつきが消える。**解像度は所要時間にほとんど
+  // 効かない**(描画の呼び出し回数で決まる)ので、ここを上げるのが一番安い
+  ss: +opt('ss', 3),
   quality: +opt('quality', 0.72),
   workers: +opt('workers', 3),
   seed: +opt('seed', 20260701),
@@ -130,21 +134,23 @@ function storyboard(stations) {
    ・tTo(k) … コマ k の世界へ追いつく(必ず同じ dt で刻む=再現する)
    ・grab() … 1枚描いて字幕を焼き、JPEGのデータURLを返す             */
 const PAGE_API = `(() => {
-  const W = __W, H = __H, FPS = __FPS, Q = __Q;
+  const W = __W, H = __H, SS = __SS, FPS = __FPS, Q = __Q;
   const cv = document.querySelector('canvas');
   const c2 = document.createElement('canvas'); c2.width = W; c2.height = H;
   const cx = c2.getContext('2d');
+  cx.imageSmoothingEnabled = true; cx.imageSmoothingQuality = 'high';
   let worldFrame = 0;
   window.__cine = {
-    begin(){ CINE.begin(); CINE.setSize(W,H); CINE.caption('',''); },
+    begin(){ CINE.begin(); CINE.setSize(W*SS, H*SS); CINE.caption('',''); },
     tTo(k){ while(worldFrame < k){ CINE.step(1/FPS); worldFrame++; } return worldFrame; },
     grab(main, sub){
       CINE.render();
-      cx.drawImage(cv, 0, 0, W, H);
+      cx.drawImage(cv, 0, 0, W, H);     // SS倍で描いた画を出力の大きさへ縮める
       const big = Math.round(H*0.080), small = Math.round(H*0.050);
       const x = Math.round(W*0.028), y1 = Math.round(H*0.862), y2 = Math.round(H*0.952);
       cx.textBaseline = 'alphabetic';
       const draw = (t, px, x0, y0) => {
+        if(!t) return;
         cx.font = px + 'px IPAGothic, "Noto Sans JP", sans-serif';
         cx.fillStyle = 'rgba(0,0,0,.55)'; cx.fillText(t, x0+2, y0+2);
         cx.fillStyle = '#fff'; cx.fillText(t, x0, y0);
@@ -162,7 +168,8 @@ async function runWorker(id, pw, exe, shots, log) {
     args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader',
            '--disable-dev-shm-usage', '--no-sandbox', '--hide-scrollbars'],
   });
-  const page = await browser.newPage({ viewport: { width: OPT.w, height: OPT.h }, deviceScaleFactor: 1 });
+  const page = await browser.newPage({
+    viewport: { width: OPT.w * OPT.ss, height: OPT.h * OPT.ss }, deviceScaleFactor: 1 });
   page.on('pageerror', (e) => log('W' + id + ' PAGEERROR ' + e.message));
   // 街並みの乱数を種から固定する(読み込み前に差し替える)
   await page.addInitScript(`(()=>{let a=${OPT.seed}>>>0;Math.random=()=>{
@@ -171,7 +178,7 @@ async function runWorker(id, pw, exe, shots, log) {
   await page.goto('file://' + PAGE);
   await page.waitForFunction('window.CINE!==undefined', { timeout: 180000 });
   await page.evaluate(PAGE_API.replace('__W', OPT.w).replace('__H', OPT.h)
-    .replace('__FPS', OPT.fps).replace('__Q', OPT.quality));
+    .replace('__SS', OPT.ss).replace('__FPS', OPT.fps).replace('__Q', OPT.quality));
   await page.evaluate(([shadow]) => { window.__cine.begin(); CINE.setShadow(shadow); }, [OPT.shadow]);
 
   let done = 0;
@@ -188,7 +195,7 @@ async function runWorker(id, pw, exe, shots, log) {
           if (far) CINE.setFar(far, far * 0.08, far * 0.83); else CINE.setFar(0);
           if (sh.kind === 'front') CINE.shotFront(s); else CINE.shotAerial(s, u);
         }
-        const sub = CINE.label() + (sh.sub2 ? '  ／  ' + sh.sub2 : '');
+        const sub = sh.sub2 || '';
         return window.__cine.grab(sh.main, sub);
       }, [sh, u, sh.f0 + k, sh.kind === 'front' ? OPT.far : 0]);
       const b64 = data.slice(data.indexOf(',') + 1);
@@ -209,7 +216,8 @@ async function runWorker(id, pw, exe, shots, log) {
   const exe = findChromium(pw);
   console.log('HTML   : ' + path.resolve(OPT.html));
   console.log('Chrome : ' + exe);
-  console.log('出力   : ' + OUT + '  ' + OPT.w + 'x' + OPT.h + ' ' + OPT.fps + 'fps');
+  console.log('出力   : ' + OUT + '  ' + OPT.w + 'x' + OPT.h + ' ' + OPT.fps + 'fps'
+    + '  (描画 ' + (OPT.w * OPT.ss) + 'x' + (OPT.h * OPT.ss) + ' = ' + OPT.ss + '倍で超過標本化)');
 
   // 駅の一覧を1回だけ読む
   const b0 = await pw.chromium.launch({ executablePath: exe,
