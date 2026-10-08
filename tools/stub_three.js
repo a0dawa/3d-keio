@@ -38,6 +38,11 @@ class V3 {
   applyQuaternion() { return this; }
   applyMatrix4() { return this; }
 }
+// 2・4成分のベクトル(シェーダへ渡す uniform の値を検査できるように実体で持つ)
+class V2 { constructor(x, y) { this.x = x || 0; this.y = y || 0; }
+  set(x, y) { this.x = x; this.y = y; return this; } }
+class V4 { constructor(x, y, z, w) { this.x = x || 0; this.y = y || 0; this.z = z || 0; this.w = w || 0; }
+  set(x, y, z, w) { this.x = x; this.y = y; this.z = z; this.w = w; return this; } }
 class Obj3D {
   constructor() {
     this.children = []; this.position = new V3(); this.rotation = new V3();
@@ -209,7 +214,15 @@ const Mat = (type) => class {
     this.type = type;
     if (type !== 'basic' && type !== 'line' && type !== 'points' && !(this.emissive && this.emissive.setRGB))
       this.emissive = new Color().setRGB(0, 0, 0);
+    if (!this.userData || typeof this.userData !== 'object') this.userData = {};
     return soft(this);
+  }
+  // three.js と同じく別の実体を返す(車両ごとに複製する材質を検査できるように)
+  clone() {
+    const c = new (Object.getPrototypeOf(this).constructor)();
+    for (const k of Object.keys(this)) c[k] = this[k];
+    c.userData = {};
+    return c;
   }
 };
 // 環境マップの前処理器。scene.environment を実体として測れるようにする
@@ -221,7 +234,7 @@ class PMREM {
   dispose() {}
 }
 const REAL = {
-  Vector3: V3, Object3D: Obj3D, Group, Scene, Mesh, BufferGeometry: BufGeo, DirectionalLight: DirLight,
+  Vector3: V3, Vector2: V2, Vector4: V4, Object3D: Obj3D, Group, Scene, Mesh, BufferGeometry: BufGeo, DirectionalLight: DirLight,
   PerspectiveCamera: PerspCam, CanvasTexture: Tex, Texture: Tex, WebGLRenderer: Renderer,
   Matrix4: M4, InstancedMesh: Inst, Color, Fog,
   Float32BufferAttribute: Attr, BufferAttribute: Attr, HemisphereLight: HemiLight,
