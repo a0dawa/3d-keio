@@ -11,7 +11,7 @@ const X = require('./stub_three')(path,
   'driveTrain:driveTrain,DRIVE:DRIVE,DWELL_OF:DWELL_OF,CAR_HALF:CAR_HALF,K8:K8,' +
   'mainOff:mainOff,runOff:runOff,DOM:DOM,STOP_BACK:STOP_BACK,' +
   'PSD:PSD,stepPSD:stepPSD,trains:trains,stepCarDoors:stepCarDoors,setCarDoors:setCarDoors,' +
-  'sideWindows:sideWindows,DOOR_HW:DOOR_HW,DOOR_SLIDE:DOOR_SLIDE,frame:frame,PLATS:PLATS,' +
+  'K8_WIN:K8_WIN,DOOR_HW:DOOR_HW,DOOR_SLIDE:DOOR_SLIDE,frame:frame,PLATS:PLATS,' +
   'TRACKS:TRACKS,' +
   'atcLimit:atcLimit,stepRide:stepRide,ATC:ATC,NOTCHES:NOTCHES,NIDX_B7:NIDX_B7,' +
   'setRideState:setRideState,getRideState:getRideState,setNotch:setNotch,NIDX_N:NIDX_N,' +
@@ -331,37 +331,40 @@ ok('上限速度を超えない', vmax <= REF.VMAX_KMH + 0.5, '≤' + REF.VMAX_K
     ok('全扉列でホーム側が定まる', bad.length === 0, X.PSD.length + '列すべて',
       bad.length ? bad[0].st.n + ' 未定' : X.PSD.length + '列すべて');
   }
-  // 7-4 各車両に16枚(4箇所×2枚×左右)の扉があるか
+  /* 7-4〜7-6 客用扉(2026-10 v4 へ差し替え)
+     扉は車体の塗り分けシェーダが描く2枚引戸で、開度は車両ごとの uniform uOpen
+     (シェルの +y 面/−y 面)。戸は外板の内側を戸袋へ滑る。 */
+  // 7-4 開くのはホーム側の面だけ(片面の開度だけが動く)
   {
     const c = X.trains[0].cars[0];
-    const d = c.userData.doors;
-    const n = d ? d.p.count + d.m.count : 0;
-    ok('1両あたりの扉の枚数', n === 16, '16枚(4箇所×2枚×左右)', n + '枚');
-  }
-  // 7-5 開いたとき、ホーム側の扉だけが実際に動いているか(配置行列を測る)
-  {
-    const c = X.trains[0].cars[0];
+    const U = () => { const u = c.userData.bodyMat.userData.k8.uni.uOpen.value; return [u.x, u.y]; };
+    X.setCarDoors(c, 0, 1); const closed = U();
+    X.setCarDoors(c, 1, 1); const openP = U();
+    X.setCarDoors(c, 1, -1); const openM = U();
     X.setCarDoors(c, 0, 1);
-    const dm = (q) => q.p.mats.concat(q.m.mats).map((m) => m.p.x);
-    const closed = dm(c.userData.doors);
-    X.setCarDoors(c, 1, 1);
-    const open = dm(c.userData.doors);
-    const move = open.map((v, i) => Math.abs(v - closed[i]));
-    const nearSide = move.slice(0, 8), farSide = move.slice(8);
-    const slid = nearSide.every((v) => v > 0.3), still = farSide.every((v) => v < 1e-9);
-    ok('ホーム側の扉が動く', slid, '8枚とも移動', nearSide.filter((v) => v > 0.3).length + '/8枚');
-    ok('反対側の扉は動かない', still, '8枚とも静止', farSide.filter((v) => v < 1e-9).length + '/8枚');
-    X.setCarDoors(c, 0, 1);
+    ok('閉じると両面とも0', closed[0] === 0 && closed[1] === 0, '0/0', closed.join('/'));
+    ok('ホーム側の面だけ開く', openP[0] + openP[1] === 1 && openM[0] + openM[1] === 1,
+      '片面だけ開度1', '+z→' + openP.join('/') + ' −z→' + openM.join('/'));
+    ok('面の向きを取り違えない', openP[0] !== openM[0], '+zと−zで別の面', openP[0] !== openM[0] ? '別の面' : '同じ面');
+    // 最後尾(シェルを180°回した車)は面の符号が入れ替わる。先頭と同じ"ローカル面"が開くこと
+    const t = X.trains[0].cars[9];
+    X.setCarDoors(t, 1, 1);
+    const ut = t.userData.bodyMat.userData.k8.uni.uOpen.value;
+    ok('180°回した車でも同じ側が開く', (ut.x === 1) !== (openP[0] === 1), '左右反転を考慮',
+      '先頭' + openP.join('/') + ' 最後尾' + ut.x + '/' + ut.y);
+    X.setCarDoors(t, 0, 1);
   }
-  // 7-6 扉が全開したとき、隣の客用窓に被らないか(戸袋の幅が足りているか)
+  // 7-5 全開の戸は戸袋窓の奥に収まり、隣の下降窓に被らない(戸袋の幅が足りているか)
   {
-    const win = X.sideWindows(false, false);
+    const win = X.K8_WIN.mid;
     let over = 0, minGap = 9;
     for (const dx of X.K8.DOORX) {
       for (const sg of [-1, 1]) {
-        const c = dx + sg * (X.DOOR_HW + X.DOOR_SLIDE);
-        const a = c - X.DOOR_HW, b = c + X.DOOR_HW;
+        // 全開の戸が占める範囲(外板の内側):開口の端から戸1枚ぶん
+        const a = Math.min(dx + sg * X.DOOR_HW, dx + sg * (X.DOOR_HW + X.DOOR_SLIDE));
+        const b = Math.max(dx + sg * X.DOOR_HW, dx + sg * (X.DOOR_HW + X.DOOR_SLIDE));
         for (const q of win) {
+          if (q[6] !== 0) continue;                          // 下降窓だけ(戸袋窓は戸が見えるのが正しい)
           const ov = Math.min(b, q[1]) - Math.max(a, q[0]);
           if (ov > 0) over++;
           const gap = a > q[1] ? a - q[1] : b < q[0] ? q[0] - b : -ov;
@@ -369,10 +372,9 @@ ok('上限速度を超えない', vmax <= REF.VMAX_KMH + 0.5, '≤' + REF.VMAX_K
         }
       }
     }
-    ok('全開の扉が窓に被らない', over === 0, '重なり0枚',
-      over ? over + '枚 重なる' : 'すき間' + minGap.toFixed(3) + 'm');
-    ok('扉が全開できる', Math.abs(X.DOOR_SLIDE - X.K8.DOORW / 2) < 1e-9,
-      '片開き1枚ぶん', X.DOOR_SLIDE.toFixed(3) + 'm');
+    ok('全開の戸が下降窓に被らない', over === 0, '重なり0', over ? over + '箇所 重なる' : 'すき間' + minGap.toFixed(3) + 'm');
+    ok('戸は全開できる(戸1枚ぶん)', Math.abs(X.DOOR_SLIDE - X.K8.DOORW / 2) < 0.01,
+      '片開き1枚ぶん(0.65m)', X.DOOR_SLIDE.toFixed(3) + 'm');
   }
 }
 

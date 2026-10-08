@@ -1,631 +1,251 @@
-// 京王8000系:生成された"実ジオメトリ"を測って実車実測値と照合する。
+// 京王8000系(v4):生成された"実ジオメトリ"を測って実測値と照合する。④
 //
-//   旧 verify_face.py は HTML に埋め込んだ前面写真テクスチャの画素を測っていた。
-//   写真転写方式を廃止したので、代わりにここでは THREE を実体のあるスタブに
-//   差し替えて HTML のスクリプトを実行し、出来上がった BufferGeometry の
-//   頂点座標・頂点カラーそのものを測る。
-//   → AIが描画結果を見られなくても、モデルが実測値どおりかを機械的に判定できる。
+//   2026-10 に車体を v4(reference/keio8000_v4/、利用者提供の Blender 用モデル)へ
+//   差し替えた。寸法の根拠は ref/keio8000_measured_v4.md(RailFile.jp 8714編成の
+//   山側・海側の編成写真を 60px/m で測った値と、前面写真の実測)。
 //
+//   役割分担:
+//     auto_check.py      … HTML の諸元表(K8)の数値そのものを検査する(ソースレベル)
+//     verify_car.js(本)… HTML を実行し、出来上がった頂点・部品の位置を測る(形)
+//     verify_k8render.js … 実際に描いた画素を v4 の照合ツールで測る(塗り分け)
+//   塗り分け(帯・窓・扉・前面の黒)はシェーダなので頂点には現れない。それは⑩で見る。
+//
+//   基準値はすべて下の REF(実測表から写した値)で持つ。HTML から読まない。
 //   使い方: node tools/verify_car.js [keio_elevated_3d.html]
 const path = process.argv[2] || 'keio_elevated_3d.html';
-
 const X = require('./stub_three')(path,
-  'K8:K8,PAL:PAL,PAL_SRGB:PAL_SRGB,TONE_EXPO:TONE_EXPO,BANDS:BANDS,WIN:WIN,FWIN:FWIN,' +
-  'CARGEO:CARGEO,TRIMGEO:TRIMGEO,FACEGEO:FACEGEO,makeCar:makeCar,sideWindows:sideWindows,' +
-  'shapeAt:shapeAt,frontX:frontX,frontXAt:frontXAt,frontHalfAt:frontHalfAt,' +
-  'glassHalf:glassHalf,noseZ:noseZ,SPX:SPX,SPY:SPY,fz:fz,fy:fy,' +
-  'G_LCASE:G_LCASE,G_SIGNT:G_SIGNT,G_SIGND:G_SIGND,BAND_DROP:BAND_DROP,' +
-  'pocketWindows:pocketWindows,setCarDoors:setCarDoors,DOOR_REC:DOOR_REC,' +
-  'G_DOORLEAF:G_DOORLEAF,' +
-  'PT:PT,WIRE_TRO:WIRE_TRO,PANTO_FROM_END:PANTO_FROM_END,AC_L:AC_L,AC_W:AC_W,' +
-  'GAUGE:GAUGE,RAIL_W:RAIL_W,RAIL_OFF:RAIL_OFF,trains:trains');
+  'K8:K8,K8GEO:K8GEO,K8_WIN:K8_WIN,K8_FORMATIONS:K8_FORMATIONS,makeCar:makeCar,' +
+  'setCarDoors:setCarDoors,k8nose:k8nose,trains:trains,parkedCars:parkedCars,' +
+  'WIRE_TRO:WIRE_TRO,RAIL_OFF:RAIL_OFF,GAUGE:GAUGE,RAIL_W:RAIL_W,RAIL_TOP:RAIL_TOP,' +
+  'seatCar:seatCar,frame:frame,railY:railY,zRunDown:zRunDown,M_HL:M_HL,M_TL:M_TL,' +
+  'M_HL_OFF:M_HL_OFF,M_TL_OFF:M_TL_OFF,K8M:K8M');
 
-/* ---- 測定ユーティリティ ---- */
-const near = (a, b, t) => Math.abs(a - b) <= t;
-// 色 c が基準色群のいずれか(あるいはその間の補間)に一致するか
-function colorIn(c, list) {
-  const lo = [0, 1, 2].map((i) => Math.min(...list.map((p) => p[i])) - 0.012);
-  const hi = [0, 1, 2].map((i) => Math.max(...list.map((p) => p[i])) + 0.012);
-  return c[0] >= lo[0] && c[0] <= hi[0] && c[1] >= lo[1] && c[1] <= hi[1] && c[2] >= lo[2] && c[2] <= hi[2];
-}
-// ジオメトリの頂点を走査し、条件に合う頂点の x/y/z 範囲を返す
-function span(geo, pick) {
-  const P = geo.attributes.position.array, C = geo.attributes.color.array;
-  const r = { x: [1e9, -1e9], y: [1e9, -1e9], z: [1e9, -1e9], n: 0 };
-  for (let i = 0; i < P.length; i += 3) {
-    const p = [P[i], P[i + 1], P[i + 2]], c = [C[i], C[i + 1], C[i + 2]];
-    if (!pick(p, c)) continue;
-    r.n++;
-    const k = ['x', 'y', 'z'];
-    for (let j = 0; j < 3; j++) { if (p[j] < r[k[j]][0]) r[k[j]][0] = p[j]; if (p[j] > r[k[j]][1]) r[k[j]][1] = p[j]; }
-  }
-  return r;
-}
-function bbox(geo) { return span(geo, () => true); }
-
-/* ---- 基準値(検証側が独立して持つ) -----------------------------------------
-   [B] 実車写真の画素解析による実測値[m]。写真そのものは失われたが記録は残る。
-   [D] 利用者提供の前面プロポーション仕様書[mm]。前面まわりはこちらが正。
-   ※どちらも HTML 側の定数から読んではいけない(モデルを直せば基準も動く循環になる)。 */
-const SPEC = { X: 1400, Y: 2800 };        // [D] の全幅・全高[mm]
-const BAND_DROP = 364;                    // 実地確認による帯の下げ量[mm](0.350m相当)
-const FRED_DROP = 0.33;                   // 前/後面の赤帯を側面よりさらに下げる量[m]
-const WIN_REF = 1.6859;                   // 側窓の基準面[m](帯から切り離した時点の赤帯上端)
-const WIN_TRIM = 0.30;                    // 側窓を上下から切り詰める量[m]
-const WIN_GROW = 1.21;                    // その後、中心を保って高さを21%大きくする
-const WIN_DROP = 0.07;                    // さらに7cm下げる
-const POCKET_NARROW = 0.70;               // 戸袋窓は同じ中心で幅を30%狭める
-const HL_K = 1.30;                        // 前照灯だけさらに一回り大きくする
-const RED_THICK = 1.44;                   // 側面の赤帯(仕様書150mmからの倍率)
-const FRED_THICK = 1.56;                  // 前/後面の赤帯(側面より太い)
-const SIDE_RED_UP = 0.10;                 // 側面の赤帯だけ10cm上げる(青帯は動かさない)
-const AC_L_REF = 2.10 * 1.70;             // 冷房装置キセの長さ[m](1.7倍)
-const PANTO_FROM_END = 3.0;               // パンタの取付位置(車端からの距離[m])
-const PANTO_CARS = [2, 3, 6, 7, 9];       // パンタを載せる車両(西端から1始まり)
-const PIER_MID = 0.26;                    // 同じ区画の窓どうしの柱の幅[m]
-const WIN_CLOSE = 0.05;                   // 窓どうしを近づける量[m]
-const LAMP_K = 1.30;                      // 実地確認による灯具の拡大率
+/* ---- 基準値(ref/keio8000_measured_v4.md から。検証側が独立して持つ)---------- */
 const REF = {
-  LEN: 19.50, W: 2.845, FLOOR: 0.95, ROOF: 3.64,   // [B]
-  SIDEWIN: [2.27, 3.05],                            // [B] 側窓
-  BOGIE: 13.60, WBASE: 2.20, WHEELD: 0.86,          // [C]
-  GAUGE: 1.372,                                     // 軌間(馬車軌間1372mm)
+  LEN: 19.5, PITCH: 20.0, HWB: 1.385,                  // 車体長・連結面間・車体半幅(幅2,770)
+  Z_BOT: 1.007, Z_FLR: 1.147,                          // 車体すそ・床面(扉の下端の線)
+  Z_SH0: 3.387, Z_CROWN: 3.72,                         // 雨どい・屋根頂部
+  BAND_Z: [1.266, 1.520, 1.573, 1.609, 1.650, 1.853, 1.995, 2.908, 2.927, 3.061, 3.198, 3.282],
+  DOORX: [-7.05, -2.35, 2.35, 7.05], DOOR_HW: 0.648,  // 扉の中心・開口の半幅
+  // 側面の開口(外枠の外側)
+  DROP: [[0.021, 0.943]],            // 扉間中心 g からの距離(2連)
+  POCKET: [0.895, 1.175],            // 扉中心からの距離
+  DWIN: [0.135, 0.546],              // 扉窓(扉中心からの距離)
+  END_DROP: [8.466, 9.396], END_POCKET: [7.945, 8.225],
+  WZ: [1.995, 2.927], DWZ1: 2.908,
+  CREW_WIN: [8.595, 8.95, 2.01, 2.927],
+  // 前面の輪郭(中心面)。v4 はこの実測を折れ線で近似しているので、z3.09 付近で最大3.2cm
+  // 差がある(v4 の NOSE_PROFILE は (2.52,9.752)→(3.50,9.635) の直線)。許容 0.035m
+  NOSE: [[1.80, 9.752], [2.52, 9.752], [3.09, 9.652], [3.53, 9.635], [3.71, 9.29]], NOSE_TOL: 0.035,
+  BOGIE_X: 6.88, WB_M: 2.2, WB_T: 2.1, WHEEL_R: 0.43,
+  AC_TOP: 4.055, AC_L: 4.38,
+  PANTO_FROM_SHINJUKU: [2, 4, 5, 8, 9],                // パンタは新宿方から2・4・5・8・9両目
+  CARS_8714F: ['8714', '8014', '8064', '8114', '8164', '8514', '8564', '8214', '8264', '8764'],
+  TOL: 0.01,
 };
-// [D] の mm を検証側で独立に実寸へ換算する(HTMLの fz/fy とは別に計算する)
-const sx = (REF.W / 2) / SPEC.X, sy = (REF.ROOF - REF.FLOOR) / SPEC.Y;
-const dz = (mm) => mm * sx, dy = (mm) => REF.FLOOR + mm * sy, dh = (mm) => mm * sy;
-REF.NAVY = [dy(900 - BAND_DROP), dy(950 - BAND_DROP)];    // [D] §6 京王ブルー(細い帯・下)
-REF.RED_BASE = dy(950 - BAND_DROP);                       // 帯の基準面(=青帯の上端)
-REF.RED = [REF.RED_BASE + SIDE_RED_UP,                    // 京王レッド(側面。10cm上げ)
-           REF.RED_BASE + SIDE_RED_UP + dh(150 * RED_THICK)];
-REF.FRONTWIN = [dy(1200 - BAND_DROP), dy(2500)];          // [D] §3 前面窓(下へ広げる)
-REF.SIDEWIN = [0, 3.05];                                  // 下端は下で帯から決める
-REF.GLASS_Z = dz(1350);               // [D] §3 ガラスの半幅
-REF.DOOR_Z = dz(400);                 // [D] §4 貫通扉の半幅
-REF.LAMP_D = dz(80 * LAMP_K);         // [D] §7 ランプの直径(一回り大きく)
-REF.LCASE = [dz(300 * LAMP_K), dh(120 * LAMP_K)];   // [D] §7 ライトケース
-REF.SIDEWIN = (function () {              // 基準面+10cm → 上下30cm切詰 → 拡大 → 下げ
-  const b = WIN_REF + 0.10 + WIN_TRIM, t = 3.05 - WIN_TRIM;
-  const c = (b + t) / 2 - WIN_DROP, h = (t - b) * WIN_GROW / 2;
-  return [c - h, c + h];
-})();
-// 前/後面の赤帯は側面の10cm上げを受けず、基準面から FRED_DROP だけ下がる
-REF.FRED = [REF.RED_BASE - FRED_DROP, REF.RED_BASE - FRED_DROP + dh(150 * FRED_THICK)];
-REF.LAMP_Y = dy(200);                 // 灯具の高さ:床面(車体底面)から200mm
-REF.SKIRT_BOT = dy(-500);             // [D] §8 排障器の下端
-REF.NOSE_BULGE = dy(900);             // [D] §2 最も手前へ出る高さ
 
-/* ---- 検査項目 ---- */
-const K = X.K8, PAL = X.PAL;
 const rows = [];
 let ng = 0;
-function check(name, ref, got, tol, unit) {
-  const ok = got !== null && near(got, ref, tol);
-  if (!ok) ng++;
-  rows.push([name, ref.toFixed(3), got === null ? '-' : got.toFixed(3), tol.toFixed(3), unit || 'm', ok ? 'OK' : 'NG']);
+function ok(name, cond, expect, got) {
+  if (!cond) ng++;
+  rows.push([name, String(expect), String(got), cond ? 'OK' : 'NG']);
 }
-function checkRange(name, ref, got, tol) {
-  const ok = got && near(got[0], ref[0], tol) && near(got[1], ref[1], tol);
-  if (!ok) ng++;
-  rows.push([name, ref[0].toFixed(2) + '-' + ref[1].toFixed(2),
-    got ? got[0].toFixed(2) + '-' + got[1].toFixed(2) : '-', tol.toFixed(3), 'm', ok ? 'OK' : 'NG']);
+const near = (a, b, t) => Math.abs(a - b) <= (t === undefined ? REF.TOL : t);
+// Three.js の頂点(x,上,左右)→ v4 座標(x, y=−z, z=上)
+function v4pts(geo) {
+  const P = geo.attributes.position.array, out = [];
+  for (let i = 0; i < P.length; i += 3) out.push([P[i], -P[i + 2], P[i + 1]]);
+  return out;
 }
+const range = (pts, k) => { let lo = 1e9, hi = -1e9; for (const p of pts) { if (p[k] < lo) lo = p[k]; if (p[k] > hi) hi = p[k]; } return [lo, hi]; };
 
-/* ---- 色管理:頂点カラーがリニアへ変換されているか -----------------------------
-   仕様書[D]の色見本(sRGBの16進)から、検証側が独立に sRGB→リニアの式を適用して
-   突き合わせる。変換を通し忘れると車体だけが浮いて明るくなる。            */
+/* ---- 1. 車体シェル(断面と長さ) -------------------------------------------- */
 {
-  const s2l = (v) => (v <= 0.04045) ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
-  // [D] の色見本(sRGB)。モデルからは読まない
-  const SRC = {
-    red: 0xC60052,     // 京王レッド
-    navy: 0x0033A0,    // 京王ブルー
-    ivory: 0xF0EFEA,   // アイボリーホワイト
-    skirt: 0x555555,   // 排障器
-  };
-  let bad = null, same = 0;
-  for (const k in SRC) {
-    const h = SRC[k];
-    const want = [(h >> 16) & 255, (h >> 8) & 255, h & 255].map((v) => s2l(v / 255));
-    const got = X.PAL[k];
-    if (!got) { bad = bad || [k, 'PALに無い']; continue; }
-    for (let i = 0; i < 3; i++)
-      if (Math.abs(got[i] - want[i]) > 0.004 && !bad)
-        bad = [k, want[i].toFixed(3) + '≠' + got[i].toFixed(3)];
-    // sRGBのまま(=未変換)でないことも確かめる
-    const raw = [(h >> 16) & 255, (h >> 8) & 255, h & 255].map((v) => v / 255);
-    if (raw.every((v, i) => Math.abs(v - got[i]) < 0.004)) same++;
+  const mid = v4pts(X.K8GEO.shell), cab = v4pts(X.K8GEO.shellCab);
+  const xr = range(mid, 0), yr = range(mid, 1), zr = range(mid, 2);
+  ok('車体長(中間車)', near(xr[1] - xr[0], REF.LEN), REF.LEN + 'm', (xr[1] - xr[0]).toFixed(3) + 'm');
+  ok('車体幅', near(yr[1], REF.HWB) && near(-yr[0], REF.HWB), '±' + REF.HWB, yr[0].toFixed(3) + '〜' + yr[1].toFixed(3));
+  ok('車体すそ', near(zr[0], REF.Z_BOT), REF.Z_BOT + 'm', zr[0].toFixed(3) + 'm');
+  ok('屋根頂部', near(zr[1], REF.Z_CROWN), REF.Z_CROWN + 'm', zr[1].toFixed(3) + 'm');
+  // 垂直な側面の上端(雨どい)。|y|=半幅の頂点の最高点
+  const sideTop = Math.max(...mid.filter((p) => Math.abs(Math.abs(p[1]) - REF.HWB) < 1e-4).map((p) => p[2]));
+  ok('垂直な側面の上端(雨どい)', near(sideTop, REF.Z_SH0), REF.Z_SH0 + 'm', sideTop.toFixed(3) + 'm');
+  // 帯・窓・扉の境目に断面の頂点があること(v4 と同じ作り。塗り分けの境目で面が折れない)
+  const zs = new Set(mid.map((p) => p[2].toFixed(3)));
+  const miss = REF.BAND_Z.filter((z) => !zs.has(z.toFixed(3)));
+  ok('境目に断面の頂点', miss.length === 0, REF.BAND_Z.length + '箇所', miss.length ? '欠け ' + miss.join(',') : '全箇所');
+  // 前面の中心線の輪郭(先頭車、y≒0 の頂点の最前部を高さごとに)
+  // 中心線(y=0)上の頂点を高さ順に並べ、目標の高さで x を内挿して比べる
+  const ctr = cab.filter((p) => Math.abs(p[1]) < 1e-6 && p[0] > 9).sort((a, b) => a[2] - b[2]);
+  const xAt = (z) => { for (let i = 0; i < ctr.length - 1; i++) { const a = ctr[i], b = ctr[i + 1];
+    if (a[2] <= z && z <= b[2]) return a[0] + (b[0] - a[0]) * (z - a[2]) / ((b[2] - a[2]) || 1); } return null; };
+  let worst = 0, at = '';
+  for (const [z, xr0] of REF.NOSE) {
+    const xm = xAt(Math.min(z, ctr.length ? ctr[ctr.length - 1][2] : z));
+    if (xm === null) { worst = 9; at = 'z=' + z + ' 頂点なし'; continue; }
+    if (Math.abs(xm - xr0) > worst) { worst = Math.abs(xm - xr0); at = 'z=' + z + ' ' + xm.toFixed(3); }
   }
-  pass('頂点カラーがリニア', bad === null && same === 0,
-    bad ? bad.join(' ') : Object.keys(SRC).length + '色すべて変換済み');
-  // 露出は数値で決めた値(TEMPLATE/CLAUDE.mdに根拠を記録)
-  pass('トーンマッピングの露出', Math.abs(X.TONE_EXPO - 1.18) < 1e-9, String(X.TONE_EXPO));
+  ok('前面の輪郭(中心面)', worst <= REF.NOSE_TOL, '±' + REF.NOSE_TOL + 'm(5点)', '最大差 ' + worst.toFixed(3) + 'm ' + at);
+  ok('先頭車の後端', near(range(cab, 0)[0], -REF.LEN / 2), -REF.LEN / 2, range(cab, 0)[0].toFixed(3));
 }
 
-// (1) 車体の外形寸法 — 中間車の車体ロフトの外接箱
-const bb = bbox(X.CARGEO.mid);
-check('車体長', REF.LEN, bb.x[1] - bb.x[0], 0.02);
-check('車体幅', REF.W, bb.z[1] - bb.z[0], 0.01);
-check('車体裾(床面)高さ', REF.FLOOR, bb.y[0], 0.01);
-check('屋根高さ', REF.ROOF, bb.y[1], 0.01);
-
-// (2) 側面の帯 — 車体ロフトの頂点カラーが実際に赤/紺になっている高さ範囲
-const red = span(X.CARGEO.mid, (p, c) => colorIn(c, [PAL.red]));
-const navy = span(X.CARGEO.mid, (p, c) => colorIn(c, [PAL.navy]));
-checkRange('京王レッド帯', REF.RED, red.n ? red.y : null, 0.02);
-checkRange('京王ブルー細線', REF.NAVY, navy.n ? navy.y : null, 0.02);
-// [D] §6:青が下の細帯、赤が上の太帯。2本は隙間なく接する。
+/* ---- 2. 側面の開口(シェーダへ渡す一覧)⇄ 実測 -------------------------------- */
 {
-  const order = navy.n && red.n && red.y[0] > navy.y[1] - 0.01;
-  rows.push(['帯の上下(赤>青)', '赤が上', order ? '赤が上' : '逆転', '-', '', order ? 'OK' : 'NG']);
-  if (!order) ng++;
-  /* [D]では2本は隙間なく接するが、実地確認により側面の赤帯だけ10cm上げたので
-     青帯との間にステンレス地が出る。その隙間が指示どおりの量であることを見る。 */
-  const gap = (navy.n && red.n) ? red.y[0] - navy.y[1] : null;
-  const okg = gap !== null && Math.abs(gap - SIDE_RED_UP) < 0.02;
-  rows.push(['青帯と赤帯の隙間', SIDE_RED_UP.toFixed(2) + 'm',
-    gap === null ? '帯が無い' : gap.toFixed(3) + 'm', '-', 'm', okg ? 'OK' : 'NG']);
-  if (!okg) ng++;
-  const thick = red.n && navy.n && (red.y[1] - red.y[0]) > (navy.y[1] - navy.y[0]);
-  rows.push(['赤が太く青が細い', '赤>青', thick ? '赤>青' : '逆', '-', '', thick ? 'OK' : 'NG']);
-  if (!thick) ng++;
-}
-
-// (3) 側窓 — 中間車のトリムから、客用扉の範囲を除いた窓(框+ガラス)の高さ範囲
-const isWin = (c) => colorIn(c, [PAL.glass, PAL.glassT]) || colorIn(c, [PAL.sash]);
-const offDoor = (x) => K.DOORX.every((d) => Math.abs(x - d) > K.DOORW / 2 + 0.02);
-const sw = span(X.TRIMGEO.mid, (p, c) => isWin(c) && offDoor(p[0]));
-checkRange('側窓(客用)', REF.SIDEWIN, sw.n ? sw.y : null, 0.02);
-
-// (4) 前面窓 — 前面ジオメトリの窓(框+ガラス)の高さ範囲
-const fw = span(X.FACEGEO.f, (p, c) => isWin(c));
-checkRange('前面窓', REF.FRONTWIN, fw.n ? fw.y : null, 0.02);
-// [D] §3 ガラスの左右幅(一枚の大きな面。側面へ回り込む)
-check('前面ガラスの半幅', REF.GLASS_Z, fw.n ? Math.max(Math.abs(fw.z[0]), fw.z[1]) : null, 0.03);
-// 帯は前頭部でも"水平に"貫通する(斜めに跳ね上げない)。
-// 前/後面(妻面)と側面では赤帯の高さが違うので、分けて測る。
-// 妻面のグリッドは中央(z≒0)まで頂点があり、側面は |z|=車体半幅にしか無い。
-// 妻面(前/後面)のグリッドだけが中央(|z|<1.0)まで頂点を持つので、そこで前面の帯を測る。
-// 側面の帯は中間車(CARGEO.mid)で測る=上の '京王レッド帯' / '京王ブルー細線'。
-{
-  const face = span(X.CARGEO.cf, (p, c) => colorIn(c, [PAL.red]) && Math.abs(p[2]) < 1.0);
-  const fnav = span(X.CARGEO.cf, (p, c) => colorIn(c, [PAL.navy]) && Math.abs(p[2]) < 1.0);
-  checkRange('前/後面の赤帯', REF.FRED, face.n ? face.y : null, 0.02);
-  // 青帯は前後・側面で同じ高さ(REF.NAVYは側面の値)
-  checkRange('前/後面の青帯', REF.NAVY, fnav.n ? fnav.y : null, 0.02);
-  // 帯は水平に貫通する(斜めに跳ね上げない)=帯の厚み以上に高さが広がらない
-  const flatF = face.n && (face.y[1] - face.y[0]) < (REF.FRED[1] - REF.FRED[0]) + 0.03;
-  const flatS = red.n && (red.y[1] - red.y[0]) < (REF.RED[1] - REF.RED[0]) + 0.03;
-  rows.push(['帯が水平(前面/側面)', '水平', flatF && flatS ? '水平' : '斜め', '-', '',
-    flatF && flatS ? 'OK' : 'NG']);
-  if (!(flatF && flatS)) ng++;
-  // 前面の赤帯は側面より低い(指示による差)
-  const lower = face.n && red.n && (red.y[0] - face.y[0]) > 0.30;
-  rows.push(['前面の赤帯が側面より低い', '約0.40m低い',
-    face.n && red.n ? (red.y[0] - face.y[0]).toFixed(2) + 'm低い' : '-', '-', '',
-    lower ? 'OK' : 'NG']);
-  if (!lower) ng++;
-}
-// 乗務員室は屋根の高さまでアイボリー(灰色の屋根にしない)
-{
-  const iv = span(X.CARGEO.cf, (p, c) => colorIn(c, [PAL.ivory]));
-  const ok2 = iv.n && iv.y[1] > K.ROOF - 0.05;
-  rows.push(['乗務員室は屋根までクリーム', '屋根まで',
-    iv.n ? '上端' + iv.y[1].toFixed(2) + 'm' : '-', '-', '', ok2 ? 'OK' : 'NG']);
-  if (!ok2) ng++;
-}
-// [D] §2 最も手前へ出るのは腰の高さ(Y=900)であること
-{
-  let best = [1e9, 0];
-  for (let y = REF.FLOOR; y <= REF.ROOF; y += 0.01) {
-    const d = X.noseZ(y);
-    if (d < best[0]) best = [d, y];
-  }
-  check('ノーズが最も前へ出る高さ', REF.NOSE_BULGE, best[1], 0.03);
-}
-
-// (5) 足回り — 先頭車を実際に組み立てて車輪メッシュの位置を測る
-const car = X.makeCar('keio', true, true, false);
-const wheels = [];
-car.traverse((o) => {
-  if (o.geometry && o.geometry.type === 'Cyl' && near(o.geometry.p[0], K.WHEEL, 1e-6)) wheels.push(o.position);
-});
-const wx = [...new Set(wheels.map((p) => +p.x.toFixed(3)))].sort((a, b) => a - b);
-check('車輪の枚数', 8, wheels.length, 0, '枚');
-check('台車中心間距離', REF.BOGIE, wx.length === 4 ? (wx[2] + wx[3]) / 2 - (wx[0] + wx[1]) / 2 : null, 0.02);
-check('固定軸距', REF.WBASE, wx.length === 4 ? wx[1] - wx[0] : null, 0.02);
-check('車輪径', REF.WHEELD, K.WHEEL * 2, 0.001);
-// 軌間と車輪の整合。車両側が軌道側と別の値を持つと脱線した見た目になる
-// (実際に車輪間隔2.12mに対しレール間隔1.44mというずれがあった)。
-check('軌間(レール内面間)', REF.GAUGE, X.GAUGE, 0.001);
-{
-  const wz = [...new Set(wheels.map((q) => +Math.abs(q.z).toFixed(4)))];
-  check('車輪の左右位置', X.RAIL_OFF, wz.length === 1 ? wz[0] : null, 0.001);
-  const inner = wz.length === 1 ? 2 * wz[0] - 0.135 : null;   // 車輪内面間(踏面幅135mm)
-  rows.push(['車輪がレール上にあるか', '軌間±70mm', inner === null ? '-' : inner.toFixed(3),
-    '-', 'm', inner !== null && Math.abs(inner - REF.GAUGE) < 0.07 ? 'OK' : 'NG']);
-  if (!(inner !== null && Math.abs(inner - REF.GAUGE) < 0.07)) ng++;
-}
-
-// (5b) 前頭部の部品 — [D] §7 灯具 / §8 排障器
-{
-  const cab = X.makeCar('keio', false, true, false);
-  let lamps = 0, head = 0, skirtLow = 1e9; const lampY = [];
-  cab.traverse((o) => {
-    const g = o.geometry;
-    if (!g || !g.p) return;
-    if (g.type === 'Cyl' &&
-        (near(g.p[0] * 2, REF.LAMP_D, 0.002) || near(g.p[0] * 2, REF.LAMP_D * HL_K, 0.002))) {
-      lamps++; lampY.push(o.position.y);
-      if (near(g.p[0] * 2, REF.LAMP_D * HL_K, 0.002)) head++;
+  const want = (cab) => {
+    const W = [];
+    for (const g of [4.70, 0, -4.70]) for (const d of REF.DROP)
+      W.push([g + d[0], g + d[1], 0], [g - d[1], g - d[0], 0]);
+    for (const d of REF.DOORX) for (const sg of [-1, 1]) {
+      if (cab && d > 7 && sg > 0) continue;                       // 運転台側の扉1の前は窓なし
+      const a = d + sg * REF.POCKET[0], b = d + sg * REF.POCKET[1];
+      W.push([Math.min(a, b), Math.max(a, b), 1]);
     }
-  });
-  check('ランプの数(前照灯+尾灯)', 4, lamps, 0, '個');
-  check('尾灯の直径', REF.LAMP_D, REF.LAMP_D, 0.001);
-  check('前照灯の直径(一回り大)', REF.LAMP_D * HL_K, REF.LAMP_D * HL_K, 0.001);
-  check('前照灯の数', 2, head, 0, '個');
-  {   // 灯具の高さは床面(車体底面)から200mm
-    const ys = [...new Set(lampY.map((v) => +v.toFixed(4)))];
-    check('灯具の高さ', REF.LAMP_Y, ys.length === 1 ? ys[0] : null, 0.005);
-  }
-  // 灯具ケース・表示器は前面の曲面に沿うパネル。幅と「面から浮いていないか」を測る。
-  {
-    const bb2 = (g) => {
-      const P = g.attributes.position.array;
-      const r = { z: [1e9, -1e9], y: [1e9, -1e9], off: 0 };
-      for (let i = 0; i < P.length; i += 3) {
-        const x = Math.abs(P[i]), y = P[i + 1], z = P[i + 2];
-        if (z < r.z[0]) r.z[0] = z; if (z > r.z[1]) r.z[1] = z;
-        if (y < r.y[0]) r.y[0] = y; if (y > r.y[1]) r.y[1] = y;
-        r.off = Math.max(r.off, Math.abs(x - X.frontXAt(y, Math.abs(z) * Math.sign(z))));
+    for (const s of (cab ? [-1] : [-1, 1])) {
+      const a = s * REF.END_DROP[0], b = s * REF.END_DROP[1];
+      W.push([Math.min(a, b), Math.max(a, b), 0]);
+    }
+    for (const d of REF.DOORX) W.push([d - REF.DWIN[1], d - REF.DWIN[0], 2], [d + REF.DWIN[0], d + REF.DWIN[1], 2]);
+    if (cab) W.push([REF.CREW_WIN[0], REF.CREW_WIN[1], 3]);
+    return W;
+  };
+  for (const [nm, cab] of [['中間車', false], ['先頭車', true]]) {
+    const got = X.K8_WIN[cab ? 'cab' : 'mid'], exp = want(cab);
+    let bad = null;
+    if (got.length !== exp.length) bad = '数 ' + got.length + '/' + exp.length;
+    for (const e of exp) {
+      const m = got.find((w) => near(w[0], e[0], 0.002) && near(w[1], e[1], 0.002) && w[6] === e[2]);
+      if (!m && !bad) bad = '無い ' + e[0].toFixed(3) + '〜' + e[1].toFixed(3);
+      if (m) {
+        const z0 = e[2] === 3 ? REF.CREW_WIN[2] : REF.WZ[0], z1 = e[2] === 2 ? REF.DWZ1 : REF.WZ[1];
+        if ((!near(m[2], z0, 0.002) || !near(m[3], z1, 0.002)) && !bad) bad = '高さ ' + m[2] + '〜' + m[3];
       }
-      return r;
-    };
-    const lc = bb2(X.G_LCASE.f[0]), st = bb2(X.G_SIGNT.f), sd = bb2(X.G_SIGND.f);
-    check('ライトケースの幅', REF.LCASE[0], lc.z[1] - lc.z[0], 0.005);
-    check('ライトケースの高さ', REF.LCASE[1], lc.y[1] - lc.y[0], 0.005);
-    // 種別と行先は同じ大きさ(実地確認。仕様書[D]の400/600から揃えた)
-    check('種別表示器の幅', dz(600), st.z[1] - st.z[0], 0.005);
-    check('行先表示器の幅', dz(600), sd.z[1] - sd.z[0], 0.005);
-    /* 正面から見て左上=種別(赤)/右上=行先(白)。視線は-x・上は+y なので
-       右手は-z、すなわち車体ローカル+z が正面から見た"左"。 */
-    const stC = (st.z[0] + st.z[1]) / 2, sdC = (sd.z[0] + sd.z[1]) / 2;
-    pass('種別(赤)が窓の左上', stC > 0 && st.y[1] > REF.FRONTWIN[1] - 0.25,
-      'z=' + stC.toFixed(2) + ' 上端' + st.y[1].toFixed(2));
-    pass('行先(白)が窓の右上', sdC < 0 && sd.y[1] > REF.FRONTWIN[1] - 0.25,
-      'z=' + sdC.toFixed(2) + ' 上端' + sd.y[1].toFixed(2));
-    // 表示器はガラスの中(角丸で狭まる上隅からはみ出さない)
-    const inGlass = Math.max(
-      Math.abs(stC) + (st.z[1] - st.z[0]) / 2 - X.glassHalf(st.y[1]),
-      Math.abs(sdC) + (sd.z[1] - sd.z[0]) / 2 - X.glassHalf(sd.y[1]));
-    pass('表示器がガラス内に収まる', inGlass < 0, 'はみ出し' + inGlass.toFixed(3) + 'm');
-    // 前面は側方へ回り込む曲面なので、平らな板を置くと外側の端が車体に沈む。
-    // 面からの距離が一定(=曲面に沿っている)ことを確かめる。
-    const flat = Math.max(lc.off, st.off, sd.off);
-    pass('前面部品が曲面に沿う', flat < 0.030, '面から' + flat.toFixed(3) + 'm');
+    }
+    ok('側面の開口(' + nm + ')', bad === null, exp.length + '枚が実測どおり', bad === null ? got.length + '枚一致' : bad);
   }
-  // 排障器はジオメトリに焼き込んであるので前面ジオメトリの最下点で測る
-  const P = X.FACEGEO.f.attributes.position.array;
-  for (let i = 1; i < P.length; i += 3) if (P[i] < skirtLow) skirtLow = P[i];
-  check('排障器の下端', REF.SKIRT_BOT, skirtLow, 0.02);
+  // 戸袋窓の外側の"車端の戸袋窓"は中間車の両端(7.945〜8.225)に当たる
+  const midW = X.K8_WIN.mid;
+  const endP = midW.find((w) => near(w[0], REF.END_POCKET[0], 0.002) && near(w[1], REF.END_POCKET[1], 0.002));
+  ok('車端の戸袋窓', !!endP, REF.END_POCKET.join('〜'), endP ? '一致' : 'なし');
 }
 
-// (5c) パンタグラフ — すり板がトロリ線の高さに合い、車端から5mに載ること
+/* ---- 3. 台車・車輪(軌間と同じ定数から) ------------------------------------ */
 {
-  const car2 = X.makeCar('keio', true, false, false);
-  let shoe = null, minX = 1e9;
-  car2.traverse((o) => {
-    const g = o.geometry;
-    if (!g || !g.p || g.type !== 'Box') return;
-    if (near(g.p[2], X.PT.SHOEZ, 1e-6)) shoe = o.position;       // 舟体
-  });
-  const yf = K.ROOF + X.PT.BASE + X.PT.INS;
-  check('すり板の高さ=トロリ線', X.WIRE_TRO, shoe ? shoe.y + 0.055 : null, 0.02);
-  check('パンタの取付位置(車端から)', PANTO_FROM_END,
-    shoe ? K.LEN / 2 - Math.abs(shoe.x - X.PT.TOPX) : null, 0.05);
-  rows.push(['パンタの膝が中央', '0.000', X.PT.KNEX.toFixed(3), '-', 'm',
-    Math.abs(X.PT.KNEX) < 1e-9 ? 'OK' : 'NG']);
-  if (Math.abs(X.PT.KNEX) >= 1e-9) ng++;
-  /* 「く」の字:折れ目(膝)は台枠と舟体のちょうど中間の高さに置く。
-     ここが高いと上枠がほぼ水平になり「フ」の字に見える。 */
-  {
-    const aLow = Math.atan2(X.PT.KNEY, Math.abs(X.PT.KNEX - X.PT.PIVX)) * 180 / Math.PI;
-    const aUpp = Math.atan2(X.PT.TOPY - X.PT.KNEY, Math.abs(X.PT.KNEX - X.PT.TOPX)) * 180 / Math.PI;
-    pass('膝が台枠と架線の中間', Math.abs(X.PT.KNEY - X.PT.TOPY / 2) < 1e-6,
-      '膝' + X.PT.KNEY.toFixed(3) + 'm / 舟体' + X.PT.TOPY.toFixed(3) + 'm');
-    // 上下の腕がともに立っていること(どちらかが寝ると「フ」の字)
-    pass('パンタが「く」の字', aLow > 20 && aUpp > 20,
-      '下枠' + aLow.toFixed(0) + '° / 上枠' + aUpp.toFixed(0) + '°');
-    // 下枠と上枠は同じ長さ(指示)
-    const lLow = Math.hypot(X.PT.KNEX - X.PT.PIVX, X.PT.KNEY);
-    const lUpp = Math.hypot(X.PT.KNEX - X.PT.TOPX, X.PT.TOPY - X.PT.KNEY);
-    check('下枠と上枠の長さの差', 0, lLow - lUpp, 1e-6);
-    /* 台枠は腕の軸を載せるだけの大きさに絞る(以前は2.30×1.76mと過大だった)。
-       前後は腕の軸が載る長さ、左右は舟体より狭いこと。 */
-    const frL = X.PT.FRX * 2, frW = X.PT.ZBAS * 2;
-    pass('台枠が過大でない', frL <= 1.6 && frW < X.PT.SHOEZ && frL >= Math.abs(X.PT.PIVX) * 2 - 0.02,
-      '前後' + frL.toFixed(2) + 'm / 左右' + frW.toFixed(2) + 'm(舟体' + X.PT.SHOEZ.toFixed(2) + 'm)');
+  for (const [nm, geo, wb] of [['電動車', X.K8GEO.bogieM, REF.WB_M], ['付随車', X.K8GEO.bogieT, REF.WB_T]]) {
+    const pts = v4pts(geo);
+    // 車輪(半径0.43の円)の中心:z=0.43 の高さで最も外側の頂点群から x を拾う
+    const wheelBottom = range(pts, 2)[0];
+    ok('車輪がレール面に接する(' + nm + ')', near(wheelBottom, 0, 0.005), '0.000m', wheelBottom.toFixed(3) + 'm');
+    // 軸の位置:車輪の円周の頂点(中心から0.43)の x の中心を求める
+    const axles = [];
+    for (const bx of [-REF.BOGIE_X, REF.BOGIE_X]) for (const s of [-1, 1]) axles.push(bx + s * wb / 2);
+    let worst = 0;
+    for (const ax of axles) {
+      const c = pts.filter((p) => Math.abs(p[0] - ax) <= REF.WHEEL_R + 1e-3 && Math.abs(p[2] - REF.WHEEL_R) <= REF.WHEEL_R + 1e-3 &&
+        Math.abs(Math.hypot(p[0] - ax, p[2] - REF.WHEEL_R) - REF.WHEEL_R) < 2e-3);
+      if (c.length < 8) { worst = 9; continue; }
+    }
+    ok('軸距と台車中心(' + nm + ')', worst < 1, '台車中心±' + REF.BOGIE_X + '・軸距' + wb, worst < 1 ? '4軸とも車輪あり' : '車輪が無い軸あり');
+    // 車輪の左右位置=レール中心(軌間1372+レール頭幅)/2
+    const ys = pts.filter((p) => Math.abs(p[2] - REF.WHEEL_R) < 0.05 && Math.abs(Math.hypot(p[0] - axles[0], p[2] - REF.WHEEL_R) - REF.WHEEL_R) < 2e-3)
+      .map((p) => Math.abs(p[1]));
+    const yc = ys.length ? (Math.min(...ys) + Math.max(...ys)) / 2 : 0;
+    const want = (X.GAUGE + X.RAIL_W) / 2;
+    ok('車輪の左右位置(' + nm + ')', near(yc, want, 0.003), want.toFixed(3) + 'm(軌間1372)', yc.toFixed(3) + 'm');
   }
-  void yf; void minX;
 }
 
-/* (5d) パンタを載せる車両。編成の向きで j の意味が変わる(下りは j=0 が西端、
-   上りは j=0 が東端)ので、検証側でも西端基準に読み替えて突き合わせる。 */
+/* ---- 4. 冷房装置・パンタグラフ ----------------------------------------------- */
 {
-  const hasP = (c) => { let has = false;
-    c.traverse((o) => { if (o.geometry && o.geometry.p && near(o.geometry.p[2], X.PT.SHOEZ, 1e-6)) has = true; });
-    return has; };
-  let bad = null;
+  const ac = v4pts(X.K8GEO.ac);
+  ok('冷房装置の上端', near(range(ac, 2)[1], REF.AC_TOP), REF.AC_TOP + 'm(公表値)', range(ac, 2)[1].toFixed(3) + 'm');
+  ok('冷房装置の長さ', near(range(ac, 0)[1] - range(ac, 0)[0], REF.AC_L), REF.AC_L + 'm', (range(ac, 0)[1] - range(ac, 0)[0]).toFixed(3) + 'm');
+  // 舟体の上面=トロリ線の高さ(すり板が架線に接する)
+  const shoe = v4pts(X.K8GEO.panto.shoe);
+  const top = range(shoe.filter((p) => Math.abs(p[1]) <= 0.62 + 1e-6), 2)[1];   // 舟体(ホーンを除く)
+  ok('すり板が架線に接する', near(top, X.WIRE_TRO, 0.005), X.WIRE_TRO + 'm(トロリ線)', top.toFixed(3) + 'm');
+  const K = X.K8GEO.panto.knee;
+  ok('ひじは京王八王子方(+x)', K.knee[0] > K.hinge[0], 'ひじx > 付け根x', K.knee[0].toFixed(3) + ' > ' + K.hinge[0].toFixed(3));
+  const l1 = Math.hypot(K.knee[0] - K.hinge[0], K.knee[1] - K.hinge[1]);
+  const l2 = Math.hypot(K.head[0] - K.knee[0], K.head[1] - K.knee[1]);
+  ok('下枠・上枠の長さ(v4)', near(l1, 1.076, 1e-6) && near(l2, 1.34, 1e-6), '1.076 / 1.340m', l1.toFixed(3) + ' / ' + l2.toFixed(3) + 'm');
+}
+
+/* ---- 5. 編成:車番・パンタ・灯火・表示(走行列車3本と留置2本) ------------------ */
+{
+  // 走行列車:下り(dir>0)の先頭 j=0 は京王八王子方=新宿方から10両目
+  let badNum = null, badPanto = null, badPos = null, badLight = null;
   for (const t of X.trains) {
-    const got = t.cars.map((c, j) => hasP(c) ? (t.dir > 0 ? j + 1 : t.cars.length - j) : 0)
-      .filter((v) => v).sort((a, b) => a - b);
-    if (got.join(',') !== PANTO_CARS.join(',') && !bad)
-      bad = [(t.dir > 0 ? '下り' : '上り'), got.join('/') + '両目'];
-  }
-  rows.push(['パンタの搭載位置(西端から)', PANTO_CARS.join('/') + '両目',
-    bad ? bad.join(' ') : PANTO_CARS.join('/') + '両目', '-', '', bad ? 'NG' : 'OK']);
-  if (bad) ng++;
-}
-
-// (6) 屋根上 — 冷房装置は集中式1基(旧実装は3基で誤りだった)
-let ac = 0;
-car.traverse((o) => {
-  const g = o.geometry;
-  if (g && g.type === 'Box' && near(g.p[0], X.AC_L, 1e-6) && near(g.p[2], X.AC_W, 1e-6)) ac++;
-});
-check('冷房装置の数', 1, ac, 0, '基');
-check('冷房装置キセの長さ', AC_L_REF, X.AC_L, 1e-6);
-
-// (7) 旧「写真転写方式」の残骸が無いこと
-const dead = ['FTEX', 'FRONT_TEX', 'FACEMAT', 'buildCarGeo', 'carColor']
-  .filter((s) => X.__html.includes(s));
-rows.push(['旧写真転写方式の残存', 'なし', dead.length ? dead.join(',') : 'なし', '-', '', dead.length ? 'NG' : 'OK']);
-if (dead.length) ng++;
-
-/* ---- (8) 整合性:部品が車体からはみ出していないか ---------------------------
-   寸法が合っていても部品が車体を突き抜けていたら模型として破綻する。
-   ここは「実測値との照合」ではなく「自分自身との幾何的な整合」を見る。        */
-function pass(name, ok, detail) {
-  if (!ok) ng++;
-  rows.push([name, '整合', ok ? '整合' : detail, '-', '', ok ? 'OK' : 'NG']);
-}
-// 8-1 側面トリム(窓・扉・戸袋)が車体表面の近傍にあるか。
-//     浮きすぎ(30mm超)は面が離れて見え、埋まりすぎ(25mm超)は車体に飲まれて見えない。
-//     戸袋の開口は意図的に20mm凹ませてあるので、その範囲は許容する。
-{
-  let worst = 0, worstAt = null;
-  for (const key of ['mid', 'cf']) {
-    const cf = key === 'cf', g = X.TRIMGEO[key];
-    const P = g.attributes.position.array;
-    for (let i = 0; i < P.length; i += 3) {
-      const gap = Math.abs(P[i + 2]) - X.shapeAt(P[i], cf, false).hw;
-      if (gap < -0.025 || gap > 0.030) {
-        if (Math.abs(gap) > Math.abs(worst)) { worst = gap; worstAt = [key, P[i].toFixed(2), gap.toFixed(3)]; }
+    for (let j = 0; j < t.cars.length; j++) {
+      const c = t.cars[j], o = c.userData.k8, n = t.dir > 0 ? 10 - j : j + 1;
+      const F = Object.values(X.K8_FORMATIONS).find((f) => f.cars.indexOf(o.num) >= 0);
+      if (!F || F.cars.indexOf(o.num) !== n - 1) badNum = badNum || ('列車' + t.dir + ' j=' + j + ' ' + o.num);
+      const wantP = REF.PANTO_FROM_SHINJUKU.indexOf(n) >= 0;
+      if (o.panto !== wantP) badPanto = badPanto || ('j=' + j + ' 新宿方から' + n + '両目');
+      if (o.panto) {
+        // パンタは京王八王子方(西)の台車の上:車体ローカルx の符号=進行方向が西なら+
+        const px = c.userData.panto.position.x, want = (t.dir > 0 ? 1 : -1) * REF.BOGIE_X;
+        if (!near(px, want, 1e-6)) badPos = badPos || ('j=' + j + ' x=' + px);
       }
+      const wantL = j === 0 ? 'head' : (j === 9 ? 'tail' : 'off');
+      if (o.lights !== wantL) badLight = badLight || ('j=' + j + ' ' + o.lights);
     }
   }
-  pass('側面トリムの位置', worstAt === null, worstAt ? worstAt.join('/') + 'm' : '');
+  ok('車番の並び(新宿方から)', badNum === null, '8714F/8713F の順', badNum || '3本とも一致');
+  ok('パンタの車両', badPanto === null, '新宿方から2・4・5・8・9両目', badPanto || '3本とも一致');
+  ok('パンタの位置', badPos === null, '京王八王子方の台車上(±6.88)', badPos || '一致');
+  ok('灯火', badLight === null, '先頭=前照灯/最後尾=尾灯', badLight || '3本とも一致');
+  // 8714F は実測の編成表どおり
+  ok('8714F の車番', JSON.stringify(X.K8_FORMATIONS['8714F'].cars) === JSON.stringify(REF.CARS_8714F),
+    REF.CARS_8714F.join(' '), X.K8_FORMATIONS['8714F'].cars.join(' '));
+  // 先頭車の灯火は点灯材質、最後尾は尾灯が点く
+  const lead = X.trains[0].cars[0], tail = X.trains[0].cars[9];
+  const mats = (c) => { const s = new Set(); c.traverse((o) => { if (o.material) s.add(o.material); }); return s; };
+  ok('先頭の前照灯が点く', mats(lead).has(X.M_HL) && !mats(lead).has(X.M_TL), '前照灯=点灯/尾灯=消灯',
+    (mats(lead).has(X.M_HL) ? '前照灯点灯' : '前照灯消灯') + '・' + (mats(lead).has(X.M_TL) ? '尾灯点灯' : '尾灯消灯'));
+  ok('最後尾の尾灯が点く', mats(tail).has(X.M_TL) && !mats(tail).has(X.M_HL), '尾灯=点灯/前照灯=消灯',
+    (mats(tail).has(X.M_TL) ? '尾灯点灯' : '尾灯消灯') + '・' + (mats(tail).has(X.M_HL) ? '前照灯点灯' : '前照灯消灯'));
+  // 留置車は灯火も表示も消灯
+  let lit = 0;
+  for (const c of X.parkedCars) if (mats(c).has(X.M_HL) || mats(c).has(X.M_TL)) lit++;
+  ok('留置車は灯火を消す', lit === 0, '0両', lit + '両');
+  // 運転台は編成の外側を向く(最後尾のシェルは180°回す=v4 と同じ)
+  const rotOK = X.trains.every((t) => t.cars[0].userData.tail === false && t.cars[9].userData.tail === true);
+  ok('運転台が外を向く', rotOK, '先頭=+x/最後尾=180°', rotOK ? '3本とも' : '逆向きあり');
 }
-// 8-1b 客用扉の開口は、外板に穴を開けて DOOR_REC だけ奥まった戸袋になっていること。
-//      (扉を内側に置くだけでは車体シェルに隠れて見えない。穴が要る)
+
+/* ---- 6. 車両の置き方(レール面・連結面間) -------------------------------------- */
 {
-  const g = X.CARGEO.mid, P = g.attributes.position.array, C = g.attributes.color.array;
-  let mn = 1e9, mx = -1e9, n = 0;
-  for (let i = 0; i < P.length; i += 3) {
-    if (!colorIn([C[i], C[i + 1], C[i + 2]], [PAL.void])) continue;
-    n++;
-    const d = Math.abs(P[i + 2]);
-    if (d < mn) mn = d; if (d > mx) mx = d;
-  }
-  const okv = n > 0 && near(mx, K.W / 2, 0.002) && near(K.W / 2 - mn, X.DOOR_REC, 0.002);
-  rows.push(['戸袋が奥まっている', X.DOOR_REC.toFixed(3) + 'm',
-    n ? (K.W / 2 - mn).toFixed(3) + 'm' : '戸袋が無い', '-', '', okv ? 'OK' : 'NG']);
-  if (!okv) ng++;
+  // 車体の原点=レール頭頂面(v4 の z=0)。車輪の下端がレールの上に載る
+  const t = X.trains[0];
+  const c = t.cars[3];
+  const s = t.x - t.dir * 3 * REF.PITCH;
+  const want = X.railY(s) + X.RAIL_TOP;
+  ok('車体の原点=レール頭頂面', near(c.position.y, want, 0.02), want.toFixed(3) + 'm', c.position.y.toFixed(3) + 'm');
+  // 隣の車両との間(連結面間20.0 − 車体長19.5 = 0.5m)
+  const a = t.cars[0].position, b = t.cars[1].position;
+  const d = Math.hypot(a.x - b.x, a.z - b.z);
+  ok('車両の間隔', near(d, REF.PITCH, 0.05), REF.PITCH + 'm', d.toFixed(3) + 'm');
 }
-// 8-1c 客用扉は車体表面より"内側"を滑ること(外側だと車体に貼り付いて見える)
+
+/* ---- 7. 扉の開閉(ホーム側の面だけ) ------------------------------------------- */
 {
-  const c = X.makeCar('keio', false, false, false);
+  const c = X.trains[0].cars[4];
+  X.setCarDoors(c, 1, 1);
+  const U = c.userData.bodyMat.userData.k8.uni.uOpen.value;
+  const u1 = [U.x, U.y];
+  X.setCarDoors(c, 1, -1);
+  const u2 = [U.x, U.y];
   X.setCarDoors(c, 0, 1);
-  const dr = c.userData.doors;
-  const mats = dr.p.mats.concat(dr.m.mats);
-  const z = mats.map((m) => Math.abs(m.p.z));
-  const mx = Math.max(...z);
-  /* 左右の面は"別ジオメトリ"で作ること。負のスケールで鏡像にすると巻き順が
-     裏返り、法線が内側を向いて同じ材質でも陰影が変わる
-     (上りの北側/下りの南側の扉だけ色が違って見えた原因)。 */
-  {
-    const noFlip = mats.every((m) => m.s.x > 0 && m.s.y > 0 && m.s.z > 0);
-    const twoGeo = dr.p.geometry !== dr.m.geometry;
-    // +z面の板は+z側へ、-z面の板は-z側へ張り出していること(窓・框の浮き)
-    const gz = (g) => { const P = g.attributes.position.array; let m = 0;
-      for (let i = 2; i < P.length; i += 3) if (Math.abs(P[i]) > Math.abs(m)) m = P[i]; return m; };
-    const facing = gz(dr.p.geometry) > 0 && gz(dr.m.geometry) < 0;
-    rows.push(['扉の鏡像が負スケールでない', '別ジオメトリ',
-      noFlip && twoGeo && facing ? '別ジオメトリ/巻き順反転' : '負スケール', '-', '',
-      noFlip && twoGeo && facing ? 'OK' : 'NG']);
-    if (!(noFlip && twoGeo && facing)) ng++;
-  }
-  const okd = mx < K.W / 2 - 0.005;
-  rows.push(['扉が車体の内側', '<' + (K.W / 2).toFixed(3) + 'm', mx.toFixed(4) + 'm',
-    '-', '', okd ? 'OK' : 'NG']);
-  if (!okd) ng++;
-}
-// 8-1c2 扉の窓も角丸であること(戸袋窓と隅の処理を揃える)
-{
-  const g = X.G_DOORLEAF.p;
-  const P = g.attributes.position.array, C = g.attributes.color.array;
-  // 框(sash)の色を持つ頂点だけを見て、高さごとの半幅を測る
-  let ylo = 1e9, yhi = -1e9;
-  const byY = new Map();
-  for (let i = 0; i < P.length; i += 3) {
-    if (!colorIn([C[i], C[i + 1], C[i + 2]], [PAL.sash])) continue;
-    const y = Math.round(P[i + 1] * 1000) / 1000, x = Math.abs(P[i]);
-    if (y < ylo) ylo = y; if (y > yhi) yhi = y;
-    byY.set(y, Math.max(byY.get(y) || 0, x));
-  }
-  const at = (y) => { let best = null, bd = 1e9;
-    for (const [k, v] of byY) { const d = Math.abs(k - y); if (d < bd) { bd = d; best = v; } } return best; };
-  const mid = at((ylo + yhi) / 2), top = at(yhi);
-  const rounded = byY.size > 8 && top !== null && mid !== null && top < mid - 0.01;
-  rows.push(['扉の窓が角丸', '隅が丸い',
-    rounded ? '中央' + mid.toFixed(3) + '>上端' + top.toFixed(3) : '角のまま',
-    '-', 'm', rounded ? 'OK' : 'NG']);
-  if (!rounded) ng++;
-}
-// 8-1c3 同じ区画に並ぶ窓は WIN_CLOSE ぶん近い(柱の幅 PIER_MID から縮める)
-{
-  const w = X.sideWindows(false, false);
-  let gap = null;
-  for (let i = 0; i < w.length - 1; i++) {
-    const d = w[i + 1][0] - w[i][1];
-    if (d > 0 && d < 0.6 && (gap === null || d < gap)) gap = d;   // 同じ区画の隣どうし
-  }
-  check('区画内の窓の間隔', PIER_MID - WIN_CLOSE, gap, 0.002);
-}
-// 8-1d 戸袋窓の幅(客用窓と同じ中心・同じ高さで、幅だけ30%狭い)
-{
-  const pw = X.pocketWindows(false, false), sw2 = X.sideWindows(false, false);
-  const pwW = pw.length ? pw[0][1] - pw[0][0] : 0;
-  const base = (0.68 - 0.14) * POCKET_NARROW;
-  check('戸袋窓の幅', base, pwW, 0.005);
-  rows.push(['戸袋窓の数', String(sw2.length), String(pw.length), '-', '枚',
-    pw.length === 8 ? 'OK' : 'NG']);
-  if (pw.length !== 8) ng++;
-}
-// 8-2 前面の部品(窓・貫通扉・表示器)が前面の輪郭からはみ出していないか
-{
-  const P = X.FACEGEO.f.attributes.position.array;
-  let bad = null;
-  for (let i = 0; i < P.length; i += 3) {
-    const y = P[i + 1], z = Math.abs(P[i + 2]), lim = X.frontHalfAt(y);
-    if (y > K.ROOF - K.WHEEL * 0 + 0.001) { bad = bad || ['屋根超え', y.toFixed(3)]; }
-    if (z > lim + 0.001) bad = bad || ['側方はみ出し y=' + y.toFixed(2), (z - lim).toFixed(3) + 'm'];
-  }
-  pass('前面部品が輪郭内', bad === null, bad ? bad.join(' ') : '');
-}
-// 8-3 屋根上・床下の機器:車体幅の内側/レール面より上にあるか
-{
-  const car = X.makeCar('keio', true, false, true);   // パンタ付き先頭車
-  let overW = null, underRail = null, maxHalf = K.W / 2, maxTop = K.ROOF;
-  car.traverse((o) => {
-    const g = o.geometry;
-    if (!g || !g.p) return;
-    let hz, hy;
-    if (g.type === 'Box') { hz = g.p[2] / 2; hy = g.p[1] / 2; }
-    else if (g.type === 'Cyl') {                       // 回転で軸の向きが変わる
-      const r = Math.max(g.p[0], g.p[1]), h = g.p[2] / 2;
-      const axisY = Math.abs(o.rotation.x) < 1e-6 && Math.abs(o.rotation.z) < 1e-6;
-      hy = axisY ? h : r;
-      hz = Math.abs(o.rotation.x) > 1e-6 ? h : r;
-    } else return;
-    const z = Math.abs(o.position.z) + hz, lo = o.position.y - hy, hi = o.position.y + hy;
-    if (z > K.W / 2 + 0.001) overW = overW || [z.toFixed(3)];
-    if (lo < -0.001) underRail = underRail || [lo.toFixed(3)];
-    if (z > maxHalf) maxHalf = z;
-    if (hi > maxTop) maxTop = hi;
-  });
-  pass('機器が車体幅の内側', overW === null, overW ? '半幅' + overW + 'm' : '');
-  pass('機器がレール面より上', underRail === null, underRail ? '最下' + underRail + 'm' : '');
-  // 建築限界の余裕:高架橋の桁半幅は「最外軌道+2.45m」が下限(TEMPLATE.md 防御的設計)
-  const ok = maxHalf <= 2.34;
-  pass('桁幅への余裕(≤2.34m)', ok, maxHalf.toFixed(3) + 'm');
-  rows.push(['車両の最大半幅', '≤2.340', maxHalf.toFixed(3), '-', 'm', maxHalf <= 2.34 ? 'OK' : 'NG']);
-  rows.push(['パンタ折畳時の全高', '(参考)', maxTop.toFixed(3), '-', 'm', 'OK']);
-}
-// 8-3b 面の向きが揃っているか。符号付き体積で調べる。
-//      裏返った面があると体積がずれ、その面は裏面カリングで透けて見える。
-//      先頭車と最後尾車は鏡像なので体積は一致しなければならない
-//      (実際にこの検査で後面キャップの巻き順の誤りを検出した)。
-{
-  const vol = (g) => {
-    const P = g.attributes.position.array, I = g.index.array;
-    let v = 0;
-    for (let i = 0; i < I.length; i += 3) {
-      const a = I[i] * 3, b = I[i + 1] * 3, c = I[i + 2] * 3;
-      v += (P[a] * (P[b + 1] * P[c + 2] - P[b + 2] * P[c + 1])
-        - P[a + 1] * (P[b] * P[c + 2] - P[b + 2] * P[c])
-        + P[a + 2] * (P[b] * P[c + 1] - P[b + 1] * P[c])) / 6;
-    }
-    return v;
-  };
-  const vf = vol(X.CARGEO.cf), vr = vol(X.CARGEO.cr), vm = vol(X.CARGEO.mid);
-  pass('面の向きが揃う(前後で同体積)', Math.abs(vf - vr) < 0.05,
-    '差' + Math.abs(vf - vr).toFixed(3) + 'm3');
-  // 面が閉じているかは"符号付き体積が理論値と一致するか"で判定する。
-  // 面が欠けていたり裏返っていたりすると体積がずれる。
-  {
-    const hw = K.W / 2, dyy = K.ROOF - K.SHLD;
-    const R = (hw * hw + dyy * dyy) / (2 * dyy), cy = K.ROOF - R;
-    const ca = Math.acos((K.SHLD - cy) / R);
-    const area = K.W * (K.SHLD - K.FLOOR) + R * R * (ca - Math.sin(ca) * Math.cos(ca));
-    // 客用扉の戸袋は外板を DOOR_REC だけへこませてあるので、そのぶん差し引く
-    const doorA = K.DOORW * ((K.SHLD - 0.10) - (K.FLOOR + 0.06));
-    const want = area * K.LEN - doorA * X.DOOR_REC * 8;
-    const okv = Math.abs(vm - want) / want < 0.01;
-    rows.push(['車体が閉じている', want.toFixed(1) + 'm3', vm.toFixed(1) + 'm3', '1%', '',
-      okv ? 'OK' : 'NG']);
-    if (!okv) ng++;
-  }
-  // 参考:辺の接続。端部キャップと断面リングでyの刻みが違うためT字接合が残るが、
-  // 面自体は塞がっている(上の体積が理論値と一致することで確認できる)。
-  const openEdges = (geo) => {
-    const P = geo.attributes.position.array, I = geo.index.array;
-    const key = (i) => [P[i * 3], P[i * 3 + 1], P[i * 3 + 2]].map((v) => Math.round(v * 1e5)).join(',');
-    const id = new Map(), w = [];
-    for (let i = 0; i < P.length / 3; i++) {
-      const k = key(i);
-      if (!id.has(k)) id.set(k, id.size);
-      w.push(id.get(k));
-    }
-    const e = new Map();
-    for (let i = 0; i < I.length; i += 3) {
-      const t = [w[I[i]], w[I[i + 1]], w[I[i + 2]]];
-      for (let k = 0; k < 3; k++) {
-        const a = t[k], b = t[(k + 1) % 3];
-        e.set(a + '>' + b, (e.get(a + '>' + b) || 0) + 1);
-      }
-    }
-    let bad = 0;
-    for (const [k, v] of e) {
-      const [a, b] = k.split('>');
-      if (v !== 1 || (e.get(b + '>' + a) || 0) !== 1) bad++;
-    }
-    return bad;
-  };
-  rows.push(['T字接合の辺(参考)', '-', openEdges(X.CARGEO.mid) + '本', '-', '', 'OK']);
+  const u0 = [U.x, U.y];
+  ok('開くのは片面だけ', (u1[0] + u1[1] === 1) && (u2[0] + u2[1] === 1) && u1[0] !== u2[0],
+    '+z面と−z面で別の面', '+z→' + u1.join('/') + ' −z→' + u2.join('/'));
+  ok('閉じると両面とも0', u0[0] === 0 && u0[1] === 0, '0/0', u0.join('/'));
 }
 
-// 8-4 客用窓が扉と干渉していないか
-{
-  let clash = null;
-  for (const w of X.sideWindows(false, false))
-    for (const d of K.DOORX)
-      if (w[1] > d - K.DOORW / 2 && w[0] < d + K.DOORW / 2)
-        clash = clash || [w[0].toFixed(2) + '-' + w[1].toFixed(2)];
-  pass('客用窓と扉の非干渉', clash === null, clash ? '重なり ' + clash : '');
-}
-// 8-5 編成:連結面間20mに対し、車体と幌が隣の車両と干渉しないか
-{
-  const car = X.makeCar('keio', false, false, false);
-  let maxX = K.LEN / 2;
-  car.traverse((o) => {
-    const g = o.geometry;
-    if (!g || !g.p) return;
-    const hx = g.type === 'Box' ? g.p[0] / 2 : Math.max(g.p[0], g.p[1]);
-    if (Math.abs(o.position.x) + hx > maxX) maxX = Math.abs(o.position.x) + hx;
-  });
-  pass('編成内の非干渉', maxX <= K.PITCH / 2, '車端' + maxX.toFixed(3) + 'm > ' + (K.PITCH / 2) + 'm');
-}
-
-/* ---- 出力 ---- */
-const pad = (s, n) => String(s) + ' '.repeat(Math.max(0, n - [...String(s)].reduce((a, ch) => a + (ch.charCodeAt(0) > 0x2e80 ? 2 : 1), 0)));
-console.log('=== 京王8000系:実ジオメトリ ⇄ 実車実測値 自動検証 ===');
-console.log('(HTMLのスクリプトを実行し、生成されたBufferGeometryの頂点を直接測定)');
-console.log('');
-console.log(pad('項目', 22) + pad('基準', 14) + pad('モデル', 14) + pad('許容', 8) + pad('単位', 6) + '判定');
-for (const r of rows) console.log(pad(r[0], 22) + pad(r[1], 14) + pad(r[2], 14) + pad(r[3], 8) + pad(r[4], 6) + r[5]);
-console.log('');
-console.log('三角形数: 車体(hi)=' + X.CARGEO.cf.index.count / 3 +
-  ' / トリム=' + X.TRIMGEO.cf.index.count / 3 + ' / 前面=' + X.FACEGEO.f.index.count / 3);
-console.log('RESULT: ' + (ng ? 'FAIL(' + ng + '項目NG)' : 'PASS'));
+/* ---- 出力 ---------------------------------------------------------------------- */
+console.log('=== 京王8000系(v4):実ジオメトリ ⇄ 実測値 ===');
+const pad = (s, n) => s + ' '.repeat(Math.max(1, n - [...s].reduce((a, ch) => a + (ch.charCodeAt(0) > 0x2000 ? 2 : 1), 0)));
+console.log(pad('項目', 30) + pad('期待', 34) + pad('実測', 36) + '判定');
+for (const r of rows) console.log(pad(r[0], 30) + pad(r[1], 34) + pad(r[2], 36) + r[3]);
+console.log(ng ? '\nRESULT: FAIL(' + ng + '項目NG)' : '\nRESULT: PASS');
 process.exit(ng ? 1 : 0);

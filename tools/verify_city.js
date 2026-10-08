@@ -17,7 +17,7 @@ const X = require('./stub_three')(path,
   'PLAZA_S:PLAZA_S,PLAZA_OFF:PLAZA_OFF,SUBK:SUBK,SUBC:SUBC,' +
   'stepXRail:stepXRail,inoCars:inoCars,setaCars:setaCars,INO_LIM:INO_LIM,INO_CARS:INO_CARS,INO_PITCH:INO_PITCH,' +
   'INO_TRK:INO_TRK,SETA_LO:SETA_LO,SETA_HI:SETA_HI,SETA_CARS:SETA_CARS,SETA_PITCH:SETA_PITCH,' +
-  'XCAR:XCAR,CARGEO:CARGEO,CARGEO_LO:CARGEO_LO,TRIMGEO:TRIMGEO,FACEGEO:FACEGEO,' +
+  'XCAR:XCAR,K8GEO:K8GEO,' +
   'GAUGE_INO:GAUGE_INO,GAUGE_SETA:GAUGE_SETA,RAIL_W:RAIL_W');
 
 /* ---- 期待値(検証側が独立して持つ) ----------------------------------------
@@ -167,8 +167,11 @@ ok('樹木の数', T.length >= REF.MIN_TREES, '≥' + REF.MIN_TREES + '本', T.l
      (使い回すと井の頭線・世田谷線にまで京王8000系の前面が付く)。 */
   {
     const keio = new Set();
-    for (const src of [X.CARGEO, X.CARGEO_LO, X.TRIMGEO, X.FACEGEO])
-      for (const k in src) keio.add(src[k]);
+    // 8000系(v4)の幾何はすべて K8GEO に集約している(入れ子も含めて走査する)
+    const walk = (o) => { if (!o || typeof o !== 'object') return;
+      if (o.attributes) { keio.add(o); return; }
+      for (const k in o) walk(o[k]); };
+    walk(X.K8GEO);
     let bad = null;
     for (const c of X.inoCars.concat(X.setaCars)) {
       if (!c.userData || !c.userData.xcar) { bad = bad || ['専用モデルでない']; continue; }

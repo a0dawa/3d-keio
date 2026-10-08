@@ -1,18 +1,18 @@
 # -*- coding: utf-8 -*-
-"""京王8000系:HTML内の"諸元表"を基準値と照合する(ソースレベルの検査)。
+"""京王8000系:HTML内の"諸元表"を基準値と照合する(ソースレベルの検査)。③
 
   役割分担:
-    auto_check.py  … HTMLに書かれた数値そのものを検査する。実行しないので速く、
-                     表を書き換えた瞬間に落ちる。
-    verify_car.js  … HTMLを実行して"出来上がったジオメトリ"を測る。
-                     表は正しいのに生成コードが表を無視している、という食い違いを捕まえる。
-  両方あることで「表を直したのにモデルが追従していない」「モデルを直すために
-  表を書き換えてしまった」の双方を検出できる。
+    auto_check.py      … HTMLに書かれた数値そのものを検査する。実行しないので速く、
+                         表を書き換えた瞬間に落ちる。
+    verify_car.js      … HTMLを実行して"出来上がったジオメトリ"を測る。
+    verify_k8render.js … 実際に描いた画素を v4 の照合ツールで測る(帯・窓・前面)。
+  三つあることで「表を直したのにモデルが追従していない」「モデルを直すために
+  表を書き換えてしまった」「表も形も正しいのに塗り分けがずれている」を検出できる。
 
-  基準の出典:
-    [B] 実車写真の画素解析による実測値(元写真は失われたが記録は残る)
-    [D] 利用者提供の前面プロポーション仕様書[mm]
-    実地確認による調整(帯の下げ量 BAND_DROP / 灯具の拡大率 LAMP_K)
+  基準の出典(2026-10 差し替え):
+    reference/keio8000_v4/ref/keio8000_measured_v4.md
+    (RailFile.jp 8714編成の山側・海側の編成写真を 60px/m で測った値と前面写真の実測)
+    ※旧 [B] 写真実測・[D] 前面仕様書による車体は v4 に置き換えた。
 
   使い方: python3 tools/auto_check.py [keio_elevated_3d.html]
 """
@@ -20,181 +20,84 @@ import re
 import sys
 
 HTML = sys.argv[1] if len(sys.argv) > 1 else 'keio_elevated_3d.html'
-TOL = 0.02
 
-BAND_DROP = 364     # 実地確認による帯の下げ量[mm](0.350m相当)
-LAMP_K = 1.30       # 実地確認による灯具の拡大率
-RED_THICK = 1.44    # 側面の赤帯(仕様書150mmからの倍率)
-FRED_THICK = 1.56   # 前/後面の赤帯
-SIDE_RED_UP = 0.10  # 側面の赤帯だけ10cm上げる
-
-# [B] 実車写真の実測値[m]
-REF_VAL = {
-    '車体幅': 2.845,
-    '車体裾(床面)高さ': 0.95,
-    '肩の高さ': 3.15,
-    '屋根高さ': 3.64,
-    '軌間(レール内面間)': 1.372,
+# v4 の実測値[m](検証側が独立して持つ。HTML から読まない)
+REF_V4 = {
+    'LEN': 19.5, 'PITCH': 20.0, 'HWB': 1.385,
+    'Z_BOT': 1.007, 'Z_FLR': 1.147, 'Z_SH0': 3.387, 'Z_CROWN': 3.72,
+    'WZ0': 1.995, 'WZ1': 2.927, 'DWZ1': 2.908, 'DZ1': 3.061, 'DOOR_HW': 0.648,
+    'RED_UP': [1.650, 1.853], 'BLUE': [1.573, 1.609], 'RED_LO': [1.266, 1.520],
+    'MAKU': [3.198, 3.282], 'MAKU_END': 9.67, 'MAKU_CAB': 8.29, 'IVORY_X': 8.39,
+    'CREW': [8.527, 9.01], 'WRAP_X': 9.31, 'BOGIE_X': 6.88, 'AC_TOP': 4.055,
+    'DOORX': [-7.05, -2.35, 2.35, 7.05],
 }
-# [D] 仕様書の値[mm](実地確認の調整を反映)。mmのまま突き合わせるので換算誤差が入らない。
-REF_SPEC_MM = {
-    '京王ブルー帯 下端': 900 - BAND_DROP,
-    '京王ブルー帯 上端': 950 - BAND_DROP,
-    # 側面の赤帯は基準面(950-BAND_DROP)から SIDE_RED_UP 上げた位置に始まる。
-    # mm系の表では上げ量を扱えないので、上端は verify_car.js(実寸)側で見る。
-    '前面窓 下端': 1200 - BAND_DROP,      # 帯を下げたぶん窓を下へ広げる
-    '前面窓 上端': 2500,
-    'ガラス半幅': 1350,
-    '貫通扉 半幅': 400,
-    'ライトケース幅': 300 * LAMP_K,
-    'ランプ直径': 80 * LAMP_K,
-    '排障器 下端': -500,
+# 色(sRGB 0〜1)。v4 の材質の値
+REF_COLOR = {
+    'C_RED': (0.83, 0.02, 0.42),      # 京王レッド(帯)
+    'C_BLUE': (0.11, 0.17, 0.42),     # 京王ブルー(細線)
+    'C_IVORY': (0.90, 0.88, 0.80),    # 運転台部のアイボリー
 }
-
-
-SPY_MM = (3.640 - 0.950) / 2800.0    # [D]の1mmあたりの実寸[m](全高2800mm ⇔ 屋根-床)
+REF_FORM = {'8714F': ['8714', '8014', '8064', '8114', '8164', '8514', '8564', '8214', '8264', '8764']}
+REF_PANTO = [2, 4, 5, 8, 9]           # 新宿方から何両目(8714F で写真確認済み)
 
 
 def main():
     src = open(HTML, encoding='utf-8').read()
     ng = 0
 
-    # 実地調整の定数をHTMLから読み、式の評価に使う
-    env = {}
-    for name in ('BAND_DROP', 'LAMP_K', 'RED_THICK', 'FRED_THICK', 'SIDE_RED_UP'):
-        # 1行に複数宣言する場合があるので、区切りは ; か , のどちらでも拾う
-        m = re.search(r'\b%s\s*=\s*(-?[\d.]+)\s*[;,]' % name, src)
-        if not m:
-            print('NG: %s が見つからない' % name)
-            sys.exit(1)
-        env[name] = float(m.group(1))
-
-    def expr(pat, label):
-        """fy(900-BAND_DROP) のような式を取り出して評価する"""
-        m = re.search(pat, src)
-        if not m:
-            print('NG: %s が見つからない (%s)' % (label, pat))
-            sys.exit(1)
-        try:
-            return float(eval(m.group(1), {'__builtins__': {}}, dict(env)))
-        except Exception:
-            print('NG: %s の値を解釈できない: %r' % (label, m.group(1)))
-            sys.exit(1)
-
-    def val(pat, label):
-        m = re.search(pat, src)
-        if not m:
-            print('NG: %s が見つからない (%s)' % (label, pat))
-            sys.exit(1)
-        return float(m.group(1))
-
-    mdl_val = {
-        '車体幅': val(r'\bW:([\d.]+),', '車体幅'),
-        '車体裾(床面)高さ': val(r'\bFLOOR:([\d.]+),', '床面高さ'),
-        '肩の高さ': val(r'\bSHLD:([\d.]+),', '肩'),
-        '屋根高さ': val(r'\bROOF:([\d.]+),', '屋根'),
-        '軌間(レール内面間)': val(r'const GAUGE=([\d.]+);', '軌間'),
-    }
-    mdl_spec = {
-        '京王ブルー帯 下端': expr(r'const BLU=\[fy\(([^)]+)\)', 'BLU下端'),
-        '京王ブルー帯 上端': expr(r'const BLU=\[fy\([^)]+\),fy\(([^)]+)\)\]', 'BLU上端'),
-
-        '前面窓 下端': expr(r'const FWIN=\{B:fy\(([^)]+)\)', 'FWIN下端'),
-        '前面窓 上端': expr(r'const FWIN=\{B:fy\([^)]+\),\s*T:fy\(([^)]+)\)\}', 'FWIN上端'),
-        'ガラス半幅': expr(r'const GZ=fz\(([^)]+)\)', 'GZ'),
-        '貫通扉 半幅': expr(r'const DZ=fz\(([^)]+)\)', 'DZ'),
-        'ライトケース幅': expr(r'buildFacePanelGeo\(s,\s*LZ,fz\(([^)]+)\)', 'ケース幅'),
-        'ランプ直径': expr(r'G_LAMP=new THREE\.CylinderGeometry\(fz\(([^)]+)\)/2', 'ランプ径'),
-        '排障器 下端': expr(r'const SK_BOT=fy\(([^)]+)\)', 'SK_BOT'),
-    }
-
-    print('=== 京王8000系:諸元表 ⇄ 基準値(ソースレベル) ===')
-    print('%-18s %14s %14s %8s  %s' % ('項目[B] (m)', '実測', 'モデル', '差', '判定'))
-    for k, v in REF_VAL.items():
-        d = mdl_val[k] - v
-        ok = abs(d) <= TOL
+    def row(label, want, got, ok):
+        nonlocal ng
         ng += 0 if ok else 1
-        print('%-18s %14.3f %14.3f %8.3f  %s' % (k, v, mdl_val[k], d, 'OK' if ok else 'NG'))
+        print('%-22s %22s %22s  %s' % (label, want, got, 'OK' if ok else 'NG'))
 
-    # 側窓は「基準面+10cm→上下30cm切詰→拡大→下げ」という関係で決まる。式の形で確認する。
-    ok = ('WIN_REF+0.10+WIN_TRIM' in src) and ('WIN_GROW' in src) and ('WIN_DROP' in src)
-    ng += 0 if ok else 1
-    print('%-18s %14s %14s %8s  %s' % ('側窓の決め方', '基準+10cm/切詰/拡大/下げ',
-                                       '基準+10cm/切詰/拡大/下げ' if ok else '別の決め方', '-',
-                                       'OK' if ok else 'NG'))
-    # 戸袋窓は幅を30%狭めて角丸にする
-    ok = ('POCKET_NARROW' in src) and ('roundWindow(' in src)
-    ng += 0 if ok else 1
-    print('%-18s %14s %14s %8s  %s' % ('戸袋窓', '幅-30%・角丸',
-                                       '幅-30%・角丸' if ok else '未対応', '-',
-                                       'OK' if ok else 'NG'))
-    # 前/後面の赤帯は側面よりさらに下げる。青帯は同じ高さ。
-    m2 = re.search(r'const FRED_DROP=([\d.]+);', src)
-    ok = bool(m2) and abs(float(m2.group(1)) - 0.33) < 1e-9
-    ng += 0 if ok else 1
-    print('%-18s %14s %14s %8s  %s' % ('前面の赤帯の追加下げ', '0.33m',
-                                       (m2.group(1) + 'm') if m2 else 'なし', '-',
-                                       'OK' if ok else 'NG'))
-    # 灯具の高さは床面から200mm
-    ok = 'const LY=fy(200)' in src
-    ng += 0 if ok else 1
-    print('%-18s %14s %14s %8s  %s' % ('灯具の高さ', '床面+200mm',
-                                       '床面+200mm' if ok else '別の値', '-',
-                                       'OK' if ok else 'NG'))
-    # パンタグラフはシングルアーム型
-    ok = 'シングルアーム' in src and 'PIVX:-' in src
-    ng += 0 if ok else 1
-    print('%-18s %14s %14s %8s  %s' % ('パンタグラフ', 'シングルアーム',
-                                       'シングルアーム' if ok else '菱形', '-',
-                                       'OK' if ok else 'NG'))
-
-    print()
-    print('%-18s %14s %14s %8s  %s' % ('項目[D] (mm)', '仕様書', 'モデル', '差', '判定'))
-    for k, v in REF_SPEC_MM.items():
-        g = mdl_spec[k]
-        ok = abs(g - v) < 0.5
-        ng += 0 if ok else 1
-        print('%-18s %14.0f %14.0f %8.0f  %s' % (k, v, g, g - v, 'OK' if ok else 'NG'))
-
-    # 帯の並び:[D] §6 では青が下の細帯、赤が上の太帯。
-    # 実地確認により側面の赤帯だけ SIDE_RED_UP だけ上げてあるので、青帯の上端から
-    # その量だけ上に赤帯が始まり、青帯より太いことを mm 系で確かめる。
-    blu = (mdl_spec['京王ブルー帯 下端'], mdl_spec['京王ブルー帯 上端'])
-    up_mm = env['SIDE_RED_UP'] / SPY_MM          # 実寸[m] → 仕様書の mm 系へ
-    red_b = blu[1] + up_mm
-    red_t = red_b + 150 * env['RED_THICK']
-    ok = red_b > blu[1] and (red_t - red_b) > (blu[1] - blu[0])
-    ng += 0 if ok else 1
-    print()
-    print('%-18s %14s %14s %8s  %s' % ('帯の上下', '赤が上で太い',
-                                       '赤が上で太い' if ok else '不一致', '-', 'OK' if ok else 'NG'))
-    # 前/後面の赤帯は側面より太い(指示:前後+30% / 側面+20%)
-    ok = env['FRED_THICK'] > env['RED_THICK']
-    ng += 0 if ok else 1
-    print('%-18s %14s %14s %8s  %s' % ('前/後面の赤帯',
-                                       '側面より太い',
-                                       '%.2f>%.2f' % (env['FRED_THICK'], env['RED_THICK'])
-                                       if ok else '細い', '-', 'OK' if ok else 'NG'))
-
-    # BANDS 表が下から順に隙間なく並んでいること(境界が同じ式で書かれているか)
-    bands = [(a.strip(), b.strip(), c) for a, b, c
-             in re.findall(r"\{y0:([^,]+),\s*y1:([^,]+),\s*c:'(\w+)'\s*\}", src)]
-    if not bands:
-        print('NG: BANDS 表が見つからない')
+    print('=== 京王8000系(v4):諸元表 ⇄ 実測値(ソースレベル) ===')
+    print('%-22s %22s %22s  %s' % ('項目', '実測', 'モデル', '判定'))
+    # K8 表の中身(1か所に集約されていること)
+    m = re.search(r'const K8=\{([\s\S]*?)\n\};', src)
+    if not m:
+        print('NG: K8 表が見つからない')
         sys.exit(1)
-    gap = [i for i in range(1, len(bands)) if bands[i][0] != bands[i - 1][1]]
-    ok = not gap
-    ng += 0 if ok else 1
-    print('%-18s %14s %14s %8s  %s' % ('BANDSの連続性', '隙間なし',
-                                       '隙間なし' if ok else '段%s で不連続' % gap, '-',
-                                       'OK' if ok else 'NG'))
-    # 下から 腰板/青帯/(隙間)/赤帯/幕板/屋根。赤帯を上げたぶんの隙間が1段入る。
-    seq = [b[2] for b in bands]
-    want = ['stl', 'navy', 'stl', 'red', 'stl', 'roof']
-    ok = seq == want
-    ng += 0 if ok else 1
-    print('%-18s %14s %14s %8s  %s' % ('帯の並び順', '/'.join(want),
-                                       '/'.join(seq), '-', 'OK' if ok else 'NG'))
+    k8 = m.group(1)
+    for key, want in REF_V4.items():
+        mm = re.search(r'\b%s:(\[[^\]]*\]|-?[\d.]+)' % key, k8)
+        if not mm:
+            row(key, str(want), 'なし', False)
+            continue
+        txt = mm.group(1)
+        got = [float(v) for v in txt.strip('[]').split(',')] if txt.startswith('[') else float(txt)
+        if isinstance(want, list):
+            ok = isinstance(got, list) and len(got) == len(want) and all(abs(a - b) < 1e-9 for a, b in zip(got, want))
+        else:
+            ok = not isinstance(got, list) and abs(got - want) < 1e-9
+        row(key, str(want), str(got), ok)
+
+    # 軌間(レールの敷設と車輪位置が同じ定数から決まる)
+    mm = re.search(r'const GAUGE=([\d.]+);', src)
+    row('軌間(レール内面間)', '1.372', mm.group(1) if mm else 'なし', bool(mm) and abs(float(mm.group(1)) - 1.372) < 1e-9)
+
+    # 帯の色(シェーダの定数は k8lin(sRGB) で書く)
+    for key, (r, g, b) in REF_COLOR.items():
+        mm = re.search(r"'#define %s '\+c3\(k8lin\(([^)]*)\)\)" % key, src)
+        got = tuple(float(v) for v in mm.group(1).split(',')) if mm else None
+        ok = got is not None and all(abs(a - b2) < 1e-9 for a, b2 in zip(got, (r, g, b)))
+        row('色 ' + key, '%.2f,%.2f,%.2f' % (r, g, b), ('%.2f,%.2f,%.2f' % got) if got else 'なし', ok)
+
+    # 編成(車番の並び・パンタの位置)
+    mm = re.search(r"'8714F':\{cars:\[([^\]]*)\],\s*panto:\[([^\]]*)\]", src)
+    cars = [c.strip().strip("'") for c in mm.group(1).split(',')] if mm else []
+    panto = [int(v) for v in mm.group(2).split(',')] if mm else []
+    row('8714F の車番', ' '.join(REF_FORM['8714F'][:3]) + '…', ' '.join(cars[:3]) + '…', cars == REF_FORM['8714F'])
+    row('パンタ(新宿方から)', str(REF_PANTO), str(panto), panto == REF_PANTO)
+
+    # 前面の輪郭・開口の作り方が v4 と同じこと(関数がそろっている)
+    for label, pat in (
+        ('断面 prof_rows', r'const K8_ROWS=\(function\(\)'),
+        ('前面の平面形 nose_x', r'function k8nose\(z,s,hw\)'),
+        ('開口の一覧 side_windows', r'function k8SideWindows\(cab\)'),
+        ('塗り分けはシェーダ', r'const K8_FRAG_MAIN='),
+    ):
+        found = re.search(pat, src) is not None
+        row(label, 'あり', 'あり' if found else 'なし', found)
 
     # ---- 色管理:著作値(sRGB)→リニア→トーンマッピング→sRGB出力 の経路 ----
     # 変換を通し忘れた色はその面だけ不自然に明るくなる。ソースで漏れを探す。
@@ -224,9 +127,8 @@ def main():
     print('%-18s %14s %14s %8s  %s' % ('テクスチャの色空間', 'canvasTexに集約',
                                        'canvasTexに集約' if ok else '%d箇所が直接生成' % ctex,
                                        '-', 'OK' if ok else 'NG'))
-    # 頂点カラー・インスタンスカラーもリニアへ変換していること
-    ok = ('const PAL=(function(){' in src and 'PAL_SRGB[k].map(s2l)' in src
-          and 'setHex(' not in src)
+    # 頂点カラー・インスタンスカラーもリニアへ変換していること(車両は k8lin を通す)
+    ok = ('const k8lin=(r,g,b)=>[s2l(r),s2l(g),s2l(b)]' in src and 'setHex(' not in src)
     ng += 0 if ok else 1
     print('%-18s %14s %14s %8s  %s' % ('頂点/インスタンス色', 'リニアへ変換',
                                        'リニアへ変換' if ok else '未変換あり', '-',
@@ -241,13 +143,18 @@ def main():
                                        '%d面' % (cb.group(1).count('strip(') if cb else 0),
                                        '-', 'OK' if ok else 'NG'))
 
-    # 客用扉の開口は外板に"穴"を開けて奥まった戸袋にすること。
-    # 外板に穴が無いと、扉を内側に置いても車体シェルに隠れて見えない。
-    ok = ('DOOR_REC=' in src) and ('inDoor(' in src) and ('PAL.void' in src)
+    # 客用扉:戸は外板の内側を戸袋へ滑る。シェーダで「隙間=穴」「戸袋窓の奥=戸」を描く。
+    # 戸と一緒に扉窓のガラスも動く(頂点シェーダ)。
+    ok = ('inGap' in src) and ('behindLeaf' in src) and ('function k8DoorGlassMat' in src)
     ng += 0 if ok else 1
-    print('%-18s %14s %14s %8s  %s' % ('客用扉の開口', '外板に穴+戸袋',
-                                       '外板に穴+戸袋' if ok else '未対応', '-',
+    print('%-18s %14s %14s %8s  %s' % ('客用扉の開閉', '隙間=穴/戸袋の戸',
+                                       '隙間=穴/戸袋の戸' if ok else '未対応', '-',
                                        'OK' if ok else 'NG'))
+    # ガラスは乗算(v4 の透過の色を掛ける)。加算や半透明だと白い背景が白いまま透ける
+    ok = re.search(r'glass:mkMat\([\s\S]{0,200}?blending:THREE\.MultiplyBlending', src) is not None
+    ng += 0 if ok else 1
+    print('%-18s %14s %14s %8s  %s' % ('窓ガラス', '乗算で色を掛ける',
+                                       '乗算' if ok else '別の合成', '-', 'OK' if ok else 'NG'))
     # 開く面(ホーム側)は姿勢から計算すること(符号を決め打つと左右が逆になる)
     ok = 'localZSign(' in src
     ng += 0 if ok else 1
