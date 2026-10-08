@@ -175,7 +175,7 @@ async function runWorker(id, pw, exe, shots, log) {
   await page.addInitScript(`(()=>{let a=${OPT.seed}>>>0;Math.random=()=>{
     a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);
     t=t+Math.imul(t^t>>>7,61|t)^t;return ((t^t>>>14)>>>0)/4294967296;};})()`);
-  await page.goto('file://' + PAGE);
+  await page.goto('file://' + PAGE, { timeout: 180000 });   // 街並みの生成に時間がかかる
   await page.waitForFunction('window.CINE!==undefined', { timeout: 180000 });
   await page.evaluate(PAGE_API.replace('__W', OPT.w).replace('__H', OPT.h)
     .replace('__SS', OPT.ss).replace('__FPS', OPT.fps).replace('__Q', OPT.quality));
@@ -224,7 +224,7 @@ async function runWorker(id, pw, exe, shots, log) {
     args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader',
            '--disable-dev-shm-usage', '--no-sandbox'] });
   const p0 = await b0.newPage({ viewport: { width: 64, height: 64 } });
-  await p0.goto('file://' + PAGE);
+  await p0.goto('file://' + PAGE, { timeout: 180000 });
   await p0.waitForFunction('window.CINE!==undefined', { timeout: 180000 });
   const stations = await p0.evaluate(() => CINE.stations.map((s) => ({ n: s.n, x: s.x })));
   await b0.close();
