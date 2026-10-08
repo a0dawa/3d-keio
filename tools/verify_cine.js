@@ -24,7 +24,7 @@ const X = require('./stub_three')(path,
   'MAT:MAT, CITY:CITY, STA:STA, frame:frame, railY:railY, mainOff:mainOff,' +
   'SKY:()=>SKY, SKY_TEX:SKY_TEX, skyDome:skyDome, env:()=>scene.environment,' +
   'sunFollow:sunFollow, SH_MAP:SH_MAP, DOM:DOM, srgb:srgb, zRunDown:zRunDown,' +
-  'NIGHT:NIGHT, NIGHT_STAT:NIGHT_STAT, PLATS:PLATS');
+  'NIGHT:NIGHT, NIGHT_STAT:NIGHT_STAT, PLATS:PLATS, trains:trains, stopPosOf:stopPosOf, CAR_HALF:CAR_HALF');
 
 /* ---- 期待値(検証側が独立して持つ) ---------------------------------------- */
 const REF = {
@@ -420,6 +420,43 @@ const TPROP = {};
   ok('夜は雪が光らない', ngtL < dayL * 0.6, '昼の6割未満', ngtL.toFixed(3) + ' / ' + dayL.toFixed(3));
   ok('雪は影の対象外', F.snow.p.castShadow !== true, 'castShadowなし', String(F.snow.p.castShadow === true));
   C.setTime('noon'); C.setSeason('summer');
+}
+
+/* ---- 5c. 駅のフォーカスの列車(到着/発車) -----------------------------------
+   10秒のカットの中で列車が駅へ滑り込む/駅を出ていくこと。見下ろす画では停車中の
+   列車は上屋に隠れるので、カットの中で十分に動く(MOVE 以上)ことを見る。
+   到着はその駅に止まること(カットの後でよい)、発車はその駅から離れていくこと。
+   同じ線路に別の列車が重ならないこと。 */
+{
+  const SHOT = 10, DT = 1 / 12, MOVE = 80;    // カットの長さ[秒]・最低限の動き[m](検証側の値)
+  let badA = null, badD = null, badO = null, n = 0;
+  for (let i = 0; i < X.STA.length; i++) for (const dir of [1, -1]) {
+    const nm = X.STA[i].n + (dir > 0 ? '下り' : '上り');
+    // 到着
+    let t = C.stage(i, 'arrive', dir);
+    if (!t) { badA = badA || nm + ' 列車なし'; continue; }
+    let x0 = t.x;
+    for (let k = 0; k < SHOT / DT; k++) C.step(DT);
+    const movedA = (t.x - x0) * dir;
+    let stopped = false;
+    for (let k = 0; k < 20 / DT && !stopped; k++) { C.step(DT); if (t.st === 'dwell') stopped = t.atSt === X.STA[i]; }
+    if (!(movedA >= MOVE)) badA = badA || nm + ' 動きが小さい ' + movedA.toFixed(0) + 'm';
+    else if (!stopped) badA = badA || nm + ' その駅に止まらない';
+    for (const q of X.trains) if (q !== t && q.dir === dir && Math.abs(q.x - t.x) < 300)
+      badO = badO || nm + ' 2本が重なる';
+    // 発車
+    t = C.stage(i, 'depart', dir);
+    x0 = t.x;
+    const stopS = X.stopPosOf(X.STA[i], dir) - dir * X.CAR_HALF;
+    const away0 = (x0 - stopS) * dir;
+    for (let k = 0; k < SHOT / DT; k++) C.step(DT);
+    const movedD = (t.x - x0) * dir;
+    if (!(movedD >= MOVE) || !(away0 >= 0 && away0 < 60)) badD = badD || nm + ' 動き' + movedD.toFixed(0) + 'm/駅から' + away0.toFixed(0) + 'm';
+    n++;
+  }
+  ok('到着:ホームへ滑り込む', badA === null, MOVE + 'm以上動き、その駅に止まる', badA || n + '通り');
+  ok('発車:駅を出ていく', badD === null, '停止位置の直後から' + MOVE + 'm以上', badD || n + '通り');
+  ok('同じ線路に2本重ならない', badO === null, '300m以内に同じ向きなし', badO || 'なし');
 }
 
 /* ---- 6. 駅のフォーカス ---------------------------------------------------- */

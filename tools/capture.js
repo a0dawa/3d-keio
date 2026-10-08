@@ -59,6 +59,8 @@ const OPT = {
   chromium: opt('chromium', null),
   ffmpeg: String(opt('ffmpeg', 'ffmpeg')),
   keepFrames: !!opt('keep', false),
+  crf: +opt('crf', 26),          // H.264 の画質(小さいほど高画質。高画質版は18前後)
+  preset: String(opt('preset', 'medium')),
   dry: !!opt('dry', false),     // 絵コンテだけ出して撮らない
 };
 
@@ -108,6 +110,7 @@ const LOOK = [
 ];
 const FRONT_SHARE = 0.55;    // 駅間のうち前面展望が受け持つ割合(残りは俯瞰)
 
+let EVENTS = [];                 // 列車の置き直し(コマ番号・駅・向き・到着/発車)
 function storyboard(stations) {
   const S = stations.slice(OPT.staFrom, Math.min(OPT.staTo + 1, stations.length));
   const shots = [];
@@ -115,8 +118,12 @@ function storyboard(stations) {
   const push = (o) => { o.f0 = frame; frame += o.n; shots.push(o); };
   for (let i = 0; i < S.length; i++) {
     const look = LOOK[(OPT.staFrom + i) % LOOK.length];
+    /* 駅のフォーカスには列車の到着か発車を入れる(CINE.stage)。向きと到着/発車は
+       駅の番号で決めて、下り到着→上り到着→下り発車→上り発車…と一巡させる */
+    const g = OPT.staFrom + i;
     push({ kind: 'station', i: i, sta: S[i], time: look[0], season: look[1],
-           n: Math.round(OPT.dwell * OPT.fps), main: S[i].n });
+           n: Math.round(OPT.dwell * OPT.fps), main: S[i].n,
+           stage: { i: g, dir: g % 2 === 0 ? 1 : -1, mode: Math.floor(g / 2) % 2 === 0 ? 'arrive' : 'depart' } });
     if (i + 1 < S.length) {
       const a = S[i].x, b = S[i + 1].x, mid = a + (b - a) * FRONT_SHARE;
       push({ kind: 'front', sta: S[i], time: look[0], season: look[1],
@@ -124,17 +131,19 @@ function storyboard(stations) {
              main: S[i].n + ' → ' + S[i + 1].n });   // 前面展望は表記しない(利用者指示)
       push({ kind: 'aerial', sta: S[i], time: look[0], season: look[1],
              s0: mid, s1: b, n: Math.round(OPT.airSec * OPT.fps),
-             main: S[i].n + ' → ' + S[i + 1].n, sub2: '俯瞰展望' });
+             main: S[i].n + ' → ' + S[i + 1].n });   // 俯瞰展望も表記しない(利用者指示)
     }
   }
-  return { shots, total: frame };
+  // 列車の置き直しは"コマ番号で決まる出来事"。どのワーカも同じ時刻に同じ順で適用する
+  const events = shots.filter((o) => o.stage).map((o) => Object.assign({ frame: o.f0 }, o.stage));
+  return { shots, total: frame, events };
 }
 
 /* ---- 4. ページ側で動かす本体 ----------------------------------------------
    ・tTo(k) … コマ k の世界へ追いつく(必ず同じ dt で刻む=再現する)
    ・grab() … 1枚描いて字幕を焼き、JPEGのデータURLを返す             */
 const PAGE_API = `(() => {
-  const W = __W, H = __H, SS = __SS, FPS = __FPS, Q = __Q;
+  const W = __W, H = __H, SS = __SS, FPS = __FPS, Q = __Q, EVENTS = __EVENTS, done = {};
   const cv = document.querySelector('canvas');
   const c2 = document.createElement('canvas'); c2.width = W; c2.height = H;
   const cx = c2.getContext('2d');
@@ -142,7 +151,14 @@ const PAGE_API = `(() => {
   let worldFrame = 0;
   window.__cine = {
     begin(){ CINE.begin(); CINE.setSize(W*SS, H*SS); CINE.caption('',''); },
-    tTo(k){ while(worldFrame < k){ CINE.step(1/FPS); worldFrame++; } return worldFrame; },
+    /* コマ k の世界へ追いつく。途中のコマに置き直し(EVENTS)があれば、そのコマを進める
+       前に適用する。適用は世界の時間で決まるので、どのワーカがどのカットを撮っても同じ */
+    tTo(k){
+      const apply = () => { for (const e of EVENTS) if (e.frame === worldFrame && !done[e.frame]) {
+        CINE.stage(e.i, e.mode, e.dir); done[e.frame] = true; } };
+      while(worldFrame < k){ apply(); CINE.step(1/FPS); worldFrame++; }
+      apply(); return worldFrame;
+    },
     grab(main, sub){
       CINE.render();
       cx.drawImage(cv, 0, 0, W, H);     // SS倍で描いた画を出力の大きさへ縮める
@@ -178,7 +194,8 @@ async function runWorker(id, pw, exe, shots, log) {
   await page.goto('file://' + PAGE, { timeout: 180000 });   // 街並みの生成に時間がかかる
   await page.waitForFunction('window.CINE!==undefined', { timeout: 180000 });
   await page.evaluate(PAGE_API.replace('__W', OPT.w).replace('__H', OPT.h)
-    .replace('__SS', OPT.ss).replace('__FPS', OPT.fps).replace('__Q', OPT.quality));
+    .replace('__SS', OPT.ss).replace('__FPS', OPT.fps).replace('__Q', OPT.quality)
+    .replace('__EVENTS', JSON.stringify(EVENTS)));
   await page.evaluate(([shadow]) => { window.__cine.begin(); CINE.setShadow(shadow); }, [OPT.shadow]);
 
   let done = 0;
@@ -229,7 +246,9 @@ async function runWorker(id, pw, exe, shots, log) {
   const stations = await p0.evaluate(() => CINE.stations.map((s) => ({ n: s.n, x: s.x })));
   await b0.close();
 
-  const { shots, total } = storyboard(stations);
+  const { shots, total, events } = storyboard(stations);
+  EVENTS = events;
+  console.log('列車    : 駅のフォーカス ' + events.length + 'カットに到着/発車を入れる');
   console.log('駅     : ' + stations.length + '(' + OPT.staFrom + '〜'
     + Math.min(OPT.staTo, stations.length - 1) + 'を撮る)');
   console.log('画      : ' + shots.length + 'カット / ' + total + '枚 / '
@@ -256,7 +275,7 @@ async function runWorker(id, pw, exe, shots, log) {
   /* ---- 6. ffmpeg でまとめる ---- */
   const mp4 = path.join(OUT, 'keio_3d_sample.mp4');
   const args = ['-y', '-framerate', String(OPT.fps), '-i', path.join(FRM, 'f%06d.jpg'),
-    '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'medium', '-crf', '26',
+    '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', OPT.preset, '-crf', String(OPT.crf),
     '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2', '-movflags', '+faststart', mp4];
   const r = spawnSync(OPT.ffmpeg, args, { encoding: 'utf8' });
   if (r.status !== 0) {
