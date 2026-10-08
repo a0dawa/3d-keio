@@ -62,6 +62,9 @@ const OPT = {
   crf: +opt('crf', 26),          // H.264 の画質(小さいほど高画質。高画質版は18前後)
   preset: String(opt('preset', 'medium')),
   dry: !!opt('dry', false),     // 絵コンテだけ出して撮らない
+  // 続きから撮る。世界はコマ番号だけで決まるので、出来ているコマ(JPEGの終端まで
+  // 書けているもの)を飛ばしても映像は変わらない。コンテナの再起動で止まったとき用
+  resume: !!opt('resume', false),
 };
 
 /* ---- 1. 作業用ページを作る(CDNの three を手元の写しへ差し替える) ---------- */
@@ -203,6 +206,7 @@ async function runWorker(id, pw, exe, shots, log) {
     await page.evaluate(([t, s]) => { CINE.setTime(t); CINE.setSeason(s); }, [sh.time, sh.season]);
     const t0 = Date.now();
     for (let k = 0; k < sh.n; k++) {
+      if (sh.skip && sh.skip.has(k)) continue;
       const u = sh.n > 1 ? k / (sh.n - 1) : 0;
       const data = await page.evaluate(([sh, u, k, far], ) => {
         window.__cine.tTo(k);
@@ -219,9 +223,10 @@ async function runWorker(id, pw, exe, shots, log) {
       fs.writeFileSync(path.join(FRM, 'f' + String(sh.f0 + k).padStart(6, '0') + '.jpg'),
         Buffer.from(b64, 'base64'));
     }
-    done += sh.n;
-    log('W' + id + ' ' + sh.kind + ' ' + sh.main + ' ' + sh.n + '枚 '
-      + ((Date.now() - t0) / sh.n).toFixed(0) + ' ms/枚');
+    const nNew = sh.n - (sh.skip ? sh.skip.size : 0);
+    done += nNew;
+    log('W' + id + ' ' + sh.kind + ' ' + sh.main + ' ' + nNew + '枚 '
+      + ((Date.now() - t0) / Math.max(1, nNew)).toFixed(0) + ' ms/枚');
   }
   await browser.close();
   return done;
@@ -255,21 +260,43 @@ async function runWorker(id, pw, exe, shots, log) {
     + (total / OPT.fps).toFixed(1) + '秒');
   if (OPT.dry) return;
 
+  // 続きから撮るときは、終端(FF D9)まで書けているコマを飛ばす。
+  // 書きかけで止まったコマは終端が無いので撮り直しになる
+  const frameOk = (f) => {
+    try {
+      const b = fs.readFileSync(f);
+      return b.length > 4 && b[0] === 0xff && b[1] === 0xd8 && b[b.length - 2] === 0xff && b[b.length - 1] === 0xd9;
+    } catch (e) { return false; }
+  };
+  let todo = shots;
+  if (OPT.resume) {
+    for (const sh of shots) {
+      sh.skip = new Set();
+      for (let k = 0; k < sh.n; k++)
+        if (frameOk(path.join(FRM, 'f' + String(sh.f0 + k).padStart(6, '0') + '.jpg'))) sh.skip.add(k);
+    }
+    todo = shots.filter((s) => s.skip.size < s.n);
+    const left = todo.reduce((a, s) => a + s.n - s.skip.size, 0);
+    console.log('続き    : 残り ' + todo.length + 'カット / ' + left + '枚');
+  }
+
   // ワーカへカットを配る。世界の時間はコマ番号で決まるので、どう配っても映像は同じ。
-  // 早送りの手間を抑えるため、連続するカットは同じワーカへまとめる。
-  const nW = Math.max(1, Math.min(OPT.workers, shots.length));
+  // 早送りの手間を抑えるため、連続するカットは同じワーカへまとめる(撮る枚数で等分)。
+  const nW = Math.max(1, Math.min(OPT.workers, todo.length));
   const lots = Array.from({ length: nW }, () => []);
-  const per = Math.ceil(shots.length / nW);
-  shots.forEach((s, i) => lots[Math.min(nW - 1, Math.floor(i / per))].push(s));
+  const cost = (s) => s.n - (s.skip ? s.skip.size : 0);
+  const per = Math.max(1, todo.reduce((a, s) => a + cost(s), 0) / nW);
+  let acc = 0;
+  todo.forEach((s) => { lots[Math.min(nW - 1, Math.floor((acc + cost(s) / 2) / per))].push(s); acc += cost(s); });
 
   const t0 = Date.now();
   let shot = 0;
   const log = (m) => {
     shot++;
     const el = (Date.now() - t0) / 1000;
-    console.log('[' + el.toFixed(0) + 's ' + shot + '/' + shots.length + '] ' + m);
+    console.log('[' + el.toFixed(0) + 's ' + shot + '/' + todo.length + '] ' + m);
   };
-  await Promise.all(lots.map((l, i) => runWorker(i + 1, pw, exe, l, log)));
+  await Promise.all(lots.filter((l) => l.length).map((l, i) => runWorker(i + 1, pw, exe, l, log)));
   console.log('撮影 ' + ((Date.now() - t0) / 1000).toFixed(0) + ' 秒');
 
   /* ---- 6. ffmpeg でまとめる ---- */
