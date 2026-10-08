@@ -62,7 +62,7 @@ function findChromium() {
   const errs = [];
   p.on('pageerror', (e) => errs.push(e.message));
   p.on('console', (m) => { if (m.type() === 'error') errs.push(m.text()); });
-  await p.goto('file://' + page_html);
+  await p.goto('file://' + page_html, { timeout: 180000 });
   await p.waitForFunction('window.K8API!==undefined', { timeout: 180000 });
   const shots = await p.evaluate(() => {
     CINE.begin();
