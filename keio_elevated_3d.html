@@ -3760,6 +3760,38 @@ const CINE=(function(){
     aimAt(p.x+r*Math.sin(ph)*Math.cos(th), y+r*Math.cos(ph), p.z+r*Math.sin(ph)*Math.sin(th),
           p.x, y+5, p.z);
   }
+  /* 駅のフォーカスに列車の到着/発車を入れる。自動運転の列車は等間隔で回っているだけ
+     なので、撮る駅にちょうど列車が居るとは限らない。カットの頭で1本を"置き直す"。
+     駅を見下ろす画では停車中の列車は上屋に隠れ、10秒で止まる/動き出すだけの動き
+     (制動・加速で約40m)ではほとんど写らない(実測)。そこで動きの大きい区間を切り取る:
+       arrive … 停止位置の ARRIVE_T 秒手前(60km/h から B5 で減速し始める所)に置く。
+                カットの中でホームへ滑り込み、カットの後で止まる
+       depart … 発車して DEPART_T 秒たった所に置く。カットの中で加速して駅を出ていく
+     置き直しは列車の状態を絶対値で書き換えるので、それまでの経過に依らない
+     (撮影ではコマ番号で決まる時刻に適用するので、並列に撮っても同じ映像になる)。
+     同じ向きの別の列車が近くに居れば後ろへ退ける(同じ線路に2本重ならないように)。 */
+  const STAGE={ARRIVE_T:20.0, DEPART_T:6.0, CLEAR:900, BACK:1200};
+  function stage(i,mode,dir){
+    const st=STA[i], t=trains.find(q=>q.dir===dir);
+    if(!st||!t) return null;
+    const stop=stopPosOf(st,dir)-dir*CAR_HALF, dec=DRIVE.DEC/3.6, acc=DRIVE.ACC/3.6;
+    const vmax=DRIVE.VMAX_KMH/3.6;
+    for(const q of trains) if(q!==t&&q.dir===dir&&Math.abs(q.x-stop)<STAGE.CLEAR){
+      q.x=stop-dir*STAGE.BACK; q.v=0; q.st='run'; q.target=null; q.atSt=null; q.dwell=0;
+      placeTrain(q);
+    }
+    if(mode==='arrive'){
+      const v=Math.min(vmax,dec*STAGE.ARRIVE_T), d=v*v/(2*dec);   // 制動距離ちょうどの位置から減速
+      t.x=stop-dir*d; t.v=v; t.st='brake'; t.target={s:stop,st:st}; t.atSt=null; t.dwell=0;
+    }else{
+      const v=Math.min(vmax,acc*STAGE.DEPART_T), d=v*v/(2*acc);   // 発車してから進んだ距離
+      t.x=stop+dir*d; t.v=v; t.st='run'; t.dwell=0; t.atSt=null; t.target=null;
+    }
+    for(const c of t.cars) setCarDoors(c,0,1);            // 扉は閉めた状態から(開閉は自動運転が行う)
+    t.dr=0; t.dside=1;
+    placeTrain(t);
+    return t;
+  }
   // 前面展望:下り線の運転台から
   function shotFront(s){
     const off=zDown(s), p=frame(s,off), t=tangent(s,6), EYE=3.3;
@@ -3837,7 +3869,7 @@ const CINE=(function(){
     times:Object.keys(TIME), seasons:Object.keys(SEASON),
     label:()=>TIME[curTime].n+'・'+SEASON[curSeason].n,
     step:dt=>{stepWorld(dt);fxT+=dt;},   // 天候の粒も同じ世界時間で進める
-    shotStation:shotStation, shotFront:shotFront, shotAerial:shotAerial,
+    shotStation:shotStation, shotFront:shotFront, shotAerial:shotAerial, stage:stage, STAGE:STAGE,
     render:render, caption:caption, setFar:setFar, setShadow:setShadow,
     fx:FX, fxTime:()=>fxT,
     stations:STA.map(s=>({n:s.n,x:s.x})),
