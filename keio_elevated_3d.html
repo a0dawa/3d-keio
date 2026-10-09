@@ -1810,25 +1810,27 @@ function platBody(S,x0,x1,pc,hw,y,wells){
     }
   }
 }
-/* 階段とエスカレーターの井戸。入口は s0 側、奥(s1)は手すり壁で閉じる。
-   幅の左55%が階段、残りがエスカレーター(下り)。床版の下に続く先は暗がりにする。 */
+/* 階段とエスカレーターの井戸。w.dir=+1 なら入口は s0 側で +s へ降りる/-1 なら入口は s1 側で
+   -s へ降りる。奥は手すり壁で閉じる。幅の左55%が階段、残りがエスカレーター(下り)。
+   床版の下に続く先は暗がりにする。 */
 function stairWell(S,w,y){
   const mg=S.mg, md=S.md, yt=y+STD.PLAT, yb=y-DECK_DROP;
+  const f=w.dir||1, e0=f>0?w.s0:w.s1, e1=f>0?w.s1:w.s0;      // 入口・奥
   const oS=w.o0+(w.o1-w.o0)*0.55;
   mg.col(0x23272c); hS(mg,SV,w.s0,w.s1,w.o0,w.o1,yb+0.02,true);           // 井戸の底
   const rise=0.165, run=0.30, N=Math.ceil((yt-yb)/rise);
   for(let k=0;k<N;k++){                                                   // 階段(段の塊を積む)
-    const sA=w.s0+k*run, yB=Math.max(yb+0.04,yt-(k+1)*rise);
-    mg.col(0x9b9994).box(SV,sA+run/2,(w.o0+oS)/2,yb,yB,run,oS-w.o0-0.02,{skip:'-y'});
-    md.col(0xcdbd84).box(SV,sA+0.03,(w.o0+oS)/2,yB,yB+0.006,0.06,oS-w.o0-0.04,{skip:'-y'});   // 段鼻の滑り止め
+    const sA=e0+f*k*run, yB=Math.max(yb+0.04,yt-(k+1)*rise);
+    mg.col(0x9b9994).box(SV,sA+f*run/2,(w.o0+oS)/2,yb,yB,run,oS-w.o0-0.02,{skip:'-y'});
+    md.col(0xcdbd84).box(SV,sA+f*0.03,(w.o0+oS)/2,yB,yB+0.006,0.06,oS-w.o0-0.04,{skip:'-y'});   // 段鼻の滑り止め
   }
   // エスカレーター:乗り口の床板(金属)と、30°で下る踏み段の帯
-  const sC=w.s0+0.7, dl=(yt-yb-0.04)/Math.tan(Math.PI/6), eo=(oS+w.o1)/2, ehw=(w.o1-oS)/2-0.06;
-  mg.col(0xb4b8bd).box(SV,w.s0+0.35,eo,yt-0.04,yt,0.7,ehw*2,{skip:'-y'});
-  mg.col(0x3a3e44).box(SV,sC+dl/2,eo,yt-0.06-dl*Math.tan(Math.PI/6)/2-0.03,yt-0.06-dl*Math.tan(Math.PI/6)/2+0.03,
-    dl/Math.cos(Math.PI/6),ehw*2,{pitch:-Math.PI/6});
+  const sC=e0+f*0.7, dl=(yt-yb-0.04)/Math.tan(Math.PI/6), eo=(oS+w.o1)/2, ehw=(w.o1-oS)/2-0.06;
+  mg.col(0xb4b8bd).box(SV,e0+f*0.35,eo,yt-0.04,yt,0.7,ehw*2,{skip:'-y'});
+  mg.col(0x3a3e44).box(SV,sC+f*dl/2,eo,yt-0.06-dl*Math.tan(Math.PI/6)/2-0.03,yt-0.06-dl*Math.tan(Math.PI/6)/2+0.03,
+    dl/Math.cos(Math.PI/6),ehw*2,{pitch:-f*Math.PI/6});
   for(const o of[oS+0.03,w.o1-0.03]){                                     // 欄干(ガラス)と手すり
-    const A=mg.axes(sC,o), B=mg.axes(sC+dl,o);
+    const A=mg.axes(sC,o), B=mg.axes(sC+f*dl,o);
     const p0=[A.f.x,yt,A.f.z], p1=[B.f.x,yb+0.04,B.f.z];
     mg.face(MAT.glass,[p0,p1,[p1[0],p1[1]+0.9,p1[2]],[p0[0],p0[1]+0.9,p0[2]]],A.n);
     md.col(0x1a1c1f).tube(SV,[p0[0],p0[1]+0.93,p0[2]],[p1[0],p1[1]+0.93,p1[2]],0.04,6);
@@ -1836,21 +1838,21 @@ function stairWell(S,w,y){
   // 囲い:長辺2面と奥の面にガラスの手すり壁(高さ1.1m)。下に金属の幅木、上に笠木
   const H=1.1;
   vS(mg,MAT.glass,w.s0,w.s1,w.o0,yt,yt+H,-1); vS(mg,MAT.glass,w.s0,w.s1,w.o1,yt,yt+H,1);
-  {const A0=mg.axes(w.s1,w.o0), A1=mg.axes(w.s1,w.o1);
-   mg.face(MAT.glass,[[A0.f.x,yt,A0.f.z],[A1.f.x,yt,A1.f.z],[A1.f.x,yt+H,A1.f.z],[A0.f.x,yt+H,A0.f.z]],A0.t);}
+  {const A0=mg.axes(e1,w.o0), A1=mg.axes(e1,w.o1);
+   mg.face(MAT.glass,[[A0.f.x,yt,A0.f.z],[A1.f.x,yt,A1.f.z],[A1.f.x,yt+H,A1.f.z],[A0.f.x,yt+H,A0.f.z]],v3sc(A0.t,f));}
   for(const o of[w.o0,w.o1]){
     bar(mg,0xc3c7cc,w.s0,w.s1,o,0.04,yt,yt+0.12,{tag:'階段の囲い'});
     bar(md,0xd4d8dc,w.s0,w.s1,o,0.035,yt+H,yt+H+0.05);
   }
-  mg.col(0xc3c7cc).box(SV,w.s1,(w.o0+w.o1)/2,yt,yt+0.12,0.08,w.o1-w.o0,{skip:'-y'});
-  md.col(0xd4d8dc).box(SV,w.s1,(w.o0+w.o1)/2,yt+H,yt+H+0.05,0.07,w.o1-w.o0,{skip:'-y'});
+  mg.col(0xc3c7cc).box(SV,e1,(w.o0+w.o1)/2,yt,yt+0.12,0.08,w.o1-w.o0,{skip:'-y'});
+  md.col(0xd4d8dc).box(SV,e1,(w.o0+w.o1)/2,yt+H,yt+H+0.05,0.07,w.o1-w.o0,{skip:'-y'});
   for(let s=w.s0+1.5;s<w.s1-0.5;s+=1.5) for(const o of[w.o0,w.o1])          // 支柱
     md.col(0xc3c7cc).box(SV,s,o,yt,yt+H,0.05,0.05,{skip:'-y'});
   // 入口の案内(出口=黄)。井戸の入口の上に、ホームの向きに両面で吊る
   const k=3*STA.length;
-  signQuad(md,k,w.s0-0.6,(w.o0+w.o1)/2,yt+2.25,yt+2.62,1.4,'e');
-  signQuad(md,k,w.s0-0.62,(w.o0+w.o1)/2,yt+2.25,yt+2.62,1.4,'w');
-  md.col(0x2b3036).box(SV,w.s0-0.61,(w.o0+w.o1)/2,yt+2.23,yt+2.64,0.015,1.44);
+  signQuad(md,k,e0-f*0.6,(w.o0+w.o1)/2,yt+2.25,yt+2.62,1.4,'e');
+  signQuad(md,k,e0-f*0.62,(w.o0+w.o1)/2,yt+2.25,yt+2.62,1.4,'w');
+  md.col(0x2b3036).box(SV,e0-f*0.61,(w.o0+w.o1)/2,yt+2.23,yt+2.64,0.015,1.44);
 }
 /* エレベーター:ガラスのかご路(2m角)・四隅の柱・上の機械箱(駅の色)・扉(ステンレス) */
 function elevator(S,s,o,y,col){
@@ -2109,14 +2111,19 @@ const FAC={
     for(let s=a,k=0;s<=b+0.01;s+=0.5,k++) fFin(S.mg,tone[k%3],s,sg,FD-0.05,0.16,0.55,y0,y1+0.1,'外装:木の縦格子');
     fBand(S.mg,SV,0x2e3134,a-1,b+1,sg,1.9,2.3,y1+0.1,y1+0.38,{tag:'外装:深い軒'});
   },
-  /* 千歳烏山:温かみのある灰褐色の粗目の格子(約0.9m角・見付18cm・見込み35cm)がホーム階を
-     覆う。奥はガラス。下は暗い灰の太い桁 */
+  /* 千歳烏山:温かみのある灰褐色の粗目の格子がホーム階を覆う。格子は単純なマス目ではなく、
+     レンガの小口積みのように段ごとに縦材を半目ずらす(利用者指示)。目は0.9m×0.8m、
+     見付16〜18cm・見込み35cm。奥はガラス。下は暗い灰の太い桁 */
   '千歳烏山':function(S,st,sg,y){
-    const a=st.x-STD.RL+1, b=st.x+STD.RL-1, yg=y-GIRDER, y0=y+FAC_Y0, y1=y+STD.FAS0, G=0.9;
+    const a=st.x-STD.RL+1, b=st.x+STD.RL-1, yg=y-GIRDER, y0=y+FAC_Y0, y1=y+STD.FAS0, G=0.9, GY=0.8, D=0.35;
     fBand(S.mg,SV,0x575859,a,b,sg,FD,0.25,yg,y0,{tag:'外装:高架の側面'});
     fGlass(S.mg,a,b,sg,FD-0.06,y0,y1);
-    for(let s=a;s<=b+0.01;s+=G) fFin(S.mg,0x9c8770,s,sg,FD,0.18,0.35,y0,y1,'外装:格子(縦)');
-    for(let h=y0;h<y1-0.1;h+=G) fRail(S.mg,0xb09b82,a,b,sg,FD,0.35,h,h+0.18,'外装:格子(横)');
+    for(let h=y0,r=0;h<y1-0.2;h+=GY,r++){
+      fRail(S.mg,0xb09b82,a,b,sg,FD,D,h,h+0.16,'外装:格子(横)');
+      const top=Math.min(h+GY,y1), sh=(r%2)*G/2;          // 1段おきに半目ずらす
+      for(let s=a+sh;s<=b+0.01;s+=G)
+        S.mg.col(0x9c8770).box(SV,s,sg*(deckHalf(s)+FD+D/2),h+0.16,top,0.18,D,{skip:'-y+y',tag:'外装:格子(縦)'});
+    }
     fRail(S.mg,0x8a7764,a,b,sg,FD,0.4,y1-0.05,y1+0.12);
   },
 };
@@ -2302,14 +2309,17 @@ for(const s of STA){
     const back=(s.t==='side')?Math.sign(pc):0;               // 相対式は背面(線路の無い側)
     const narrow=hw<2.0;                                     // 仙川の単式(幅3.4m)は井戸を置かない
     const ww=hw>=3.4?2.8:hw>=2.9?2.4:hw>=2.4?2.2:1.9, wc=pc+back*(hw-ww/2-0.35);
-    const wells=narrow?[]:[{s0:pm-38,s1:pm-22,o0:wc-ww/2,o1:wc+ww/2}];
+    // 階段は1面に2か所(利用者指示)。両側の入口から中ほど(駅舎)へ向かって降りる
+    const wells=narrow?[]:[{s0:pm-34,s1:pm-18,o0:wc-ww/2,o1:wc+ww/2,dir:1},
+                           {s0:pm+18,s1:pm+34,o0:wc-ww/2,o1:wc+ww/2,dir:-1}];
     platBody(S,x0,x1,pc,hw,y,wells);
     platDetail(S,x0,x1,pc,hw,y,{lampY:lampY});
     for(const w of wells){stairWell(S,w,y);lifts.push(w);STAIRS.push({st:s,kind:'階段',s0:w.s0,s1:w.s1,o0:w.o0,o1:w.o1});}
-    if(!narrow){
-      elevator(S,pm+28,wc,y,s.c);
-      lifts.push({s0:pm+27,s1:pm+29});
-      STAIRS.push({st:s,kind:'エレベーター',s0:pm+27,s1:pm+29,o0:wc-1,o1:wc+1});
+    if(!narrow){                                     // エレベーターは2つの階段の間(柱と柱の間)
+      const es=pm+STD.COLP/2;
+      elevator(S,es,wc,y,s.c);
+      lifts.push({s0:es-1,s1:es+1});
+      STAIRS.push({st:s,kind:'エレベーター',s0:es-1,s1:es+1,o0:wc-1,o1:wc+1});
     }
     // 柱:大屋根は樹状柱(2本の枝で梁を受ける)、上屋は中心線の柱
     const colO=back?pc+back*(hw-0.9):pc;
@@ -2338,8 +2348,8 @@ for(const s of STA){
         S.md.col(0x9aa1a8).tube(SV,[A.f.x,ry1,A.f.z],[A.f.x,y+STD.CEIL,A.f.z],0.025,4);}
     }
     S.md.col(0xf6f5ee); hS(S.md,SV,x0+5,x1-5,pc-0.09,pc+0.09,ry0-0.02,false);               // 照明の帯
-    for(let k=-2;k<=2;k++){
-      const ss=pm+k*35; if(nearAny(ss,lifts,1.5)) continue;
+    for(const d of[-75,-45,0,45,75]){                // 駅名標(階段・EVの上を避ける)
+      const ss=pm+d; if(nearAny(ss,lifts,1.5)) continue;
       for(const f of[1,-1]) signQuad(S.mg,3*i+(f>0?0:1),ss,pc+f*0.035,ry0-0.55,ry0-0.1,1.6,f);
       S.mg.col(0x3a4048).box(SV,ss,pc,ry0-0.57,ry0-0.08,1.66,0.06);
       S.md.col(0x5b6470).box(SV,ss,pc,ry0-0.08,ry0,0.04,0.04);
@@ -2351,8 +2361,8 @@ for(const s of STA){
       else if(hw>=2.4){ benchAt(S.md,bs,pc+0.32,y,1); benchAt(S.md,bs,pc-0.32,y,-1); }
     }
     if(!narrow){
-      for(let k=0;k<2;k++){
-        const vs=pm+32.5+k*1.0;
+      for(let k=0;k<2;k++){                          // 自動販売機は柱と柱の間(EVの反対側)
+        const vs=pm-8.4+k*1.0;
         if(back) vendAt(S.md,vs,pc+back*(hw-0.42),y,-back,k);
         else {vendAt(S.md,vs,pc+0.38,y,1,k); vendAt(S.md,vs,pc-0.38,y,-1,k+1);}
       }
