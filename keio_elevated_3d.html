@@ -1328,13 +1328,11 @@ function track(x0,x1,zf,yf){
 }
 // 敷設した軌道と、張った架線の登録簿。
 // 「線路はあるのに架線が無い」「架線が線路の真上に無い」を構造的に防ぐため、
-// 軌道と架線は必ず layTrack() で対にして作り、ここへ記録する(検証はこれを見る)。
+// 軌道は layTrack() で登録だけしておき、全部が出揃ってから buildTrack() が
+// 軌道と架線を必ず対にして作る(出揃うまで、どの線がどこで分かれるか=分岐器が決まらない)。
 const TRACKS=[], WIRES=[];   // 敷設した線路・架線の登録簿(検証用)
-function layTrack(id,x0,x1,zf,yf){
-  const y=yf||railY;
-  track(x0,x1,zf,y);
+function layTrack(id,x0,x1,zf){
   TRACKS.push({id:id,x0:Math.min(x0,x1),x1:Math.max(x0,x1),zf:zf});
-  wires(x0,x1,zf,id);
   return id;
 }
 const zDown=x=>-mainOff(x), zUp=x=>mainOff(x);       // 本線(八幡山では外側の通過線)
@@ -1460,6 +1458,43 @@ CUR=KOUKU[3].VGn;
 layTrack('留置線内側-東',YARD_E,STA[4].x-YARD_GAP,()=>YARD_A);
 layTrack('留置線内側-西',STA[4].x+YARD_GAP,YARD_W,()=>YARD_A);
 layTrack('留置線外側',   YARD_E,YARD_W,()=>YARD_B);
+{ // 笹塚(島式2面4線・既存)。配線図準拠:本線=外側±10.1(BUMPS)/内側±2=新宿方から続く留置線(西端は車止め)
+  const c0=STA[0].x;
+  layTrack('笹塚留置線南',DOM.x0+8,c0+355,()=>-2);
+  layTrack('笹塚留置線北',DOM.x0+8,c0+355,()=>2);
+  // 両渡り×3。5次スムーズステップ(加加速度連続)の最も滑らかなS字
+  const s5=t=>{t=clamp(t,0,1);return t*t*t*(t*(t*6-15)+10);};
+  let n=0;
+  const xo=(s0,s1,o1,o2)=>layTrack('笹塚渡り'+(++n),s0,s1,x=>o1+(o2-o1)*s5((x-s0)/(s1-s0)));
+  xo(c0+52,c0+162,10.1,2);  xo(c0+52,c0+162,2,10.1);   // 北本線⇔北留置線(110m)
+  xo(c0+52,c0+162,-10.1,-2);xo(c0+52,c0+162,-2,-10.1); // 南本線⇔南留置線(110m)
+  xo(c0+72,c0+122,2,-2);    xo(c0+72,c0+122,-2,2);     // 留置線間(50m)
+}
+/* 分岐する線(副本線・停車線・留置線・渡り線)が本線と同じ位置に重ねて敷かれている所を落とす。
+   重なったままだと同じ場所に線路と架線が二重にでき(「不要な線」)、分岐器の位置も決まらない。
+   B の端が A の上にあり、A がその端から B の内側へも続く(=重なっている)とき、
+   B を「A から離れ始める所」まで縮める。本線の継ぎ目(端どうしの接続)は A が内側へ続かないので対象外。 */
+function trimTracks(){
+  const EPS=0.005;
+  for(const B of TRACKS) for(const A of TRACKS){
+    if(A===B) continue;
+    for(const end of[0,1]){
+      const e=end?B.x1:B.x0, f=end?-1:1;            // f=端から線路の内側へ向かう向き
+      if(!(e>A.x0-0.01&&e<A.x1+0.01)) continue;
+      if(Math.abs(A.zf(e)-B.zf(e))>EPS) continue;
+      if(!(f>0?A.x1>e+1:A.x0<e-1)) continue;
+      let s=e;
+      while(f*((end?B.x0:B.x1)-s)>1&&Math.abs(A.zf(s+f*0.25)-B.zf(s+f*0.25))<=EPS) s+=f*0.25;
+      if(end) B.x1=s; else B.x0=s;
+    }
+  }
+}
+trimTracks();
+// 組み立て(登録が出揃ってから)。道床・まくらぎ・レールと架線を線路ごとに対で作る
+function buildTrack(){
+  for(const t of TRACKS){ track(t.x0,t.x1,t.zf,railY); wires(t.x0,t.x1,t.zf,t.id); }
+}
+buildTrack();
 CUR=null;
 // 交差鉄道(井の頭線・世田谷線):実測の交点・軸方向(RAW.rail)に沿って配置
 function xGroup(A){const g=new THREE.Group();g.position.set(A.x,0,A.z);g.rotation.y=-A.phi;scene.add(g);return g;}
@@ -2274,30 +2309,11 @@ const STAIRS=[];                     // 階段・エレベーターの登録簿(
 for(const s of STA){
   const y=railY(s.x),c0=s.x, i=STA.indexOf(s), S=STG[i];
   CUR=s.kk?KOUKU[s.kk-1].VGs:null;
-  if(s.t==='ctx'){                   // 笹塚:島式2面4線(既存)
-    // 配線図準拠:本線=外側±10.1(BUMPS)/内側±2=新宿方から続く留置線(西端は車止め・200m収容)
-    layTrack('笹塚留置線南',DOM.x0+8,c0+355,()=>-2);
-    layTrack('笹塚留置線北',DOM.x0+8,c0+355,()=>2);
+  if(s.t==='ctx'){                   // 笹塚:島式2面4線(既存)。線路は6章で登録済み
     for(const o of[-2,2]){         // 車止め(西端355m)
       S.mg.col(0x8a4a42).box(SV,c0+355,o,railY(c0+355),railY(c0+355)+1.4,1.4,3.2);
       S.md.col(0xe8e2d0).box(SV,c0+355-0.71,o,railY(c0+355)+0.9,railY(c0+355)+1.3,0.02,2.4);
     }
-    { // 両渡り分岐器×3:1組=50m。5次スムーズステップ(加加速度連続)で最も滑らかなS字に
-      const s5=t=>{t=clamp(t,0,1);return t*t*t*(t*(t*6-15)+10);};
-      // 分岐器の曲線は高密度サンプリング(2m刻み)で滑らかに
-      let xoN=0;
-      const xo=(s0,s1,o1,o2)=>{const f=x=>o1+(o2-o1)*s5((x-s0)/(s1-s0));
-        strip(s0,s1,2,x=>[x,railY(x)-.12,f(x)-1.5],x=>[x,railY(x)-.12,f(x)+1.5],MAT.slab);
-        for(const o of[-RAIL_OFF,RAIL_OFF])
-          strip(s0,s1,2,x=>[x,railY(x)+.06,f(x)+o-RAIL_W/2],x=>[x,railY(x)+.06,f(x)+o+RAIL_W/2],MAT.rail);
-        const id='笹塚渡り'+(++xoN);
-        TRACKS.push({id:id,x0:Math.min(s0,s1),x1:Math.max(s0,s1),zf:f});
-        wires(s0,s1,f,id);};
-      xo(c0+52,c0+162,10.1,2);  xo(c0+52,c0+162,2,10.1);   // 北本線⇔北留置線(110m)
-      xo(c0+52,c0+162,-10.1,-2);xo(c0+52,c0+162,-2,-10.1); // 南本線⇔南留置線(110m)
-      xo(c0+72,c0+122,2,-2);    xo(c0+72,c0+122,-2,2);     // 留置線間(50m・さらに東へ40m移動)
-    }
-    CUR=s.kk?KOUKU[s.kk-1].VGs:null;
   }
   // 点字ブロックは「線路のある縁」だけに敷く。笹塚の内側は上の留置線を敷いてから判定する
   // (先に判定すると留置線がまだ TRACKS に無く、内側の縁に敷かれない)。
