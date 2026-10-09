@@ -41,6 +41,10 @@ const REF = {
   },
   // パースから読んだ寸法(人物 約1.7m との比)
   LATTICE: [0.7, 1.2],     // 千歳烏山の格子の目[m](ホーム階の高さに約9段)
+  LATTICE_ROWS: 6,         // 同 段の数の最小
+  BOND_TOL: 0.15,          // 同 小口積み:上下の段の縦材は半目(0.5目)ずれる。その許容[目]
+  STAIRS_PER_PLAT: 2,      // 1つのホームの階段の数(利用者指示:1ホームに2か所)
+  STAIR_GAP: 10,           // 2か所の階段の離れの最小[m](同じ場所に並べたものは1か所と数える)
   FIN_PITCH: [0.4, 0.65],  // 芦花公園の縦格子の間隔[m]
   FIN_DEPTH: 0.40,         // 同 見込みの最小[m](奥行きのある厚い縦格子)
   EAVE_OVER: 1.2,          // 同 屋根の張り出し(縦格子より外へ)の最小[m]
@@ -174,25 +178,30 @@ const STA_TAGS = new Set(['ホーム', '点字ブロック', 'ホーム端の柵
     }
   }
   ok('階段・EVがホームに収まる', bad === null, '縁から' + REF.TACTILE_KEEP + 'm以上', bad ? bad.join(' ') : '階段' + nS + '・EV' + nE);
-  // 島式・相対式の各ホームに1組以上(仙川の単式=幅3.4mは除く)
-  let miss = null;
+  // 島式・相対式の各ホームに2か所(仙川の単式=幅3.4mは除く)。離れた場所にあるものだけ数える
+  let miss = null, nP = 0;
   for (const p of X.PLATS) {
     if (p.hw < 2.0) continue;
-    const has = X.STAIRS.some((w) => w.kind === '階段' && w.o0 >= p.off - p.hw && w.o1 <= p.off + p.hw && w.s0 >= p.x0 && w.s1 <= p.x1);
-    if (!has && !miss) miss = 'off=' + p.off.toFixed(2) + ' s=' + p.x0.toFixed(0);
+    nP++;
+    const W = X.STAIRS.filter((w) => w.kind === '階段' && w.o0 >= p.off - p.hw && w.o1 <= p.off + p.hw &&
+      w.s0 >= p.x0 && w.s1 <= p.x1).sort((a, b) => a.s0 - b.s0);
+    let k = 0, last = -1e9;
+    for (const w of W) if (w.s0 >= last + REF.STAIR_GAP) { k++; last = w.s1; }
+    if (k < REF.STAIRS_PER_PLAT && !miss) miss = 'off=' + p.off.toFixed(2) + ' s=' + p.x0.toFixed(0) + ' ' + k + 'か所';
   }
-  ok('各ホームに階段がある', miss === null, '幅4m以上の全ホーム', miss || '全て');
+  ok('各ホームに階段が' + REF.STAIRS_PER_PLAT + 'か所', miss === null, '幅4m以上の全ホーム(' + nP + '面)', miss || '全て');
 }
-// 2b. ホームの柱は井戸・EVの中に立たない
+// 2b. ホームの柱・ベンチ・自動販売機は井戸・EVの中に立たない(階段を増やしたので位置がぶつかりうる)
 {
   let bad = null, n = 0;
+  const FLOOR = new Set(['ホームの柱', 'ベンチ', '自動販売機', '乗務員モニター']);
   for (const q of X.STRUCT) {
-    if (q.tag !== 'ホームの柱') continue;
+    if (!FLOOR.has(q.tag)) continue;
     n++;
     for (const w of X.STAIRS)
-      if (q.s1 > w.s0 && q.s0 < w.s1 && q.o1 > w.o0 && q.o0 < w.o1 && !bad) bad = [w.st.n, w.kind, 's=' + q.s0.toFixed(1)];
+      if (q.s1 > w.s0 && q.s0 < w.s1 && q.o1 > w.o0 && q.o0 < w.o1 && !bad) bad = [w.st.n, w.kind, q.tag, 's=' + q.s0.toFixed(1)];
   }
-  ok('柱が井戸・EVに立たない', bad === null, '0本', bad ? bad.join(' ') : '0本(柱' + n + '本)');
+  ok('柱・ベンチ等が井戸・EVに立たない', bad === null, '0件', bad ? bad.join(' ') : '0件(' + n + '個)');
 }
 
 /* ---- 3. 駅名標:駅ごとの数と、見る向きに対する左右の駅名 ---------------------- */
@@ -250,8 +259,27 @@ const STA_TAGS = new Set(['ホーム', '点字ブロック', 'ホーム端の柵
     return v.length > 1 ? (v[v.length - 1] - v[0]) / (v.length - 1) : 0;
   };
   const inR = (v, r) => v >= r[0] && v <= r[1];
-  { const pt = pitchOf(north('外装:格子(縦)'));
-    ok('千歳烏山の格子の目', inR(pt, REF.LATTICE), REF.LATTICE.join('〜') + 'm', pt.toFixed(2) + 'm'); }
+  // 千歳烏山の格子は小口積み:段ごとに縦材が格子の目の間隔で並び、上下の段で半目ずれる
+  { const byC = new Map();
+    for (const q of north('外装:格子(縦)')) {
+      const k = Math.round(q.y0 * 50);
+      if (!byC.has(k)) byC.set(k, []);
+      byC.get(k).push((q.s0 + q.s1) / 2);
+    }
+    const C = [...byC.keys()].sort((a, b) => a - b).map((k) => byC.get(k).sort((a, b) => a - b));
+    let pmin = 1e9, pmax = 0, bad = null, fmax = 0;
+    for (const c of C) for (let i = 1; i < c.length; i++) { const d = c[i] - c[i - 1]; pmin = Math.min(pmin, d); pmax = Math.max(pmax, d); }
+    for (let r = 1; r < C.length; r++) {
+      const a = C[r - 1], p = (a[a.length - 1] - a[0]) / Math.max(1, a.length - 1);
+      let f = ((C[r][0] - a[0]) / p) % 1; if (f < 0) f += 1;
+      fmax = Math.max(fmax, Math.abs(f - 0.5));
+      if (Math.abs(f - 0.5) > REF.BOND_TOL && !bad) bad = (r + 1) + '段目のずれ ' + f.toFixed(2) + '目';
+    }
+    ok('千歳烏山の格子の目', C.length >= REF.LATTICE_ROWS && pmin >= REF.LATTICE[0] && pmax <= REF.LATTICE[1],
+      REF.LATTICE.join('〜') + 'm・' + REF.LATTICE_ROWS + '段以上',
+      C.length ? pmin.toFixed(2) + '〜' + pmax.toFixed(2) + 'm・' + C.length + '段' : '無し');
+    ok('千歳烏山の格子が小口積み(段ごとに半目ずれる)', bad === null && C.length >= 2, '0.5±' + REF.BOND_TOL + '目',
+      bad || (C.length >= 2 ? '最大の外れ ' + fmax.toFixed(2) + '目' : '段が無い')); }
   { const L = north('外装:木の縦格子'), pt = pitchOf(L);
     const dep = L.length ? Math.min.apply(null, L.map((q) => q.o1 - q.o0)) : 0;
     ok('芦花公園の縦格子(間隔・見込み)', inR(pt, REF.FIN_PITCH) && dep >= REF.FIN_DEPTH - 1e-6,
