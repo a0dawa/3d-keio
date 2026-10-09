@@ -7,13 +7,15 @@
 //
 //   ・列車との干渉は、登録簿 STRUCT(部品の s/off/高さの範囲)と、実際に出来た頂点の
 //     両方で測る。建築限界の寸法は検証側が独立に持つ(HTMLからは読まない)。
-//   ・公表デザインの要点(2019.5.30 京王電鉄の発表文)も検証側が持つ。
+//   ・公表デザインの要点も検証側が持つ。出典は京王電鉄 2019.5.30 の発表の「イメージパース」
+//     (利用者提供の画像。寸法はパースの人物 約1.7m と比べて読んだ)と「デザインのポイント」の文。
 //   使い方: node tools/verify_station.js [keio_elevated_3d.html]
 const path = process.argv[2] || 'keio_elevated_3d.html';
 const X = require('./stub_three')(path,
   'STA:STA,STG:STG,STRUCT:STRUCT,TRACKS:TRACKS,railY:railY,frame:frame,PLATS:PLATS,' +
   'STAIRS:(typeof STAIRS!=="undefined"?STAIRS:[]),SIGNS:(typeof SIGNS!=="undefined"?SIGNS:[]),' +
-  'MAT:MAT,MAT_BRICK:MAT_BRICK,MAT_BOOK:MAT_BOOK,platRange:platRange,deckHalf:deckHalf,' +
+  'MAT:MAT,MAT_BRICK:MAT_BRICK,MAT_STONE:MAT_STONE,MAT_LOUVER:MAT_LOUVER,MAT_RIB:MAT_RIB,' +
+  'platRange:platRange,deckHalf:deckHalf,' +
   'PSD:PSD,K8:K8,DECK_END:DECK_END,LODS:LODS,POLE_S:POLE_S,WIRE_CAT:WIRE_CAT');
 
 /* ---- 検証側が独立に持つ寸法 -------------------------------------------- */
@@ -21,22 +23,33 @@ const REF = {
   BODY_HW: 1.385 + 0.06,   // 車体の半幅(8000系 2.770m)+ゆれの余裕[m]
   BODY_Y: [0.30, 4.30],    // 車体が占める高さ(レール面から。冷房装置の上端4.055+余裕)
   PANTO_HW: 1.10,          // パンタグラフ・架線の占める半幅[m]
-  PANTO_Y: [4.30, 6.40],   // その高さ(トロリ線4.95・ちょう架線5.90+余裕)
+  PANTO_Y: [4.30, 6.15],   // その高さ(トロリ線4.95・ちょう架線5.90+余裕0.25)。
+                           // これより上は架線の支持物(ビームの下弦・吊り材は6.2m〜)の高さ
   ROOF_MIN: 7.00,          // 線路の上に架かる屋根・梁の下端の最小値(架線柱の頂部と同じ)
   TACTILE_KEEP: 0.80,      // 階段・エレベーターは線路側の縁からこれ以上離す[m]
   SIGN_PER_PLAT: 3,        // 1面あたりの駅名標(両面で1組)の最小数
   CALLS_PER_STA: 16,       // 1駅あたりの Mesh(=描画の呼び出し)の上限
-  // 公表デザイン(京王電鉄 2019.5.30)の要点 → その駅に無ければならない外装の部品
+  // 公表パース(京王電鉄 2019.5.30)に写っているもの → その駅に無ければならない部品
   DESIGN: {
-    '代田橋': ['外装:レンガ調', '外装:流れのルーバー'],
-    '明大前': ['外装:リズムの板 c', '外装:リズムの板 f', '外装:リズムの板 s'],
-    '下高井戸': ['大庇', '大庇の柱', '外装:暖色の帯'],
-    '桜上水': ['外装:木のルーバー'],
-    '上北沢': ['外装:落ち着いた色', '外装:透明の帯'],
-    '芦花公園': ['外装:書架の棚', '外装:本の背'],
-    '千歳烏山': ['外装:格子(縦)', '外装:格子(横)'],
+    '代田橋': ['外装:透明のスクリーン', '外装:縦材', '外装:流れのルーバー', '駅舎:レンガ', '駅舎:格子の庇'],
+    '明大前': ['外装:横ルーバー', '外装:紫のアクセント', '外装:灰の板', '外装:透明', '駅舎:半透明の壁'],
+    '下高井戸': ['外装:白い腰壁', '外装:ガラスの帯', '外装:ガラリの板', '大庇', '大庇の柱'],
+    '桜上水': ['外装:縦リブの板', '外装:細長い窓', '外装:暗い帯', '駅舎:木の縦ルーバー'],
+    '上北沢': ['外装:ベージュの帯', '外装:透明の帯', '外装:白い弓形の柱', '駅舎:石積み', '駅舎:低い庇'],
+    '芦花公園': ['外装:木の縦格子', '外装:深い軒', '外装:石積み', '駅舎:石積み'],
+    '千歳烏山': ['外装:格子(縦)', '外装:格子(横)', '外装:高架の側面', '駅舎:木の柱'],
   },
-  LATTICE: 1.6,            // 千歳烏山の格子の目(粗目=1.5m以上)
+  // パースから読んだ寸法(人物 約1.7m との比)
+  LATTICE: [0.7, 1.2],     // 千歳烏山の格子の目[m](ホーム階の高さに約9段)
+  FIN_PITCH: [0.4, 0.65],  // 芦花公園の縦格子の間隔[m]
+  FIN_DEPTH: 0.40,         // 同 見込みの最小[m](奥行きのある厚い縦格子)
+  EAVE_OVER: 1.2,          // 同 屋根の張り出し(縦格子より外へ)の最小[m]
+  POST_PITCH: [1.2, 2.2],  // 代田橋の細い縦材の間隔[m]
+  FLOW_SPAN: 2.5,          // 代田橋の流れの帯が上下に動く幅の最小[m](下に寄る所と上に寄る所がある)
+  PURPLE_MIN: 20,          // 明大前の紫の横帯の数(片側)の最小
+  SWEEP: 1.0,              // 下高井戸の大庇の縁の高さの変化(反り上がり)の最小[m]
+  BOW_PITCH: [10, 20],     // 上北沢の白い弓形の柱の間隔[m]
+  BOW_TOP: 6.5,            // 同 上端(レール面から)の最小[m]:屋根の軒より上へ伸びる
 };
 
 const rows = [];
@@ -45,6 +58,24 @@ function ok(name, cond, expect, got) { if (!cond) ng++; rows.push([name, expect,
 
 // その s にある線路の横位置の一覧。end>0 なら線路の終端からその長さを除く
 // (行き止まりの線路の終端には車止めが立つ。そこは列車が入らない所なので測らない)
+/* 線分 p→q(断面の [off,高さ])が矩形 [ox0,ox1]×[yy0,yy1] と交わるか(Liang–Barsky) */
+function segHits(p, q, ox0, ox1, yy0, yy1) {
+  let t0 = 0, t1 = 1;
+  const dx = q[0] - p[0], dy = q[1] - p[1];
+  for (const [pp, qq] of [[-dx, p[0] - ox0], [dx, ox1 - p[0]], [-dy, p[1] - yy0], [dy, yy1 - p[1]]]) {
+    if (Math.abs(pp) < 1e-12) { if (qq < 0) return false; continue; }
+    const r = qq / pp;
+    if (pp < 0) { if (r > t1) return false; if (r > t0) t0 = r; } else { if (r < t0) return false; if (r < t1) t1 = r; }
+  }
+  return t0 <= t1;
+}
+// 線分の、off が [ox0,ox1] にある部分の最も低い高さ(その範囲に無ければ null)
+function segMinY(p, q, ox0, ox1) {
+  const a = Math.max(Math.min(p[0], q[0]), ox0), b = Math.min(Math.max(p[0], q[0]), ox1);
+  if (a > b) return null;
+  const at = (o) => (Math.abs(q[0] - p[0]) < 1e-12) ? Math.min(p[1], q[1]) : p[1] + (q[1] - p[1]) * (o - p[0]) / (q[0] - p[0]);
+  return Math.min(at(a), at(b));
+}
 function tracksAt(s, end) {
   const out = [], e = end || 0;
   for (const t of X.TRACKS) if (s >= t.x0 - 0.5 + e && s <= t.x1 + 0.5 - e) out.push(t.zf(s));
@@ -52,7 +83,7 @@ function tracksAt(s, end) {
 }
 const STA_TAGS = new Set(['ホーム', '点字ブロック', 'ホーム端の柵', 'ホームドア', '階段の囲い', 'エレベーター',
   'ベンチ', '自動販売機', '乗務員モニター', 'ホームの柱', '吊りレール', '屋根の梁', '大屋根', '上屋',
-  '駅舎', '駅舎の庇', '大庇', '大庇の柱']);
+  '駅舎', '駅舎の庇', '大庇', '大庇の柱', '大庇の縁', '架線の吊り材']);
 
 /* ---- 1. 建築限界:駅の部品が列車・パンタグラフの通る空間に入らない ---------- */
 {
@@ -63,7 +94,8 @@ const STA_TAGS = new Set(['ホーム', '点字ブロック', 'ホーム端の柵
     for (const s of [q.s0, (q.s0 + q.s1) / 2, q.s1]) {
       const y = X.railY(s);
       for (const t of tracksAt(s)) {
-        const hit = (hw, ya, yb) => q.y1 > y + ya && q.y0 < y + yb && q.o1 > t - hw && q.o0 < t + hw;
+        const hit = (hw, ya, yb) => q.line ? segHits(q.line[0], q.line[1], t - hw, t + hw, y + ya, y + yb)
+          : (q.y1 > y + ya && q.y0 < y + yb && q.o1 > t - hw && q.o0 < t + hw);
         if ((hit(REF.BODY_HW, REF.BODY_Y[0], REF.BODY_Y[1]) || hit(REF.PANTO_HW, REF.PANTO_Y[0], REF.PANTO_Y[1])) && !bad)
           bad = [q.tag, 's=' + s.toFixed(1), 'off ' + q.o0.toFixed(2) + '〜' + q.o1.toFixed(2), '線路 ' + t.toFixed(2)];
       }
@@ -105,15 +137,22 @@ const STA_TAGS = new Set(['ホーム', '点字ブロック', 'ホーム端の柵
   }
   ok('頂点が車両の通る空間に入らない', bad === null, '0点', bad ? bad.join(' ') : '0点(標本' + nv + '点)');
 }
-// 1c. 線路の上に架かる屋根・梁は架線設備より上
+// 1c. 線路の上(パンタグラフの幅の範囲)に架かる屋根・梁は架線設備より上。
+//     軒を下げた屋根(上北沢)は線路の上だけ高ければよいので、傾いた面は線分で測る
 {
-  let bad = null;
+  let bad = null, n = 0;
   for (const q of X.STRUCT) {
     if (q.tag !== '大屋根' && q.tag !== '屋根の梁') continue;
     const s = (q.s0 + q.s1) / 2, y = X.railY(s);
-    if (q.y0 < y + REF.ROOF_MIN - 1e-6 && !bad) bad = [q.tag, 's=' + s.toFixed(0), (q.y0 - y).toFixed(2) + 'm'];
+    for (const t of tracksAt(s)) {
+      const ox0 = t - REF.PANTO_HW, ox1 = t + REF.PANTO_HW;
+      const low = q.line ? segMinY(q.line[0], q.line[1], ox0, ox1) : ((q.o1 > ox0 && q.o0 < ox1) ? q.y0 : null);
+      if (low === null) continue;
+      n++;
+      if (low < y + REF.ROOF_MIN - 1e-6 && !bad) bad = [q.tag, 's=' + s.toFixed(0), '線路 ' + t.toFixed(2), (low - y).toFixed(2) + 'm'];
+    }
   }
-  ok('大屋根の梁は架線柱より上', bad === null, '下端≥' + REF.ROOF_MIN + 'm', bad ? bad.join(' ') : '全て');
+  ok('線路の上の屋根は架線柱より上', bad === null, '下端≥' + REF.ROOF_MIN + 'm', bad ? bad.join(' ') : '全て(' + n + '箇所)');
 }
 
 /* ---- 2. 階段・エレベーター --------------------------------------------- */
@@ -204,21 +243,48 @@ const STA_TAGS = new Set(['ホーム', '点字ブロック', 'ホーム端の柵
     got.push(name + ' ' + REF.DESIGN[name].length);
   }
   ok('公表デザインの要点', bad === null, '7駅すべて', bad ? bad.join(' ') : '7駅すべて');
-  // 千歳烏山の格子は"粗目"(縦材の間隔)
-  const st = X.STA.find((s) => s.n === '千歳烏山');
-  const v = X.STRUCT.filter((q) => q.tag === '外装:格子(縦)' && q.o0 > 0).map((q) => (q.s0 + q.s1) / 2).sort((a, b) => a - b);
-  const pitch = v.length > 1 ? (v[v.length - 1] - v[0]) / (v.length - 1) : 0;
-  ok('千歳烏山の格子の目', pitch >= 1.5 && pitch <= 2.5, '1.5〜2.5m', pitch.toFixed(2) + 'm(' + v.length + '本)');
-  // 代田橋・芦花公園は模様を画像で持つ(レンガ・本の背)。その材質が駅の群にあること
+  // パースから読んだ寸法(北面で測る)
+  const north = (tag) => X.STRUCT.filter((q) => q.tag === tag && q.o0 > 0);
+  const pitchOf = (list) => {
+    const v = list.map((q) => (q.s0 + q.s1) / 2).sort((a, b) => a - b);
+    return v.length > 1 ? (v[v.length - 1] - v[0]) / (v.length - 1) : 0;
+  };
+  const inR = (v, r) => v >= r[0] && v <= r[1];
+  { const pt = pitchOf(north('外装:格子(縦)'));
+    ok('千歳烏山の格子の目', inR(pt, REF.LATTICE), REF.LATTICE.join('〜') + 'm', pt.toFixed(2) + 'm'); }
+  { const L = north('外装:木の縦格子'), pt = pitchOf(L);
+    const dep = L.length ? Math.min.apply(null, L.map((q) => q.o1 - q.o0)) : 0;
+    ok('芦花公園の縦格子(間隔・見込み)', inR(pt, REF.FIN_PITCH) && dep >= REF.FIN_DEPTH - 1e-6,
+      REF.FIN_PITCH.join('〜') + 'm・見込み≥' + REF.FIN_DEPTH, pt.toFixed(2) + 'm・' + dep.toFixed(2) + 'm');
+    const eave = north('外装:深い軒'), fo = L.length ? Math.max.apply(null, L.map((q) => q.o1)) : 0;
+    const eo = eave.length ? Math.max.apply(null, eave.map((q) => q.o1)) : 0;
+    ok('芦花公園の深い軒', eo - fo >= REF.EAVE_OVER, '縦格子より' + REF.EAVE_OVER + 'm以上外', (eo - fo).toFixed(2) + 'm'); }
+  { const pt = pitchOf(north('外装:縦材'));
+    ok('代田橋の細い縦材の間隔', inR(pt, REF.POST_PITCH), REF.POST_PITCH.join('〜') + 'm', pt.toFixed(2) + 'm');
+    const F = north('外装:流れのルーバー').map((q) => (q.y0 + q.y1) / 2 - X.railY((q.s0 + q.s1) / 2));
+    const lo = F.length ? Math.min.apply(null, F) : 0, hi = F.length ? Math.max.apply(null, F) : 0;
+    ok('代田橋の流れ(帯が上下に動く)', hi - lo >= REF.FLOW_SPAN, '≥' + REF.FLOW_SPAN + 'm',
+      (hi - lo).toFixed(2) + 'm(' + lo.toFixed(1) + '〜' + hi.toFixed(1) + ')'); }
+  { const n = north('外装:紫のアクセント').length;
+    ok('明大前の紫の横帯', n >= REF.PURPLE_MIN, '片側' + REF.PURPLE_MIN + '本以上', n + '本'); }
+  { const E = X.STRUCT.filter((q) => q.tag === '大庇の縁').map((q) => q.y0);
+    const sw = E.length ? Math.max.apply(null, E) - Math.min.apply(null, E) : 0;
+    ok('下高井戸の大庇の反り', sw >= REF.SWEEP, '縁の高さの差≥' + REF.SWEEP + 'm', sw.toFixed(2) + 'm'); }
+  { const B = north('外装:白い弓形の柱'), pt = pitchOf(B);
+    const top = B.length ? Math.min.apply(null, B.map((q) => q.y1 - X.railY((q.s0 + q.s1) / 2))) : 0;
+    ok('上北沢の白い弓形の柱', inR(pt, REF.BOW_PITCH) && top >= REF.BOW_TOP,
+      REF.BOW_PITCH.join('〜') + 'm・上端≥' + REF.BOW_TOP, pt.toFixed(1) + 'm・' + top.toFixed(2) + 'm'); }
+  // 模様を画像で持つ外装(レンガ・横ルーバー・石積み・縦リブ)。その材質が駅の群にあること
   const mats = (name) => {
     const S = X.STG.find((q) => q.st.n === name), out = new Set();
     const walk = (o) => { if (o.isMesh) out.add(o.material); for (const c of o.children || []) walk(c); };
     if (S) walk(S.g);
     return out;
   };
-  ok('代田橋にレンガ調', mats('代田橋').has(X.MAT_BRICK), 'レンガの材質', mats('代田橋').has(X.MAT_BRICK) ? 'あり' : 'なし');
-  ok('芦花公園に書架', mats('芦花公園').has(X.MAT_BOOK), '本の背の材質', mats('芦花公園').has(X.MAT_BOOK) ? 'あり' : 'なし');
-  ok('明大前に半透明の板', mats('明大前').has(X.MAT.frost), '半透明の材質', mats('明大前').has(X.MAT.frost) ? 'あり' : 'なし');
+  for (const [n, m, lab] of [['代田橋', X.MAT_BRICK, 'レンガ'], ['明大前', X.MAT_LOUVER, '横ルーバー'],
+    ['明大前', X.MAT.frost, '半透明の壁'], ['芦花公園', X.MAT_STONE, '石積み'], ['上北沢', X.MAT_STONE, '石積み'],
+    ['桜上水', X.MAT_RIB, '縦リブ']])
+    ok(n + 'の' + lab, mats(n).has(m), lab + 'の材質', mats(n).has(m) ? 'あり' : 'なし');
 }
 
 /* ---- 5. 軽さ:駅ごとの Mesh の数と、細部が LOD に載っていること --------------- */
