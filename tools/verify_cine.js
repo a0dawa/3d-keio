@@ -24,7 +24,8 @@ const X = require('./stub_three')(path,
   'MAT:MAT, CITY:CITY, STA:STA, frame:frame, railY:railY, mainOff:mainOff,' +
   'SKY:()=>SKY, SKY_TEX:SKY_TEX, skyDome:skyDome, env:()=>scene.environment,' +
   'sunFollow:sunFollow, SH_MAP:SH_MAP, DOM:DOM, srgb:srgb, zRunDown:zRunDown,' +
-  'NIGHT:NIGHT, NIGHT_STAT:NIGHT_STAT, PLATS:PLATS, trains:trains, stopPosOf:stopPosOf, CAR_HALF:CAR_HALF');
+  'NIGHT:NIGHT, NIGHT_STAT:NIGHT_STAT, PLATS:PLATS, trains:trains, stopPosOf:stopPosOf, CAR_HALF:CAR_HALF,' +
+  'setLookUI:(typeof setLookUI!=="undefined"?setLookUI:null), LOOK_UI:(typeof LOOK_UI!=="undefined"?LOOK_UI:null)');
 
 /* ---- 期待値(検証側が独立して持つ) ---------------------------------------- */
 const REF = {
@@ -283,7 +284,10 @@ const TPROP = {};
    「夜の表を書いたのに昼と同じ明るさ」は見た目にしか出ないが、
    光の強さと空の輝度の大小関係なら数値で確かめられる。 */
 {
-  const day = TPROP[C.times.find((k) => TPROP[k].el === Math.max.apply(null, C.times.map((t) => TPROP[t].el)))];
+  // 最も明るい時刻を昼とみなす(夜=最も暗いと対にする。太陽高度で選ぶと、夜の月明かりの
+  // 高度が昼の太陽と同じくらいのとき夜を昼と取り違える)
+  let day = null;
+  for (const k of C.times) if (day === null || TPROP[k].fog > day.fog) day = TPROP[k];
   // 最も暗い時刻を夜とみなす(名前に依存しない)
   let night = null, nk = '';
   for (const k of C.times) if (night === null || TPROP[k].fog < night.fog) { night = TPROP[k]; nk = k; }
@@ -565,6 +569,46 @@ const TPROP = {};
   const st = C.stats();
   ok('描画量の取得', typeof st.calls === 'number' && typeof st.tri === 'number',
     'calls/tri', st.calls + ' / ' + st.tri);
+}
+
+/* ---- 画面のメニュー(時刻・季節) -------------------------------------------
+   撮影モードと同じ setTime/setSeason を画面から選べること、実時間のループで雪・花びらが
+   進むこと、既定が 昼・夏(=画面の従来の見え方)であることを確かめる。 */
+{
+  const src = X.__html;
+  const seg = (id) => {
+    const m = src.match(new RegExp('<div class="seg" id="' + id + '"[^>]*>([\\s\\S]*?)</div>'));
+    return m ? [...m[1].matchAll(/data-k="(\w+)"/g)].map((q) => q[1]) : [];
+  };
+  const tk = seg('segTime'), sk = seg('segSeason');
+  ok('メニューに全ての時刻', tk.length === C.times.length && C.times.every((k) => tk.includes(k)),
+    C.times.join('/'), tk.join('/') || 'なし');
+  ok('メニューに全ての季節', sk.length === C.seasons.length && C.seasons.every((k) => sk.includes(k)),
+    C.seasons.join('/'), sk.join('/') || 'なし');
+  ok('ループで天候を進める', /function loop\([\s\S]*?CINE\.tick\(dt\)/.test(src), 'loop で CINE.tick(dt)',
+    /function loop\([\s\S]*?CINE\.tick\(dt\)/.test(src) ? 'あり' : 'なし');
+  ok('既定は 昼・夏', /setLookUI\(\(saved&&saved\.time\)\|\|'noon',\(saved&&saved\.season\)\|\|'summer'\)/.test(src),
+    "既定 'noon','summer'", X.LOOK_UI ? X.LOOK_UI.time + '・' + X.LOOK_UI.season : 'なし');
+  // tick:時間が進み、空がカメラの真上へ移り、雪がカメラの周りに降る
+  C.setSeason('winter');
+  X.camera.position.set(1234, 50, -567);
+  const t0 = C.fxTime();
+  C.tick(0.5);
+  ok('tick で時間が進む', Math.abs(C.fxTime() - t0 - 0.5) < 1e-9, '+0.500秒', '+' + (C.fxTime() - t0).toFixed(3) + '秒');
+  ok('tick で空がカメラの上', X.skyDome.position.x === 1234 && X.skyDome.position.z === -567,
+    '(1234,-567)', '(' + X.skyDome.position.x + ',' + X.skyDome.position.z + ')');
+  const P = C.fx.snow.pos, half = C.fx.BOX / 2 + 1e-6;
+  let inBox = 0;
+  for (let i = 0; i < P.length; i += 3) if (Math.abs(P[i] - 1234) <= half && Math.abs(P[i + 2] + 567) <= half) inBox++;
+  ok('雪がカメラの周りに降る', inBox === P.length / 3, '全粒', inBox + '/' + P.length / 3);
+  // メニューの選択がそのまま反映される(夜は灯りが点く)
+  let err = null;
+  try { X.setLookUI('night', 'autumn'); } catch (e) { err = e.message; }
+  const nw = C.now();
+  ok('メニューの選択が反映', err === null && nw.time === 'night' && nw.season === 'autumn' && X.NIGHT.group.visible === true,
+    '夜・秋・灯りON', err || (nw.time + '・' + nw.season + '・灯り' + (X.NIGHT.group.visible ? 'ON' : 'OFF')));
+  X.setLookUI('noon', 'summer');
+  ok('昼に戻すと灯りが消える', X.NIGHT.group.visible === false, '灯りOFF', X.NIGHT.group.visible ? 'ON' : 'OFF');
 }
 
 /* ---- 表示 ---------------------------------------------------------------- */
