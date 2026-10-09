@@ -3,13 +3,15 @@
 //   桁幅は「広すぎても狭すぎても」まずい。狭ければ車両が桁からはみ出し(防御的設計の
 //   違反)、広ければ現実には有り得ない構造物になる。どちらも見た目では判断しづらいので
 //   線路とホームの実態から必要幅を独立に計算し、その通りかを数値で確かめる。
-//   架線は「線路の上に必ずあること」「吊り点が架線柱の真下にあること」を見る。
+//   架線は「線路の上に必ずあること」「吊り点が架線柱の真下にあること」に加え、
+//   インテグレート架線としての形(き電ちょう架線2条+トロリ線・偏位の交互・ハンガの間隔・
+//   パンタに当たらない支持物・柱の建築限界)を、登録簿と実際に描いた電線の頂点で見る。
 //
 //   使い方: node tools/verify_line.js [keio_elevated_3d.html]
 const path = process.argv[2] || 'keio_elevated_3d.html';
 const X = require('./stub_three')(path,
   'deckHalf:deckHalf,outerOff:outerOff,platOuter:platOuter,mainOff:mainOff,' +
-  'poleXs:poleXs,poleOff:poleOff,poleStep:poleStep,STA:STA,DOM:DOM,DECK_END:DECK_END,' +
+  'poleStep:poleStep,STA:STA,DOM:DOM,DECK_END:DECK_END,frame:frame,RAIL_TOP:RAIL_TOP,' +
   'DECK_MIN:DECK_MIN,railY:railY,platRange:platRange,PLAT_EDGE:PLAT_EDGE,' +
   'TRACKS:(typeof TRACKS!=="undefined"?TRACKS:null),' +
   'WIRES:(typeof WIRES!=="undefined"?WIRES:null),' +
@@ -20,7 +22,10 @@ const X = require('./stub_three')(path,
   'KANPACHI_X:KANPACHI_X,XINGS:XINGS,' +
   'WIRE_CAT:WIRE_CAT,WIRE_TRO:WIRE_TRO,BEAM_LOW:BEAM_LOW,POLE_TOP:POLE_TOP,' +
   'VIA_COLS:(typeof VIA_COLS!=="undefined"?VIA_COLS:[]),STRUCT:(typeof STRUCT!=="undefined"?STRUCT:[]),' +
-  'ROAD_SKIP:ROAD_SKIP,PS0:PS0');
+  'ROAD_SKIP:ROAD_SKIP,PS0:PS0,PLATS:PLATS,VIA_CH:VIA_CH,' +
+  'CHAINS:(typeof CHAINS!=="undefined"?CHAINS:[]),SUPS:(typeof SUPS!=="undefined"?SUPS:[]),' +
+  'POLES:(typeof POLES!=="undefined"?POLES:[]),BEAMS:(typeof BEAMS!=="undefined"?BEAMS:[]),' +
+  'POLE_LAMPS:(typeof POLE_LAMPS!=="undefined"?POLE_LAMPS:[])');
 
 /* ---- 設計上の要件(検証側が独立して持つ) ---------------------------------- */
 const REQ = {
@@ -30,6 +35,24 @@ const REQ = {
   SLACK: 0.05,       // 必要幅に対して許容する余剰[m]
   GRAD: 1.30,        // 桁幅の変化率の上限[m / 5m]
   STEP: 5,
+};
+
+/* ---- インテグレート架線の基準(検証側が独立して持つ) ---------------------------- */
+const CATREF = {
+  TRO: 4.95,           // トロリ線の高さ(レール面から)=8000系のパンタのすり板の上面
+  SYS: [0.85, 1.05],   // 支持点でのき電ちょう架線とトロリ線の間隔
+  TWIN: [0.12, 0.18],  // き電ちょう架線2条の間隔
+  STAG: [0.15, 0.25],  // 偏位(支持点でのトロリ線の振れ)
+  BEND: 0.06,          // 線路が柱間の弦からこれ以上膨らむ支持点を「曲線」とみなす[m]
+  DEV: 0.30,           // 柱間のどこでもトロリ線は線路中心からこれ以内(パンタの集電範囲)
+  HANG: 5.5,           // ハンガの間隔の上限
+  HANG_END: 3.0,       // 支持点から最初のハンガまでの上限
+  HANG_MIN: 0.5,       // 最も短いハンガ(垂れの最下点)の長さの下限
+  DROP_CLEAR: 1.25,    // ブラケットの付け根(柱の面・吊りパイプ)は線路中心からこれ以上(パンタの半幅1.1+余裕)
+  STEADY_SLOPE: 0.12,  // 振止め金具の上り勾配の下限(トロリ線から離れるほど高く)
+  POLE_CLEAR: 1.70,    // 架線柱の面は線路中心からこれ以上(車体の半幅1.385+余裕)
+  POLE_EDGE: 1.0,      // ホームの上に立つ柱は線路側の縁からこれ以上
+  BEAM_OVER: 0.5,      // ビームの下端はき電ちょう架線よりこれ以上上
 };
 
 const rows = [];
@@ -89,7 +112,7 @@ if (X.TRACKS && X.WIRES) {
   {
     let bad = null;
     for (const w of X.WIRES) {
-      for (const h of w.hangers) {
+      for (const h of w.sup) {
         if (!X.POLE_S.some((p) => Math.abs(p - h) < 0.01)) { bad = bad || [w.id, h.toFixed(1)]; }
       }
     }
@@ -108,24 +131,27 @@ if (X.TRACKS && X.WIRES) {
   }
   // 2-4b 架線は架線柱の間で直線であること
   //      線路のように滑らかな曲線にしてはいけない(実物は吊り点を結んだ折れ線)。
+  //      節点が「鎖の両端と柱の真下」だけであることと、描いた電線(区画の LineSegments)に
+  //      支持点から次の支持点までの1本の線分が、トロリ線の高さ(レール面+4.95m)で
+  //      そのまま入っていることを確かめる(中間点があれば1本の線分にならない)。
   {
     const poleSet = new Set(X.POLE_S.map((v) => v.toFixed(3)));
+    const key = (a, b) => { const k = (p) => p.map((v) => Math.round(v * 200)).join(','); const x = k(a), y = k(b); return x < y ? x + '|' + y : y + '|' + x; };
+    const segs = new Set();
+    for (const C of X.VIA_CH) for (let i = 0; i + 5 < C.wl.length; i += 6)
+      segs.add(key([C.wl[i], C.wl[i + 1], C.wl[i + 2]], [C.wl[i + 3], C.wl[i + 4], C.wl[i + 5]]));
     let bad = null, spans = 0;
-    for (const w of X.WIRES) {
-      if (!w.nodes) { bad = bad || [w.id, '節点の記録が無い']; continue; }
-      // 節点は「両端」と「架線柱の真下」だけ
-      for (let i = 1; i < w.nodes.length - 1; i++)
-        if (!poleSet.has(w.nodes[i].toFixed(3)) && !bad)
-          bad = [w.id, 's=' + w.nodes[i].toFixed(1) + ' は柱の位置でない'];
-      // トロリ線は節点だけで構成される=柱間に中間点が無い=直線
-      if (w.troN !== w.nodes.length && !bad)
-        bad = [w.id, 'トロリ線に中間点 ' + (w.troN - w.nodes.length) + '点'];
-      // ちょう架線は垂れのぶんだけ中間点を持つ(平面では弦のまま)
-      const want = (w.nodes.length - 1) * w.sagN + 1;
-      if (w.catN !== want && !bad) bad = [w.id, 'ちょう架線の点数 ' + w.catN + '≠' + want];
-      spans += w.nodes.length - 1;
+    for (const c of X.CHAINS) {
+      for (let i = 1; i < c.nodes.length - 1; i++)
+        if (!poleSet.has(c.nodes[i].toFixed(3)) && !bad) bad = [c.ids[0], 's=' + c.nodes[i].toFixed(1) + ' は柱の位置でない'];
+      const P = c.nodes.map((s, k) => { const f = X.frame(s, c.zf(s) + c.d[k]); return [f.x, X.railY(s) + X.RAIL_TOP + CATREF.TRO, f.z]; });
+      for (let k = 0; k < P.length - 1; k++) {
+        if (c.nodes[k + 1] - c.nodes[k] < 0.05) continue;
+        spans++;
+        if (!segs.has(key(P[k], P[k + 1])) && !bad) bad = [c.ids[0], 's=' + c.nodes[k].toFixed(1) + '〜' + c.nodes[k + 1].toFixed(1) + ' に1本のトロリ線が無い'];
+      }
     }
-    ok('架線柱間が直線', bad === null, '節点=柱の真下のみ',
+    ok('架線柱間が直線(トロリ線)', bad === null, '支持点間=1本の線分・レール面+' + CATREF.TRO + 'm',
       bad ? bad.join(' ') : spans + 'スパンすべて');
   }
   /* 2-4c 高架下に構造物がある位置に橋脚を立てないこと。
@@ -193,6 +219,171 @@ if (X.TRACKS && X.WIRES) {
     const good = X.WIRE_TRO < X.WIRE_CAT && X.WIRE_CAT < X.BEAM_LOW && X.BEAM_LOW < X.POLE_TOP;
     ok('架線とビームの高さ関係', good, 'トロリ<ちょう架<下弦<上弦',
       [X.WIRE_TRO, X.WIRE_CAT, X.BEAM_LOW, X.POLE_TOP].map((v) => v.toFixed(2)).join(' < '));
+  }
+  // 2-5b インテグレート架線の形(基準値は検証側が持つ)
+  {
+    // 電線の構成:き電ちょう架線2条+トロリ線1条。き電線は別に張らない
+    let bad = null;
+    const want = ['き電ちょう架線', 'き電ちょう架線', 'トロリ線'].join();
+    for (const c of X.CHAINS) {
+      if ((c.cond || []).join() !== want && !bad) bad = [c.ids[0], (c.cond || []).join('・') || '構成の記録なし'];
+      if (!(c.twin >= CATREF.TWIN[0] && c.twin <= CATREF.TWIN[1]) && !bad) bad = [c.ids[0], '2条の間隔 ' + c.twin];
+    }
+    if (/function\s+feeder\s*\(/.test(X.__html) && !bad) bad = ['き電線(feeder)が別に張られている'];
+    ok('電線=き電ちょう架線2条+トロリ線', bad === null && X.CHAINS.length > 0,
+      '間隔' + CATREF.TWIN.join('〜') + 'm・き電線なし', bad ? bad.join(' ') : X.CHAINS.length + '本すべて');
+  }
+  {
+    /* 偏位:直線では支持点ごとに左右へ交互(ジグザグ)、0.15〜0.25m。
+       曲線(線路が柱間の弦から膨らむ所)では膨らむ側=曲線の外側へ寄せる(大きさ≤0.25m)。
+       膨らみは検証側が線路の式と frame から独立に求める */
+    const bulge = (zf, a, b) => {
+      const fa = X.frame(a, zf(a)), fb = X.frame(b, zf(b));
+      let m = 0;
+      for (let u = 0.05; u < 0.96; u += 0.05) {
+        const s = a + (b - a) * u, f = X.frame(s, zf(s)), g = X.frame(s, zf(s) + 1);
+        const e = (f.x - fa.x - (fb.x - fa.x) * u) * (g.x - f.x) + (f.z - fa.z - (fb.z - fa.z) * u) * (g.z - f.z);
+        if (Math.abs(e) > Math.abs(m)) m = e;
+      }
+      return m;
+    };
+    let bad = null, nS = 0, nC = 0;
+    for (const c of X.CHAINS) {
+      let prev = 0;
+      for (let k = 1; k < c.nodes.length - 1; k++) {
+        const d = c.d[k], s = c.nodes[k];
+        const b = (bulge(c.zf, c.nodes[k - 1], s) + bulge(c.zf, s, c.nodes[k + 1])) / 2;
+        if (Math.abs(b) < CATREF.BEND) {
+          nS++;
+          if ((Math.abs(d) < CATREF.STAG[0] || Math.abs(d) > CATREF.STAG[1]) && !bad) bad = [c.ids[0], 's=' + s.toFixed(0), '偏位 ' + d.toFixed(3)];
+          if (prev && Math.sign(prev) === Math.sign(d) && !bad) bad = [c.ids[0], 's=' + s.toFixed(0), '直線で同じ側が続く'];
+          prev = d;
+        } else {
+          nC++;
+          if ((Math.sign(d) !== Math.sign(b) || Math.abs(d) > CATREF.STAG[1]) && !bad)
+            bad = [c.ids[0], 's=' + s.toFixed(0), '曲線で外側へ寄っていない(偏位' + d.toFixed(3) + '・膨らみ' + b.toFixed(3) + ')'];
+          prev = 0;
+        }
+      }
+    }
+    ok('トロリ線の偏位(直線は交互・曲線は外側)', bad === null && nS > 0, '±' + CATREF.STAG.join('〜') + 'm',
+      bad ? bad.join(' ') : '直線' + nS + '・曲線' + nC + '支持点');
+  }
+  {
+    // 柱間のどこでもトロリ線が線路中心からパンタの集電範囲内(曲線では弦が内へ寄る)
+    let worst = 0, at = null;
+    for (const c of X.CHAINS) {
+      for (let k = 0; k < c.nodes.length - 1; k++) {
+        const s0 = c.nodes[k], s1 = c.nodes[k + 1];
+        if (s1 - s0 < 0.05) continue;
+        const A = X.frame(s0, c.zf(s0) + c.d[k]), B = X.frame(s1, c.zf(s1) + c.d[k + 1]);
+        for (let u = 0; u <= 1.0001; u += 0.05) {
+          const s = s0 + (s1 - s0) * u, px = A.x + (B.x - A.x) * u, pz = A.z + (B.z - A.z) * u;
+          const o = c.zf(s), f = X.frame(s, o), g = X.frame(s, o + 1);
+          const dev = (px - f.x) * (g.x - f.x) + (pz - f.z) * (g.z - f.z);
+          if (Math.abs(dev) > worst) { worst = Math.abs(dev); at = [c.ids[0], 's=' + s.toFixed(0)]; }
+        }
+      }
+    }
+    ok('トロリ線が集電範囲内', worst <= CATREF.DEV, '線路中心から≤' + CATREF.DEV + 'm',
+      worst.toFixed(3) + 'm' + (at ? '(' + at.join(' ') + ')' : ''));
+  }
+  {
+    // ハンガ:約5m間隔。支持点から最初のハンガまでも離れすぎない。最短のハンガの長さ
+    let bad = null, n = 0, maxSag = 0;
+    for (const c of X.CHAINS) {
+      const H = c.hang.slice().sort((a, b) => a - b);
+      for (let k = 0; k < c.nodes.length - 1; k++) {
+        const s0 = c.nodes[k], s1 = c.nodes[k + 1];
+        if (s1 - s0 < 2 * CATREF.HANG_END) continue;
+        const in_ = H.filter((h) => h > s0 && h < s1);
+        n += in_.length;
+        const pts = [s0].concat(in_, [s1]);
+        for (let i = 1; i < pts.length; i++) {
+          const g = pts[i] - pts[i - 1], lim = (i === 1 || i === pts.length - 1) ? CATREF.HANG_END : CATREF.HANG;
+          if (g > lim + 1e-6 && !bad) bad = [c.ids[0], 's=' + pts[i - 1].toFixed(1) + '〜' + pts[i].toFixed(1), g.toFixed(2) + 'm'];
+        }
+        maxSag = Math.max(maxSag, c.sag[k] || 0);
+      }
+    }
+    const minLen = X.WIRE_CAT - maxSag - X.WIRE_TRO;
+    ok('ハンガの間隔', bad === null && n > 0, '≤' + CATREF.HANG + 'm(支持点から≤' + CATREF.HANG_END + 'm)',
+      bad ? bad.join(' ') : n + '本');
+    ok('トロリ線の高さ・ハンガの長さ', Math.abs(X.WIRE_TRO - CATREF.TRO) < 0.005 &&
+      X.WIRE_CAT - X.WIRE_TRO >= CATREF.SYS[0] && X.WIRE_CAT - X.WIRE_TRO <= CATREF.SYS[1] && minLen >= CATREF.HANG_MIN,
+      'トロリ' + CATREF.TRO + 'm・間隔' + CATREF.SYS.join('〜') + 'm・最短≥' + CATREF.HANG_MIN + 'm',
+      'トロリ' + X.WIRE_TRO.toFixed(2) + 'm・間隔' + (X.WIRE_CAT - X.WIRE_TRO).toFixed(2) + 'm・最短' + minLen.toFixed(2) + 'm');
+  }
+  {
+    // 支持点ごとに、その架線を支える可動ブラケット(または懸垂)があること
+    let bad = null, n = 0;
+    X.CHAINS.forEach((c, ci) => {
+      for (let k = 1; k < c.nodes.length - 1; k++) {
+        const s = c.nodes[k], o = c.zf(s) + c.d[k];
+        n++;
+        const q = X.SUPS.find((u) => Math.abs(u.s - s) < 1e-6 && u.ch.indexOf(ci) >= 0 && u.M.some((m) => Math.abs(m - o) < 1e-6));
+        if (!q && !bad) bad = [c.ids[0], 's=' + s.toFixed(0)];
+      }
+    });
+    const by = {}; for (const u of X.SUPS) by[u.mount] = (by[u.mount] || 0) + 1;
+    ok('支持点に可動ブラケット', bad === null && n > 0, '全支持点', bad ? bad.join(' ') + ' に支持が無い' :
+      Object.keys(by).map((k) => k + by[k]).join('・'));
+  }
+  {
+    // 支持物がパンタ・車両に当たらない:付け根(柱の面・吊りパイプ)は線路中心から離す/
+    // 振止め金具はトロリ線から離れるほど高い(上り勾配)
+    const tracksAt = (s) => X.TRACKS.filter((t) => s >= t.x0 - 0.5 && s <= t.x1 + 0.5).map((t) => t.zf(s));
+    let bad = null, nb = 0, ns = 0;
+    for (const u of X.SUPS) {
+      if (u.b !== undefined) {
+        nb++;
+        const near = Math.min.apply(null, tracksAt(u.s).map((z) => Math.abs(u.b - z)));
+        if (near < CATREF.DROP_CLEAR && !bad) bad = [u.mount, 's=' + u.s.toFixed(0), '付け根が線路中心から' + near.toFixed(2) + 'm'];
+      }
+      for (const st of u.steady) {
+        ns++;
+        const dx = Math.abs(st[0][0] - st[1][0]), dy = st[0][1] - st[1][1];
+        if ((dx < 0.3 || dy / dx < CATREF.STEADY_SLOPE) && !bad) bad = [u.mount, 's=' + u.s.toFixed(0), '振止めの勾配 ' + (dy / Math.max(dx, 1e-6)).toFixed(3)];
+      }
+      if (u.mount === 'ビーム' || u.mount === '屋根' || u.mount === '柱') {
+        if (u.h1 === undefined && !bad) bad = [u.mount, 's=' + u.s.toFixed(0), 'ブラケットの記録なし'];
+      }
+    }
+    ok('ブラケットがパンタに当たらない', bad === null && nb > 0, '付け根≥' + CATREF.DROP_CLEAR + 'm・振止め勾配≥' + CATREF.STEADY_SLOPE,
+      bad ? bad.join(' ') : '付け根' + nb + '・振止め' + ns);
+  }
+  {
+    // 架線柱:建築限界の外(線路中心から柱の面まで)/ホームの上なら線路側の縁から離す/
+    // 大屋根の下には建てない(屋根の梁から吊る)/ビームはき電ちょう架線より上
+    const ROOF_HALF = 107, ROOF_T = ['isl', 'side', 'quad'];
+    const underRoof = (s) => X.STA.some((st) => ROOF_T.indexOf(st.t) >= 0 && Math.abs(s - st.x) < ROOF_HALF);
+    let bad = null, minC = 1e9;
+    for (const q of X.POLES) {
+      for (const t of X.TRACKS) {
+        if (q.s < t.x0 - q.r || q.s > t.x1 + q.r) continue;
+        const c = Math.abs(q.o - t.zf(q.s)) - q.r;
+        minC = Math.min(minC, c);
+        if (c < CATREF.POLE_CLEAR && !bad) bad = ['s=' + q.s.toFixed(0), t.id + 'から' + c.toFixed(2) + 'm'];
+      }
+      for (const pl of X.PLATS) {
+        if (q.s < pl.x0 || q.s > pl.x1 || Math.abs(q.o - pl.off) > pl.hw) continue;
+        // 線路側の縁(その縁の外に線路がある縁)からの距離
+        for (const sg of [-1, 1]) {
+          const edge = pl.off + sg * pl.hw;
+          const faces = X.TRACKS.some((t) => q.s >= t.x0 && q.s <= t.x1 && sg * (t.zf(q.s) - edge) > 0 && sg * (t.zf(q.s) - edge) < 2.6);
+          if (faces && Math.abs(edge - q.o) - q.r < CATREF.POLE_EDGE && !bad) bad = ['s=' + q.s.toFixed(0), 'ホームの縁から' + (Math.abs(edge - q.o) - q.r).toFixed(2) + 'm'];
+        }
+      }
+      if (underRoof(q.s) && !bad) bad = ['s=' + q.s.toFixed(0), '大屋根の下に柱'];
+    }
+    for (const u of X.SUPS) if (underRoof(u.s) !== (u.mount.indexOf('屋根') === 0) && !bad) bad = ['s=' + u.s.toFixed(0), u.mount + 'が屋根の' + (underRoof(u.s) ? '下' : '外')];
+    for (const b of X.BEAMS) {
+      const y = X.railY(b.s) + X.RAIL_TOP + X.WIRE_CAT + CATREF.BEAM_OVER;
+      if (b.y0 < y && !bad) bad = ['s=' + b.s.toFixed(0), 'ビームの下端が低い ' + (b.y0 - X.railY(b.s) - X.RAIL_TOP).toFixed(2)];
+    }
+    for (const L of X.POLE_LAMPS) if (!X.POLES.some((q) => Math.abs(q.s - L.s) < 0.01 && Math.abs(q.o - L.o) < 0.7) && !bad) bad = ['s=' + L.s.toFixed(0), '灯りが柱に付いていない'];
+    ok('架線柱の位置', bad === null && X.POLES.length > 0, '線路中心から面まで≥' + CATREF.POLE_CLEAR + 'm・ホームの縁から≥' + CATREF.POLE_EDGE + 'm・大屋根の下に無し',
+      bad ? bad.join(' ') : X.POLES.length + '本(最小' + minC.toFixed(2) + 'm)・ビーム' + X.BEAMS.length);
   }
   // 2-6 同じ場所に線路(と架線)が二重に敷かれていないこと
   //     副本線や留置線を分岐の終わりより先まで伸ばすと、本線と同じ位置に架線が重なり
