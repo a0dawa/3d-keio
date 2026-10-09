@@ -187,14 +187,16 @@ if(!window.THREE){document.body.insertAdjacentHTML('beforeend','<div class="pane
    京王線 連続立体交差事業(笹塚〜仙川)高架化後 3Dビューア ── 保守ガイド
    ----------------------------------------------------------------------------
    ■ ファイル構成(この見出しコメントで検索できます)
-     1. 与件データ        : 駅STA/踏切XINGS(実名25)/交差道路/8工区KOUKU/手順STEPS/可視表VIS
+     1. 与件データ        : 駅STA/踏切XINGS(実名25)/交差道路/8工区KOUKU
      2. 縦断・断面・平面線形: railY(縦断) mainOff(本線の振り) deckHalf(桁半幅)
                               GEO→GP→CT(実座標スプライン) frame(s,off) nearestS
-     3. シーン基盤        : renderer/材質MAT/工区グループ/strip・box・cyl
+     3. シーン基盤        : renderer/材質MAT/strip・box・cyl
     3b. 結合ジオメトリ    : MG(材質ごとに結合・頂点カラー・掃引)/LOD(lodStruct)/登録簿STRUCT
      4. 地表・道路・施設  : 幹線/踏切道スタブ/側道/玉川上水/給水所/変電所/駅前広場
-     5. 高架橋・架線      : 架線柱/RCラーメン高架橋(床版・高欄・縦梁・柱と横梁・継目・道床・まくらぎ)
-     6. 軌道ほか          : 本線・副本線・留置線(2本併設)・分岐器・井の頭線・世田谷線・地上線/仮線
+     5. 高架橋            : RCラーメン高架橋(床版・高欄・縦梁・柱と横梁・継目)。240mの区画 VIA_CH
+     6. 線路の登録        : layTrack(本線・副本線・留置線・渡り線)/trimTracks/井の頭線・世田谷線
+    6a. 軌道              : 道床・まくらぎ・締結装置・レール・分岐器(TURNOUTS/FROGS)・車止め
+    6b. 架線              : インテグレート架線(鋼管柱・Vトラスビーム・可動ブラケット・電線 CHAINS/SUPS)
      7. 駅                : ホーム・大屋根/上屋・柱・階段とEV・駅名標・外装(公表デザイン FAC)・高架下駅舎
      8. 街並み            : 街区整列の建物/樹木(幹+樹冠)
      9. 列車              : テクスチャ車体+パンタ(走行6本・滞泊編成)
@@ -211,9 +213,8 @@ if(!window.THREE){document.body.insertAdjacentHTML('beforeend','<div class="pane
 
    ■ 主な調整パラメータ
      ・線形     : GEO(各駅の緯度経度)を直せば全体が自動追従
-     ・断面/高さ: RAIL_H・DECK_DROP・GIRDER・WIDE([中心s,桁半幅,一定区間半長])・BUMPS
+     ・断面/高さ: RAIL_H・DECK_DROP・GIRDER・BUMPS/軌道 TRK・RAIL_PF/架線 CAT・WIRE_*・POLE_TOP
      ・踏切     : XINGS=[名称, s位置]
-     ・工事手順 : KOUKU(s0/s1=工区範囲, m=工法A側方/B仮線/C直上, jv/note)・STEPS文言・VIS可視表
      ・配色     : MAT(構造物)/7章 FAC(駅の外装)・頂点カラー(結合ジオメトリ)/car_spec由来の色(車両)
 
    ■ 保守メモ
@@ -547,7 +548,6 @@ const POLE_S=(function(){
   for(let x=DECK_END+15;x<DOM.x1-8;x+=poleStep(x))out.push(x);
   return out.sort((a,b)=>a-b);
 })();
-function kkOf(s){for(const K of KOUKU)if(s>=K.s0&&s<K.s1)return K;return null;}
 
 /* ============ 3. シーン基盤・材質・テクスチャ・工区グループ ============ */
 const canvas=document.getElementById('c');
@@ -983,7 +983,7 @@ function MG(){
     }
     if(keep[keep.length-1]!==S.length-1) keep.push(S.length-1);
     const n=SC[0].length, segs=o.closed?n:n-1;
-    let ar=0; for(let i=0;i<n;i++){const p=SC[0][i],q=SC[0][(i+1)%n];ar+=p[0]*q[1]-q[0]*p[1];}
+    let ar=0; for(const Q of SC){let a2=0; for(let i=0;i<n;i++){const p=Q[i],q=Q[(i+1)%n];a2+=p[0]*q[1]-q[0]*p[1];} if(Math.abs(a2)>Math.abs(ar)) ar=a2;}
     const ori=o.closed?(ar>0?1:-1):(o.side||1);
     if(o.col!==undefined) self.col(o.col);
     for(let kk=0;kk<keep.length-1;kk++){
@@ -1135,7 +1135,7 @@ CUR=null;
      柱・横梁   … 10m間隔(3径間=30mで1ブロック、継目は径間の中央)。柱は面取りした角柱で
                   根元に根巻き。桁幅が広い所(駅・留置線)は柱を3〜4本に増やす
      継目      … 30mごと。高欄・地覆の外面に目地
-     道床・まくらぎ・レールの腹 … 6章の track() がここへ積む(まくらぎはインスタンス)
+     軌道・架線 … 6a章(道床・まくらぎ・レール・分岐器)と6b章(架線柱・ブラケット・電線)がここへ積む
      排水管    … 3本に1本の柱に沿って地上へ
    既設区間(笹塚方の既存高架・八幡山の流用部)は同じ形で古いコンクリートの色にする。
    取付部(仙川方)で桁下が低くなる所は、縦梁を地面まで下ろして擁壁にする。
@@ -1146,7 +1146,7 @@ const VIA={CH:240, SPAN:10, BLOCK:30, CANT:1.6, BEAM_IN:2.0, BW:0.8, COL_R:0.48,
 const VIA_COLS=[];        // 柱の列の登録簿 {s, offs:[...], top}(検証用)
 const VIA_CH=[];          // 区画 {s0,s1,mg,md,ties:[]}(6章の道床もここへ積む)
 for(let a=DOM.x0;a<DOM.x1-0.5;a+=VIA.CH)
-  VIA_CH.push({s0:a,s1:Math.min(DOM.x1,a+VIA.CH),mg:MG(),md:MG(),ties:[],wl:[],wd:[]});
+  VIA_CH.push({s0:a,s1:Math.min(DOM.x1,a+VIA.CH),mg:MG(),md:MG(),ties:[],fast1:[],fast2:[],wl:[],wd:[]});
 function viaEach(s0,s1,fn){
   for(const C of VIA_CH){const a=Math.max(s0,C.s0),b=Math.min(s1,C.s1);if(b-a>0.01)fn(C,a,b);}
 }
@@ -1222,49 +1222,31 @@ function parSect(s,sg){
     for(const sg of[-1,1]) C.md.col(0x5c6066).box(VD,s,sg*(E+0.055),yT-0.30,y+VIA.PAR+0.005,0.03,0.03,{skip:'-y'});
   }
 }
-/* 道床(コンクリート)・まくらぎ・レールの腹。6章の track() から呼ぶ。
-   高架上は床版の上に、地上部は地面に置く。まくらぎは区画ごとのインスタンスで描く。 */
-function viaTrack(x0,x1,zf,yf){
-  viaEach(x0,x1,function(C,a,b){
-    C.mg.loft(VD,a,b,s=>{const o=zf(s),y=yf(s),bt=y>3?y-DECK_DROP:-0.05;
-      return [[o-1.35,bt],[o+1.35,bt],[o+1.2,y-0.12],[o-1.2,y-0.12]];},
-      {closed:true,cols:[0x6b7076,0x7d8288,0x80858b,0x7d8288]});
-    for(const ro of[-RAIL_OFF,RAIL_OFF])                       // レールの腹(頭頂面は MAT.rail)
-      C.md.col(0x4d5259).loft(VD,a,b,s=>{const o=zf(s)+ro,y=yf(s);
-        return [[o-0.034,y-0.02],[o+0.034,y-0.02],[o+0.034,y+RAIL_TOP-0.004],[o-0.034,y+RAIL_TOP-0.004]];},{closed:true});
-    for(let s=Math.ceil(a/VIA.TIE)*VIA.TIE;s<b;s+=VIA.TIE) C.ties.push([s,zf(s),yf(s)]);
-  });
-}
-/* まくらぎ1本の形。見えるのは上面と線路方向の2側面だけなので、その3面で作る
-   (箱の6面の半分の三角形で済む。数万本を描くので効く) */
-const TIE_GEO=(function(){
-  const L=0.12, H=0.065, W=1.15;   // 半長(線路方向)・半高・半幅
-  const P=[-L,H,-W, L,H,-W, L,H,W, -L,H,W,          // 上面
-           L,-H,-W, L,-H,W, L,H,W, L,H,-W,          // +x 側面
-           -L,-H,W, -L,-H,-W, -L,H,-W, -L,H,W];     // -x 側面
-  const N=[0,1,0,0,1,0,0,1,0,0,1,0, 1,0,0,1,0,0,1,0,0,1,0,0, -1,0,0,-1,0,0,-1,0,0,-1,0,0];
-  const g=new THREE.BufferGeometry();
-  g.setAttribute('position',new THREE.Float32BufferAttribute(P,3));
-  g.setAttribute('normal',new THREE.Float32BufferAttribute(N,3));
-  g.setIndex([0,2,1,0,3,2, 4,6,5,4,7,6, 8,10,9,8,11,10]);
-  return g;
-})();
-const TIE_LOD=280;                 // まくらぎを描く距離[m](それより遠くでは1画素未満)
+const TIE_LOD=280;                 // まくらぎを描く距離[m](それより遠くでは1画素未満)。形は6a章
 function viaFlush(){
   const m4=new THREE.Matrix4(),q=new THREE.Quaternion(),e=new THREE.Euler(),v=new THREE.Vector3(),one=new THREE.Vector3(1,1,1);
   for(const C of VIA_CH){
     const g=new THREE.Group(), d=new THREE.Group();
     const b=C.md.bounds(), bb={x0:b.x0,x1:b.x1,y0:b.y0,y1:b.y1,z0:b.z0,z1:b.z1};
     C.mg.flush(g); C.md.flush(d);
-    if(C.ties.length){
-      const im=new THREE.InstancedMesh(TIE_GEO,MAT.tie,C.ties.length);
-      C.ties.forEach(function(t,i){
-        const f=frame(t[0],t[1]); e.set(0,-f.a,0); q.setFromEuler(e);
-        v.set(f.x,t[2]-0.12+0.065,f.z); m4.compose(v,q,one); im.setMatrixAt(i,m4);
-      });
-      im.instanceMatrix.needsUpdate=true;
-      const tg=new THREE.Group(); tg.add(im); d.add(tg);
-      lodAdd(tg,bb,TIE_LOD);
+    // まくらぎ([s,off,railY,長さの倍率,向き])と締結装置([s,off,railY,向き])のインスタンス。
+    // 締結装置は s の順に FAST_BLK ごとのまとまりに分け、まとまりごとに近くだけ描く
+    for(const [list,geo,mat,dist,blk] of[[C.ties,TIE_GEO,MAT.tie,TIE_LOD,1e9],
+        [C.fast2,FAST2_GEO,MAT.fast,TRK.FAST_LOD,TRK.FAST_BLK],[C.fast1,FAST1_GEO,MAT.fast,TRK.FAST_LOD,TRK.FAST_BLK]]){
+      for(let i0=0;i0<list.length;){
+        let i1=i0; while(i1<list.length&&list[i1][0]-list[i0][0]<blk) i1++;
+        const part=list.slice(i0,i1), im=new THREE.InstancedMesh(geo,mat,part.length), sc=new THREE.Vector3();
+        const bx={x0:1e9,x1:-1e9,y0:1e9,y1:-1e9,z0:1e9,z1:-1e9};
+        part.forEach(function(t,i){
+          const f=frame(t[0],t[1]), long=t.length>4; e.set(0,-(f.a+(long?t[4]:t[3])),0); q.setFromEuler(e);
+          v.set(f.x,t[2]+TRK.TIE_Y,f.z); sc.set(1,1,long?t[3]:1); m4.compose(v,q,sc); im.setMatrixAt(i,m4);
+          bx.x0=Math.min(bx.x0,f.x-2);bx.x1=Math.max(bx.x1,f.x+2);bx.y0=Math.min(bx.y0,v.y);bx.y1=Math.max(bx.y1,v.y);bx.z0=Math.min(bx.z0,f.z-2);bx.z1=Math.max(bx.z1,f.z+2);
+        });
+        im.instanceMatrix.needsUpdate=true;
+        const tg=new THREE.Group(); tg.add(im); d.add(tg);
+        lodAdd(tg,blk<1e9?bx:bb,dist);
+        i0=i1;
+      }
     }
     // 電線(6b章):き電ちょう架線・トロリ線・架空地線は常時、ハンガと受けは近くだけ
     if(C.wl.length) g.add(new THREE.LineSegments(new THREE.BufferGeometry().setAttribute('position',
@@ -1278,11 +1260,6 @@ function viaFlush(){
 }
 
 /* ============ 6. 軌道・架線・交差鉄道・地上線/仮線 ============ */
-function track(x0,x1,zf,yf){
-  viaTrack(Math.min(x0,x1),Math.max(x0,x1),zf,yf);   // 道床・まくらぎ・レールの腹(5章の区画へ)
-  for(const o of[-RAIL_OFF,RAIL_OFF])   // レール:内面間=GAUGE(1372mm)になる位置に置く
-    strip(x0,x1,10,x=>[x,yf(x)+RAIL_TOP,zf(x)+o-RAIL_W/2],x=>[x,yf(x)+RAIL_TOP,zf(x)+o+RAIL_W/2],MAT.rail);
-}
 // 敷設した軌道と、張った架線の登録簿。
 // 「線路はあるのに架線が無い」「架線が線路の真上に無い」を構造的に防ぐため、
 // 軌道は layTrack() で登録だけしておき、全部が出揃ってから buildTrack() が
@@ -1423,11 +1400,264 @@ function trackBulge(t,a,b){          // 線路 t の a〜b が、両端を結ぶ
     POLE_S.push.apply(POLE_S,add); POLE_S.sort((p,q)=>p-q);
   }
 })();
-// 組み立て(登録が出揃ってから)。道床・まくらぎ・レール。架線は6b章(駅の大屋根が出来てから)
-function buildTrack(){
-  for(const t of TRACKS) track(t.x0,t.x1,t.zf,railY);
+/* ============ 6a. 軌道:道床・まくらぎ・締結装置・レール・分岐器(2026-10 作り込み) ============
+   【設計方針】
+   ・高架は弾性まくらぎ直結軌道(PCまくらぎを道床コンクリートに埋め込む)、地上部は有道床(バラスト)
+   ・レールは50kgN の断面(高さ153mm・頭部幅72mm)。磨かれて空を映すのは頭頂面だけで、腹と底部は
+     錆の茶色。頭頂面=レール面=車両の原点(RAIL_TOP)
+   ・まくらぎは全線共通の格子(0.625m)に置き、同じ位置で重なる線路(分岐器の中)は1本の長い
+     まくらぎ(分岐まくらぎ)にまとめる。締結装置(タイプレート・ショルダー・板ばね)はインスタンス
+   ・分岐器は線路の登録から見つける(B の端が A の上=ポイントの先端、異なる線路のレールが交わる所=
+     クロッシング)。トングレール(定位=A へ開通。B 側は開いている)・クロッシング(ノーズと
+     ウイングレール・マンガン鋼の床)・ガードレール・転てつ機と転てつ棒を置く
+   ・道床は線路ごとに作り、先に敷いた線路の道床と重なる幅は削る(重なると面がちらつく)
+   ・行き止まりには車止め
+   部品は5章の区画(VIA_CH)に積む:道床とレールの頭頂面=常時/レールの側面と分岐器=近く/
+   まくらぎ=TIE_LOD/締結装置=TRK.FAST_LOD まで。締結装置は数が多い(区画あたり数千)ので、
+   区画をさらに TRK.FAST_BLK ごとに分けて、すぐ近くのまとまりだけを描く。 */
+const TRK={BED:1.35, BAL:1.6, BED_Y:-0.145, BAL_Y:-0.135, TIE_Y:-0.105, TIE_HW:1.15, TIE_P:0.625,
+           WING:0.116, OPEN:0.11, HEEL:0.18, FAST_LOD:60, FAST_BLK:40};
+// 50kgN レールの片側の断面(レール中心からの横・railY からの高さ)。頭頂面の縁から底部の縁まで
+const RAIL_PF=[[0.033,0.060],[0.036,0.055],[0.036,0.022],[0.031,0.012],[0.010,0.006],[0.0075,-0.004],
+               [0.0075,-0.058],[0.012,-0.066],[0.0635,-0.080],[0.0635,-0.093]];
+const RAIL_PC=[0x8d9298,0x8d9298,0x7a7d80,0x6f5c4f,0x6f5c4f,0x6f5c4f,0x6f5c4f,0x6a584b,0x5f4f44];
+const TURNOUTS=[], FROGS=[], RAILS=[], BUFFERS=[], BEDS=[];   // 分岐器・クロッシング・レール・車止め・道床の幅(登録簿)
+const RST={step:2,tol:0.004}, RFINE={step:0.5,tol:0.002};
+// レール(全断面)。o(s)=レール中心の off
+function railRun(s0,s1,o,fine){
+  if(s1-s0<0.02) return;
+  const st=fine?RFINE:RST;
+  viaEach(s0,s1,function(C,a,b){
+    C.mg.loft(MAT.rail,a,b,s=>{const y=railY(s)+RAIL_TOP,c=o(s);return [[c-0.033,y],[c+0.033,y]];},Object.assign({side:-1},st));
+    for(const sd of[-1,1]) C.md.loft(VD,a,b,s=>{const y=railY(s),c=o(s);return RAIL_PF.map(q=>[c+sd*q[0],y+q[1]]);},
+      Object.assign({side:-sd,cols:RAIL_PC},st));
+  });
 }
-buildTrack();
+// 頭部だけの細いレール(トングレール・ノーズ)。e(s)=[左の縁,右の縁]
+function headRun(s0,s1,e){
+  if(s1-s0<0.02) return;
+  viaEach(s0,s1,function(C,a,b){
+    C.mg.loft(MAT.rail,a,b,s=>{const y=railY(s)+RAIL_TOP,q=e(s);return [[q[0],y],[q[1],y]];},Object.assign({side:-1},RFINE));
+    C.md.col(0x8d9298).loft(VD,a,b,s=>{const y=railY(s),q=e(s);return [[q[0],y+0.058],[q[0],y-0.03]];},Object.assign({side:1},RFINE))
+      .loft(VD,a,b,s=>{const y=railY(s),q=e(s);return [[q[1],y+0.058],[q[1],y-0.03]];},Object.assign({side:-1},RFINE));
+  });
+}
+// 線路 t の道床の幅[lo,hi]。先に敷いた線路の道床と重なる幅は削る(全部覆われれば null)
+function bedSpan(i,s,hw){
+  const t=TRACKS[i]; let lo=t.zf(s)-hw, hi=t.zf(s)+hw, cl=[false,false];
+  for(let j=0;j<i;j++){
+    const u=TRACKS[j]; if(s<u.x0||s>u.x1) continue;
+    const a=u.zf(s)-hw, b=u.zf(s)+hw;
+    if(b<=lo||a>=hi) continue;
+    if(a<=lo&&b>=hi) return null;
+    if(a<=lo||b<hi&&a-lo<hi-b){lo=b;cl[0]=true;} else {hi=a;cl[1]=true;}
+  }
+  return [lo,hi,cl];
+}
+/* 分岐器とクロッシングを見つける */
+function trackTopo(){
+  for(const B of TRACKS) for(const end of[0,1]){
+    const e=end?B.x1:B.x0, f=end?-1:1;
+    const A=TRACKS.find(A=>A!==B&&e>A.x0+1&&e<A.x1-1&&Math.abs(A.zf(e)-B.zf(e))<0.02);
+    if(!A) continue;
+    const D=s=>Math.abs(B.zf(s)-A.zf(s));
+    let full=null, heel=null;
+    for(let s=e;f*(s-e)<80&&s>=B.x0&&s<=B.x1;s+=f*0.05){ if(full===null&&D(s)>=RAIL_W) full=s; if(D(s)>=TRK.HEEL){heel=s;break;} }
+    if(heel===null) continue;
+    TURNOUTS.push({a:A.id,b:B.id,A:A,B:B,s:e,f:f,sg:Math.sign(B.zf(heel)-A.zf(heel)),full:full,heel:heel});
+  }
+  for(let i=0;i<TRACKS.length;i++) for(let j=i+1;j<TRACKS.length;j++){
+    const A=TRACKS[i], B=TRACKS[j], lo=Math.max(A.x0,B.x0), hi=Math.min(A.x1,B.x1);
+    if(hi-lo<1) continue;
+    let near=false; for(let s=lo;s<=hi;s+=4) if(Math.abs(A.zf(s)-B.zf(s))<3.2){near=true;break;}
+    if(!near) continue;
+    for(const ra of[-1,1]) for(const rb of[-1,1]){
+      const F=s=>(B.zf(s)+rb*RAIL_OFF)-(A.zf(s)+ra*RAIL_OFF);
+      let sp=null, vp=0;
+      for(let s=lo;s<=hi+1e-9;s+=0.25){
+        const v=F(s); if(Math.abs(v)<0.003) continue;
+        if(sp!==null&&Math.sign(v)!==Math.sign(vp)){
+          let a=sp,b=s; for(let k=0;k<40;k++){const m=(a+b)/2; if(Math.sign(F(m))===Math.sign(vp))a=m; else b=m;}
+          FROGS.push(frogOf(A,ra,B,rb,(a+b)/2));
+        }
+        sp=s; vp=v;
+      }
+    }
+  }
+}
+// クロッシング1か所。喉部(のどぶ)=Q が A の軌間の内、P が B の軌間の内にある側
+function frogOf(A,ra,B,rb,sf){
+  const p=s=>A.zf(s)+ra*RAIL_OFF, q=s=>B.zf(s)+rb*RAIL_OFF;
+  const k=Math.abs((q(sf+0.5)-p(sf+0.5))-(q(sf-0.5)-p(sf-0.5)));
+  const ins=s=>Math.abs(q(s)-A.zf(s))<RAIL_OFF&&Math.abs(p(s)-B.zf(s))<RAIL_OFF;
+  const t=(ins(sf-1)&&!ins(sf+1))?-1:(ins(sf+1)&&!ins(sf-1))?1:0;
+  const fr={a:A.id,ra:ra,b:B.id,rb:rb,A:A,B:B,p:p,q:q,s:sf,k:k,N:1/Math.max(k,1e-6),t:t};
+  if(!t) return fr;                                      // 鈍角(ダイヤモンドの中)
+  const sp=Math.sign(p(sf+t)-q(sf+t));                   // 喉部での P の側(Q に対して)
+  fr.throat=sf+t*TRK.WING/k; fr.tip=sf-t*0.012/k; fr.nose=sf-t*RAIL_W/k; fr.wingEnd=fr.tip-t*1.8;
+  fr.wP=s=>q(s)+sp*TRK.WING; fr.wQ=s=>p(s)-sp*TRK.WING; fr.sp=sp;
+  fr.gA=s=>A.zf(s)-ra*(RAIL_OFF-TRK.WING); fr.gB=s=>B.zf(s)-rb*(RAIL_OFF-TRK.WING);
+  fr.g0=fr.tip+t*2.2; fr.g1=fr.tip-t*2.2;
+  return fr;
+}
+// 区間の集合から [a,b] を抜く
+function cutIv(L,a,b){const out=[];for(const v of L){if(b<=v[0]||a>=v[1]){out.push(v);continue;}
+  if(a>v[0])out.push([v[0],a,v[2]]); if(b<v[1])out.push([b,v[1],v[2]]);}return out;}
+// 両端をなめらかに外へ逃がす(ガードレール・ウイングレールの端の開き)
+const flare=(s,a,b,d,L)=>{const u=Math.max(0,Math.max(a+L-s,s-(b-L))/L);return d*u*u;};
+function buildTrack(){
+  trackTopo();
+  // ---- 道床(高架=コンクリート・地上=バラスト) ----
+  TRACKS.forEach(function(t,i){
+    const run=(s0,s1,ground)=>viaEach(s0,s1,function(C,a,b){
+      const hw=ground?TRK.BAL:TRK.BED;
+      C.mg.loft(ground?MAT_BALLAST:VD,a,b,s=>{
+        const y=railY(s), sp=bedSpan(i,s,hw), c=t.zf(s);
+        if(!sp) return ground?[[c,0],[c,y+TRK.BAL_Y],[c,y+TRK.BAL_Y],[c,0]]:[[c,y-DECK_DROP],[c,y+TRK.BED_Y],[c,y+TRK.BED_Y],[c,y-DECK_DROP]];
+        if(ground) return [[sp[0]-(sp[2][0]?0:1.0),0],[sp[0],y+TRK.BAL_Y],[sp[1],y+TRK.BAL_Y],[sp[1]+(sp[2][1]?0:1.0),0]];
+        const bt=y>3?y-DECK_DROP:-0.05;
+        return [[sp[0],bt],[sp[0]+(sp[2][0]?0:0.1),y+TRK.BED_Y],[sp[1]-(sp[2][1]?0:0.1),y+TRK.BED_Y],[sp[1],bt]];
+      },{side:-1,cols:ground?[0x8c877f,0x9a958c,0x8c877f]:[0x7d8288,0x8a8f94,0x7d8288],
+         uv:ground?(s,q)=>[s/1.2,q[0]/1.2]:undefined,tag:'道床'});
+    });
+    run(t.x0,Math.min(t.x1,DECK_END),false);
+    if(t.x1>DECK_END) run(Math.max(t.x0,DECK_END),t.x1,true);
+    for(let s=Math.ceil(t.x0/2)*2;s<=t.x1;s+=2){const sp=bedSpan(i,s,s<DECK_END?TRK.BED:TRK.BAL); if(sp) BEDS.push({id:t.id,s:s,lo:sp[0],hi:sp[1]});}
+  });
+  // ---- レール:普通の区間・トングレール・クロッシングの切れ目 ----
+  for(const t of TRACKS) for(const r of[-1,1]){
+    let iv=[[t.x0,t.x1,null]];
+    for(const T of TURNOUTS){
+      const a=Math.min(T.s,T.full), b=Math.max(T.s,T.full), ah=Math.min(T.s,T.heel), bh=Math.max(T.s,T.heel);
+      const A=T.A, B=T.B, sg=T.sg;
+      if(T.A===t&&r===sg){        // 閉じたトングレール(A へ開通):A のゲージ線から基本レールまで
+        iv=cutIv(iv,a,b);
+        iv.push([a,b,s=>{const g=A.zf(s)+sg*(RAIL_OFF-RAIL_W/2), w=Math.min(RAIL_W,Math.abs(B.zf(s)-A.zf(s)));return [Math.min(g,g+sg*w),Math.max(g,g+sg*w)];},'密着']);
+      }
+      if(T.B===t&&r===-sg){       // 開いたトングレール(B 側):基本レールから転てつ方向へ開く
+        iv=cutIv(iv,ah,bh);
+        iv.push([ah,bh,s=>{const d=TRK.OPEN*(1-Math.abs(s-T.s)/Math.abs(T.heel-T.s)), D=Math.abs(B.zf(s)-A.zf(s));
+          const g=A.zf(s)-sg*(RAIL_OFF-RAIL_W/2)+sg*d, w=Math.min(RAIL_W,D), o=D<RAIL_W?g:B.zf(s)-sg*(RAIL_OFF+RAIL_W/2)+sg*d;
+          return [Math.min(o,o+sg*w),Math.max(o,o+sg*w)];},'開']);
+      }
+    }
+    for(const F of FROGS){
+      if(!F.t) continue;
+      if((F.A===t&&F.ra===r)||(F.B===t&&F.rb===r)) iv=cutIv(iv,Math.min(F.throat,F.nose),Math.max(F.throat,F.nose));
+    }
+    iv.sort((u,v)=>u[0]-v[0]);
+    for(const v of iv){
+      const of=s=>t.zf(s)+r*RAIL_OFF;          // 描くのと同じ関数を登録簿に残す(検証が描いた位置そのものを測る)
+      if(v[2]) headRun(v[0],v[1],v[2]); else railRun(v[0],v[1],of,false);
+      RAILS.push({id:t.id,r:r,s0:v[0],s1:v[1],kind:v[2]?'トングレール':'レール',state:v[3],e:v[2],o:v[2]?null:of});
+    }
+  }
+  // ---- クロッシング:ノーズ・ウイングレール・床・ガードレール ----
+  for(const F of FROGS){
+    const lo=s=>Math.min(F.p(s),F.q(s)), hi=s=>Math.max(F.p(s),F.q(s));
+    if(!F.t){                                            // 鈍角:床だけ
+      viaEach(F.s-1.2,F.s+1.2,(C,a,b)=>C.md.col(0x4d5155).loft(VD,a,b,s=>{const y=railY(s);
+        return [[lo(s)-0.15,y+TRK.TIE_Y],[lo(s)-0.15,y+0.02],[hi(s)+0.15,y+0.02],[hi(s)+0.15,y+TRK.TIE_Y]];},{side:-1}));
+      continue;
+    }
+    const t=F.t, w0=Math.min(F.throat,F.wingEnd-t*0.4), w1=Math.max(F.throat,F.wingEnd-t*0.4);
+    const wf=s=>{const u=clamp(-t*(s-F.wingEnd)/0.4,0,1);return 0.05*u*u;};                 // V 側の端だけ外へ開く
+    headRun(Math.min(F.tip,F.nose),Math.max(F.tip,F.nose),s=>[lo(s)-0.033,hi(s)+0.033]);      // ノーズ
+    railRun(w0,w1,s=>F.wP(s)+F.sp*wf(s),true);                                              // ウイングレール
+    railRun(w0,w1,s=>F.wQ(s)-F.sp*wf(s),true);
+    const b0=Math.min(F.throat+t*0.5,F.wingEnd-t*0.4), b1=Math.max(F.throat+t*0.5,F.wingEnd-t*0.4);
+    viaEach(b0,b1,(C,a,b)=>C.md.col(0x55595d).loft(VD,a,b,s=>{const y=railY(s), u=Math.min(lo(s),F.wQ(s),F.wP(s)), v=Math.max(hi(s),F.wQ(s),F.wP(s));
+      return [[u-0.12,y+TRK.TIE_Y],[u-0.12,y+0.02],[v+0.12,y+0.02],[v+0.12,y+TRK.TIE_Y]];},Object.assign({side:-1},RFINE)));   // マンガン鋼の床
+    const g0=Math.min(F.g0,F.g1), g1=Math.max(F.g0,F.g1);
+    railRun(g0,g1,s=>F.gA(s)+F.ra*flare(s,g0,g1,0.06,0.5),true);                        // ガードレール
+    railRun(g0,g1,s=>F.gB(s)+F.rb*flare(s,g0,g1,0.06,0.5),true);
+    RAILS.push({id:F.a,r:-F.ra,s0:g0,s1:g1,kind:'ガードレール',frog:F.s},{id:F.b,r:-F.rb,s0:g0,s1:g1,kind:'ガードレール',frog:F.s});
+  }
+  // ---- 転てつ機と転てつ棒 ----
+  for(const T of TURNOUTS){
+    const A=T.A, f=T.f, sg=T.sg;
+    for(const d of[0.45,1.25]){
+      const s=T.s+f*d, C=chunkAt(s), y=railY(s), a=A.zf(s);
+      C.md.col(0x50565c).box(VD,s,a+sg*0.05,y-0.09,y-0.07,0.07,RAIL_OFF*2+0.2);
+    }
+    const s=T.s+f*0.9, C=chunkAt(s), y=railY(s), o=A.zf(s)-sg*(RAIL_OFF+0.85);
+    C.md.col(0x6f7a72).box(VD,s,o,y+TRK.TIE_Y,y+0.18,0.95,0.42,{tag:'転てつ機'})
+      .col(0x5a6460).box(VD,s,o,y+0.18,y+0.22,0.85,0.34)
+      .col(0x50565c).box(VD,T.s+f*0.45,A.zf(s)-sg*(RAIL_OFF+0.38),y-0.09,y-0.07,0.07,0.55);
+  }
+  // ---- まくらぎ(全線共通の格子。重なる線路は分岐まくらぎにまとめる)と締結装置 ----
+  for(const C of VIA_CH){
+    for(let k=Math.ceil(C.s0/TRK.TIE_P);k*TRK.TIE_P<C.s1;k++){
+      const s=k*TRK.TIE_P, iv=[];
+      for(const t of TRACKS) if(s>=t.x0&&s<=t.x1) iv.push([t.zf(s)-TRK.TIE_HW,t.zf(s)+TRK.TIE_HW,[t]]);
+      if(!iv.length) continue;
+      iv.sort((u,v)=>u[0]-v[0]);
+      const G=[iv[0]];
+      for(let i=1;i<iv.length;i++){const L=G[G.length-1]; if(iv[i][0]<L[1]+0.3){L[1]=Math.max(L[1],iv[i][1]);L[2]=L[2].concat(iv[i][2]);} else G.push(iv[i]);}
+      const y=railY(s);
+      for(const g of G){
+        const one=g[2].length===1, t=g[2][0], yaw=one?Math.atan(t.zf(s+0.5)-t.zf(s-0.5)):0;
+        C.ties.push([s,(g[0]+g[1])/2,y,(g[1]-g[0])/2/TRK.TIE_HW,yaw]);
+        if(one) C.fast2.push([s,t.zf(s),y,yaw]);
+        else for(const u of g[2]) for(const r of[-1,1]){
+          if(FROGS.some(F=>F.t&&((F.A===u&&F.ra===r)||(F.B===u&&F.rb===r))&&(s-F.throat)*(s-F.nose)<0)) continue;
+          C.fast1.push([s,u.zf(s)+r*RAIL_OFF,y,Math.atan(u.zf(s+0.5)-u.zf(s-0.5))]);
+        }
+      }
+    }
+  }
+  // ---- 車止め:どこにもつながらない線路の端(区域の端を除く) ----
+  for(const t of TRACKS) for(const end of[0,1]){
+    const e=end?t.x1:t.x0, f=end?1:-1;
+    if(Math.abs(e-DOM.x0)<10||Math.abs(e-DOM.x1)<10) continue;
+    if(TRACKS.some(u=>u!==t&&e>=u.x0-0.05&&e<=u.x1+0.05&&Math.abs(u.zf(e)-t.zf(e))<0.03)) continue;
+    const s=e-f*2.0, o=t.zf(s), y=railY(s), C=chunkAt(s);
+    C.mg.col(0x7a3b33).box(VD,s,o,y+TRK.TIE_Y,y+1.1,0.8,2.6,{tag:'車止め'});
+    C.md.col(0xe8c21c).box(VD,s-f*0.41,o,y+0.72,y+1.04,0.02,2.2);
+    for(const d of[-0.8,-0.27,0.27,0.8]) C.md.col(0x26282b).box(VD,s-f*0.42,o+d,y+0.72,y+1.04,0.02,0.14);
+    C.md.col(0xd23a2a).box(VD,s,o,y+1.1,y+1.28,0.16,0.16);
+    BUFFERS.push({id:t.id,s:s,end:e});
+  }
+}
+/* まくらぎ1本(PCまくらぎ)。上面と線路方向の2側面(数万本を描くので、ほとんど見えない端面は作らない)。
+   原点=上面の中心、長さ方向=z */
+function tieGeo(){
+  const L=0.12, H=0.08, W=TRK.TIE_HW;
+  const P=[-L,0,-W, L,0,-W, L,0,W, -L,0,W,   L,-H,-W, L,-H,W, L,0,W, L,0,-W,   -L,-H,W, -L,-H,-W, -L,0,-W, -L,0,W];
+  const N=[]; for(const n of[[0,1,0],[1,0,0],[-1,0,0]]) for(let i=0;i<4;i++) N.push(n[0],n[1],n[2]);
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.Float32BufferAttribute(P,3));
+  g.setAttribute('normal',new THREE.Float32BufferAttribute(N,3));
+  const I=[]; for(let f=0;f<3;f++){const v=f*4; I.push(v,v+2,v+1,v,v+3,v+2);}
+  g.setIndex(I);
+  return g;
+}
+/* 締結装置(1本のまくらぎの上、offs=レールの位置)。タイプレート・ショルダー・板ばね。頂点カラー */
+function fastGeo(offs){
+  const P=[],N=[],Cc=[],I=[], col=new THREE.Color();
+  const box=(x0,x1,y0,y1,z0,z1,hex,fs,top)=>{
+    const F={top:[[x0,y1,z0],[x0,y1,z1],[x1,y1,z1],[x1,y1,z0],[0,1,0]],
+             px:[[x1,y0,z0],[x1,y1,z0],[x1,y1,z1],[x1,y0,z1],[1,0,0]], nx:[[x0,y0,z1],[x0,y1,z1],[x0,y1,z0],[x0,y0,z0],[-1,0,0]],
+             pz:[[x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1],[0,0,1]], nz:[[x1,y0,z0],[x0,y0,z0],[x0,y1,z0],[x1,y1,z0],[0,0,-1]]};
+    for(const k of fs){const q=F[k], v=P.length/3;
+      setSrgb(col,k==='top'&&top!==undefined?top:hex);
+      for(let i=0;i<4;i++){P.push(q[i][0],q[i][1],q[i][2]);N.push(q[4][0],q[4][1],q[4][2]);Cc.push(col.r,col.g,col.b);}
+      I.push(v,v+1,v+2,v,v+2,v+3);}
+  };
+  for(const zo of offs){
+    box(-0.09,0.09,0,0.012,zo-0.17,zo+0.17,0x3c4044,['top','px','nx']);
+    for(const sd of[-1,1]) box(-0.05,0.05,0.012,0.05,Math.min(zo+sd*0.055,zo+sd*0.125),Math.max(zo+sd*0.055,zo+sd*0.125),
+      0x6a6f74,['top','px','nx',sd>0?'pz':'nz'],0x23262a);
+  }
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.Float32BufferAttribute(P,3));
+  g.setAttribute('normal',new THREE.Float32BufferAttribute(N,3));
+  g.setAttribute('color',new THREE.Float32BufferAttribute(Cc,3));
+  g.setIndex(I);
+  return g;
+}
+const TIE_GEO=tieGeo(), FAST1_GEO=fastGeo([0]), FAST2_GEO=fastGeo([-RAIL_OFF,RAIL_OFF]);
+MAT.fast=M(0xffffff,{vertexColors:true});
 CUR=null;
 // 交差鉄道(井の頭線・世田谷線):実測の交点・軸方向(RAW.rail)に沿って配置
 function xGroup(A){const g=new THREE.Group();g.position.set(A.x,0,A.z);g.rotation.y=-A.phi;scene.add(g);return g;}
@@ -1557,7 +1787,7 @@ function cbox(x0,x1,offC,hw,y0,y1,mat,step){   // 曲線追従の直方体(荒�
   box(.3,y1-y0,hw*2,mat,x1-.15,(y0+y1)/2,offC);
 }
 /* ---- 駅の構造の寸法(レール面 y=railY を基準の高さ[m]) -----------------------
-   大屋根は架線柱の頂部(POLE_TOP=7.00)より上に置く(屋根の梁が架線設備に当たらない)。 */
+   大屋根の梁の下端(7.05)は、架線の可動ブラケットを吊る高さ(き電ちょう架線より1m余り上)。 */
 const STD={
   PLAT:1.10,              // ホーム面
   LIP:0.18, RECESS:0.25,  // ホーム縁の張出しの厚さ / その下の引っ込み(退避空間)
@@ -1707,6 +1937,12 @@ const MAT_SLAT=M(0xffffff,{map:slatTex,vertexColors:true});
 MAT.frost=mkMat('MeshLambertMaterial',{color:0xeef2f4,transparent:true,opacity:.62,side:THREE.DoubleSide});
 // 決まった乱数(0〜1)。外装の"不揃い"を毎回同じ形にする(Math.random は撮影で種を替えるので使わない)
 const hash01=n=>{const x=Math.sin(n*12.9898+78.233)*43758.5453;return x-Math.floor(x);};
+// バラスト(地上部の道床):大きさの不揃いな砕石。1こま=1.2m
+const MAT_BALLAST=M(0xffffff,{vertexColors:true,map:texOf(64,64,function(c){
+  c.fillStyle='#8f8a82';c.fillRect(0,0,64,64);
+  for(let i=0;i<520;i++){const v=118+Math.floor(hash01(i)*100);c.fillStyle='rgb('+v+','+(v-3)+','+(v-9)+')';
+    c.fillRect(Math.floor(hash01(i+1e3)*64),Math.floor(hash01(i+2e3)*64),2+Math.floor(hash01(i+3e3)*3),2+Math.floor(hash01(i+4e3)*3));}
+})});
 /* ---- 駅の構造(2026-10 作り込み) -------------------------------------------
    【設計方針】駅は次の部品に分けて組み立てる。すべて駅ごとの結合ジオメトリ(STG)へ積むので、
    細かくしても描画の呼び出しは駅あたり材質の数(10回程度)で済む。遠くでは細部(md)を省く。
@@ -2234,12 +2470,6 @@ const STAIRS=[];                     // 階段・エレベーターの登録簿(
 for(const s of STA){
   const y=railY(s.x),c0=s.x, i=STA.indexOf(s), S=STG[i];
   CUR=s.kk?KOUKU[s.kk-1].VGs:null;
-  if(s.t==='ctx'){                   // 笹塚:島式2面4線(既存)。線路は6章で登録済み
-    for(const o of[-2,2]){         // 車止め(西端355m)
-      S.mg.col(0x8a4a42).box(SV,c0+355,o,railY(c0+355),railY(c0+355)+1.4,1.4,3.2);
-      S.md.col(0xe8e2d0).box(SV,c0+355-0.71,o,railY(c0+355)+0.9,railY(c0+355)+1.3,0.02,2.4);
-    }
-  }
   // 点字ブロックは「線路のある縁」だけに敷く。笹塚の内側は上の留置線を敷いてから判定する
   // (先に判定すると留置線がまだ TRACKS に無く、内側の縁に敷かれない)。
   const pr=platRange(s), x0=pr[0], x1=pr[1], pm=(x0+x1)/2, big=BIGROOF(s);
@@ -2563,8 +2793,9 @@ function buildCatenary(){
     if(drop.length) catBeam(C,s,P[-1],P[1],top-0.05,yr+BEAM_LOW);
   }
 }
-buildCatenary();
-// 高架橋・道床・架線の区画(5章・6章・6b章)を Mesh にする
+buildTrack();      // 6a章:道床・まくらぎ・レール・分岐器
+buildCatenary();   // 6b章:架線
+// 高架橋・軌道・架線の区画(5章・6a章・6b章)を Mesh にする
 viaFlush();
 for(const gq of XINGS){
   const sp=textSprite('旧 '+gq[0]+'踏切',null,false);
@@ -4628,7 +4859,7 @@ if(IS_MOBILE){
 /* 影の「落とす/受ける」は最後に一括で設定する。生成箇所ごとに付けると
    必ず付け忘れが出て、その物だけ影が無いという分かりにくい不整合になる。
    ・地表は受けるだけ(巨大な板なので落とす側に入れても無駄)
-   ・線(架線・き電線)とラベル(Sprite)は対象外 */
+   ・線(架線)とラベル(Sprite)は対象外 */
 const SHADOW_STAT={cast:0,recv:0};
 function applyShadows(){
   SHADOW_STAT.cast=0;SHADOW_STAT.recv=0;
