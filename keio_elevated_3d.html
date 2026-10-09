@@ -769,6 +769,10 @@ const MAT={
   glass:mkStd({color:srgb(0x9fc4d8),transparent:true,opacity:.72,side:THREE.DoubleSide,
                metalness:0.0,roughness:0.06,envMapIntensity:1.0}),
   ao:mkMat('MeshBasicMaterial',{color:0x18202a,transparent:true,opacity:.06}),
+  // 頂点カラーで塗り分ける構造物(3b章の結合ジオメトリ)。色の違う部品を1回の描画で描く。
+  // 駅と高架橋で分けるのは、夜に足す emissive(照らされている度合い)が違うため
+  stVC:M(0xffffff,{vertexColors:true}),
+  vdVC:M(0xffffff,{vertexColors:true}),
 };
 const wireMat=mkMat('LineBasicMaterial',{color:0x3d434a});
 // レール・ガラス・水面は Standard なので scene.environment から空を映す
@@ -864,6 +868,241 @@ function cyl(r,h,mat,s,y,off,seg){
   const p=frame(s,off);
   const m=new THREE.Mesh(new THREE.CylinderGeometry(r,r,h,seg||24),mat);
   m.position.set(p.x,y,p.z);return add(m);
+}
+
+/* ============ 3b. 結合ジオメトリ(駅・高架橋の細部を軽く描く) ============
+   【設計方針】駅と高架橋の細部(柱・梁・ルーバー・ホームドアの戸袋・手すり…)は数が多い。
+   1個ずつ Mesh にすると描画の呼び出しが部品の数だけ増える(2026-10 実測:ホームドアの
+   固定部だけで 5,400回/画=運転モードの描画の7割)。そこで部品を**材質ごとに1本の
+   バッファへ積み**、区画(駅1つ・高架の240m)ごとに1つの Mesh にして出す。
+   色の違う部品は頂点カラーで塗り分けるので、何十色あっても描画は材質の数だけで済む。
+   ・頂点は frame(s,off) で置く(線形を直せば追従する)
+   ・面の向きは「外向きの目安」から作る側で決める(巻き順の取り違えで面が裏返る事故を防ぐ)
+   ・法線は面ごと(平らな面をくっきり陰影づける)
+   ・区画は視錐台カリングの単位でもあり、細部は LOD(近くだけ表示)の単位でもある
+   ・tag を付けた部品は登録簿 STRUCT に (s,off,y) の範囲で残す(検証が建築限界を測る) */
+const STRUCT=[];                                  // 構造物の部品の登録簿(検証用)
+const MG_STAT={meshes:0,tris:0,verts:0};          // 結合ジオメトリの総量(負荷の確認用)
+const _mgC=new THREE.Color();
+const v3sc=(v,k)=>[v[0]*k,v[1]*k,v[2]*k];
+function MG(){
+  const B=new Map();                              // 材質 → 頂点バッファ
+  let cr=1,cg=1,cb=1;                             // いまの色(リニア)
+  const bx={x0:1e9,x1:-1e9,y0:1e9,y1:-1e9,z0:1e9,z1:-1e9};
+  const self={};
+  function buf(mat){
+    let q=B.get(mat);
+    if(!q){q={p:[],n:[],c:[],u:[],i:[],nv:0};B.set(mat,q);}
+    return q;
+  }
+  /* 平らな凸多角形を1枚積む(ワールド座標)。out=外向きの目安。法線がこれと逆なら
+     頂点の順を逆にする。法線は Newell 法(3点が一直線に並ぶ四角形でも正しく出る)。 */
+  function face(mat,P,out,UV){
+    let nx=0,ny=0,nz=0;
+    for(let k=0;k<P.length;k++){
+      const a=P[k],b=P[(k+1)%P.length];
+      nx+=(a[1]-b[1])*(a[2]+b[2]); ny+=(a[2]-b[2])*(a[0]+b[0]); nz+=(a[0]-b[0])*(a[1]+b[1]);
+    }
+    const l=Math.hypot(nx,ny,nz);
+    if(l<1e-10) return;                           // 面積0(潰れた面)は積まない
+    nx/=l;ny/=l;nz/=l;
+    if(out&&nx*out[0]+ny*out[1]+nz*out[2]<0){
+      P=P.slice().reverse(); if(UV)UV=UV.slice().reverse(); nx=-nx;ny=-ny;nz=-nz;
+    }
+    const q=buf(mat), v0=q.nv;
+    for(let k=0;k<P.length;k++){
+      const p=P[k];
+      q.p.push(p[0],p[1],p[2]); q.n.push(nx,ny,nz); q.c.push(cr,cg,cb);
+      if(UV) q.u.push(UV[k][0],UV[k][1]);
+      if(p[0]<bx.x0)bx.x0=p[0]; if(p[0]>bx.x1)bx.x1=p[0];
+      if(p[1]<bx.y0)bx.y0=p[1]; if(p[1]>bx.y1)bx.y1=p[1];
+      if(p[2]<bx.z0)bx.z0=p[2]; if(p[2]>bx.z1)bx.z1=p[2];
+    }
+    q.nv+=P.length;
+    for(let k=1;k<P.length-1;k++) q.i.push(v0,v0+k,v0+k+1);
+  }
+  self.face=function(mat,P,out,UV){face(mat,P,out,UV);return self;};
+  // 色(sRGBの16進)。以後に積む面に効く
+  self.col=function(hex){setSrgb(_mgC,hex);cr=_mgC.r;cg=_mgC.g;cb=_mgC.b;return self;};
+  // 線路の座標系の単位ベクトル:t=線路方向(sが増える向き)/n=+off(北)/上は(0,1,0)
+  function axes(s,off,yaw){
+    const f=frame(s,off), a=f.a+(yaw||0);
+    return {f:f, t:[Math.cos(a),0,Math.sin(a)], n:[-Math.sin(a),0,Math.cos(a)], a0:f.a};
+  }
+  self.axes=axes;
+  /* 直方体。c=中心(ワールド)、X/Y/Z=半辺ベクトル。skip に '+x' '-y' などを入れた面は省く
+     (地面に接する底面など、見えない面を作らない)。 */
+  function boxA(mat,c,X,Y,Z,skip){
+    const v=(i,j,k)=>[c[0]+X[0]*i+Y[0]*j+Z[0]*k, c[1]+X[1]*i+Y[1]*j+Z[1]*k, c[2]+X[2]*i+Y[2]*j+Z[2]*k];
+    const S=skip||'';
+    if(S.indexOf('+x')<0) face(mat,[v(1,-1,-1),v(1,1,-1),v(1,1,1),v(1,-1,1)],X);
+    if(S.indexOf('-x')<0) face(mat,[v(-1,-1,-1),v(-1,-1,1),v(-1,1,1),v(-1,1,-1)],v3sc(X,-1));
+    if(S.indexOf('+y')<0) face(mat,[v(-1,1,-1),v(-1,1,1),v(1,1,1),v(1,1,-1)],Y);
+    if(S.indexOf('-y')<0) face(mat,[v(-1,-1,-1),v(1,-1,-1),v(1,-1,1),v(-1,-1,1)],v3sc(Y,-1));
+    if(S.indexOf('+z')<0) face(mat,[v(-1,-1,1),v(1,-1,1),v(1,1,1),v(-1,1,1)],Z);
+    if(S.indexOf('-z')<0) face(mat,[v(-1,-1,-1),v(-1,1,-1),v(1,1,-1),v(1,-1,-1)],v3sc(Z,-1));
+  }
+  self.boxA=function(mat,c,X,Y,Z,skip){boxA(mat,c,X,Y,Z,skip);return self;};
+  function reg(tag,s,off,y0,y1,cs){        // 登録簿へ (s,off,y) の範囲を残す
+    let s0=1e9,s1=-1e9,o0=1e9,o1=-1e9;
+    for(const c of cs){s0=Math.min(s0,s+c[0]);s1=Math.max(s1,s+c[0]);o0=Math.min(o0,off+c[1]);o1=Math.max(o1,off+c[1]);}
+    STRUCT.push({tag:tag,s0:s0,s1:s1,o0:o0,o1:o1,y0:y0,y1:y1});
+  }
+  /* 線路の座標で置く直方体。中心(s,off)、高さ y0〜y1、長さ L(線路方向)・幅 W(直角方向)。
+     o.yaw=平面内の回転[rad] / o.pitch=線路方向の傾き[rad] / o.skip / o.tag(登録簿へ) */
+  self.box=function(mat,s,off,y0,y1,L,W,o){
+    o=o||{};
+    const A=axes(s,off,o.yaw), h=(y1-y0)/2;
+    let T=A.t, U=[0,1,0];
+    if(o.pitch){const c=Math.cos(o.pitch),sn=Math.sin(o.pitch);
+      T=[A.t[0]*c,sn,A.t[2]*c]; U=[-A.t[0]*sn,c,-A.t[2]*sn];}
+    boxA(mat,[A.f.x,(y0+y1)/2,A.f.z],v3sc(T,L/2),v3sc(U,h),v3sc(A.n,W/2),o.skip);
+    if(o.tag){
+      const cy=Math.cos(o.yaw||0), sy=Math.sin(o.yaw||0), cs=[];
+      for(const i of[-1,1])for(const k of[-1,1])cs.push([i*L/2*cy-k*W/2*sy, i*L/2*sy+k*W/2*cy]);
+      const dy=Math.abs(Math.sin(o.pitch||0))*L/2;
+      reg(o.tag,s,off,y0-dy,y1+dy,cs);
+    }
+    return self;
+  };
+  /* 縦の角柱(円柱の近似)。seg 角形、半径 r、y0〜y1。o.cap で上面、o.tag で登録 */
+  self.cyl=function(mat,s,off,y0,y1,r,seg,o){
+    o=o||{}; seg=seg||8;
+    const A=axes(s,off,0), P0=[],P1=[];
+    for(let k=0;k<seg;k++){
+      const th=(k+0.5)/seg*Math.PI*2, cx=Math.cos(th)*r, cz=Math.sin(th)*r;
+      const x=A.f.x+A.t[0]*cx+A.n[0]*cz, z=A.f.z+A.t[2]*cx+A.n[2]*cz;
+      P0.push([x,y0,z]);P1.push([x,y1,z]);
+    }
+    for(let k=0;k<seg;k++){
+      const j=(k+1)%seg, mx=(P0[k][0]+P0[j][0])/2-A.f.x, mz=(P0[k][2]+P0[j][2])/2-A.f.z;
+      face(mat,[P0[k],P0[j],P1[j],P1[k]],[mx,0,mz]);
+    }
+    if(o.cap) face(mat,P1.slice(),[0,1,0]);
+    if(o.tag) reg(o.tag,s,off,y0,y1,[[-r,-r],[r,r]]);
+    return self;
+  };
+  /* 任意の向きの角管(ワールド座標の2点 p0→p1、半径 r、seg 角形)。手すり・排水管・斜材 */
+  self.tube=function(mat,p0,p1,r,seg){
+    seg=seg||6;
+    const d=[p1[0]-p0[0],p1[1]-p0[1],p1[2]-p0[2]], L=Math.hypot(d[0],d[1],d[2]);
+    if(L<1e-6) return self;
+    const w=[d[0]/L,d[1]/L,d[2]/L];
+    const ref=Math.abs(w[1])<0.9?[0,1,0]:[1,0,0];
+    let u=[w[1]*ref[2]-w[2]*ref[1], w[2]*ref[0]-w[0]*ref[2], w[0]*ref[1]-w[1]*ref[0]];
+    const ul=Math.hypot(u[0],u[1],u[2]); u=[u[0]/ul,u[1]/ul,u[2]/ul];
+    const v=[w[1]*u[2]-w[2]*u[1], w[2]*u[0]-w[0]*u[2], w[0]*u[1]-w[1]*u[0]];
+    const ring=(p)=>{const R=[];for(let k=0;k<seg;k++){const th=k/seg*Math.PI*2,c=Math.cos(th)*r,s=Math.sin(th)*r;
+      R.push([p[0]+u[0]*c+v[0]*s,p[1]+u[1]*c+v[1]*s,p[2]+u[2]*c+v[2]*s]);}return R;};
+    const R0=ring(p0),R1=ring(p1);
+    for(let k=0;k<seg;k++){
+      const j=(k+1)%seg, th=(k+0.5)/seg*Math.PI*2;
+      face(mat,[R0[k],R0[j],R1[j],R1[k]],[u[0]*Math.cos(th)+v[0]*Math.sin(th),u[1]*Math.cos(th)+v[1]*Math.sin(th),u[2]*Math.cos(th)+v[2]*Math.sin(th)]);
+    }
+    return self;
+  };
+  /* 断面 sect(s)=[[off,y],...] を s0〜s1 に沿って掃引する(断面の点数は s によらず一定)。
+     o.closed … 閉じた断面。外向きは断面の面積の符号から自動で決まる
+     o.side   … 開いた断面の外側(+1=点の並びの進む向きの右手側 / -1=左手側)
+     o.col / o.cols[i] … 色(区間 i=点iから点i+1)
+     o.caps   … 両端に蓋(凸の断面だけ)
+     o.uv(s,点) … テクスチャ座標(レンガ等の模様を貼るとき)
+     o.step(既定2m)で標本化し、誤差 o.tol(既定2cm)以内なら間引く。
+     直線は粗く、曲線・勾配・幅の変わる所だけ細かくなる(三角形を増やさない)。 */
+  self.loft=function(mat,s0,s1,sect,o){
+    o=o||{};
+    if(s1-s0<0.01) return self;
+    const step=o.step||2, tol=o.tol||0.02, maxL=o.maxL||48;
+    const S=[]; for(let s=s0;s<s1-1e-6;s+=step) S.push(s); S.push(s1);
+    const SC=S.map(s=>sect(s));
+    const W=S.map((s,k)=>SC[k].map(q=>{const f=frame(s,q[0]);return [f.x,q[1],f.z];}));
+    const keep=[0]; let a=0;
+    for(let j=2;j<S.length;j++){
+      let bad=S[j]-S[a]>maxL;
+      for(let k=a+1;k<j&&!bad;k++){
+        const u=(S[k]-S[a])/(S[j]-S[a]);
+        for(let m=0;m<W[k].length;m++){
+          const p=W[a][m],q=W[j][m],r=W[k][m];
+          const dx=p[0]+(q[0]-p[0])*u-r[0], dy=p[1]+(q[1]-p[1])*u-r[1], dz=p[2]+(q[2]-p[2])*u-r[2];
+          if(dx*dx+dy*dy+dz*dz>tol*tol){bad=true;break;}
+        }
+      }
+      if(bad){keep.push(j-1);a=j-1;}
+    }
+    if(keep[keep.length-1]!==S.length-1) keep.push(S.length-1);
+    const n=SC[0].length, segs=o.closed?n:n-1;
+    let ar=0; for(let i=0;i<n;i++){const p=SC[0][i],q=SC[0][(i+1)%n];ar+=p[0]*q[1]-q[0]*p[1];}
+    const ori=o.closed?(ar>0?1:-1):(o.side||1);
+    if(o.col!==undefined) self.col(o.col);
+    for(let kk=0;kk<keep.length-1;kk++){
+      const k0=keep[kk],k1=keep[kk+1], A=axes(S[k0],0);
+      for(let i=0;i<segs;i++){
+        const j=(i+1)%n, p=SC[k0][i], q=SC[k0][j];
+        // 外向き(断面の面内):点の並びの右手側=(dy,-dx)。反時計回りの閉多角形なら外側
+        const dOff=ori*(q[1]-p[1]), dY=-ori*(q[0]-p[0]);
+        if(o.cols) self.col(o.cols[i]);
+        const P=[W[k0][i],W[k1][i],W[k1][j],W[k0][j]];
+        const UV=o.uv?[o.uv(S[k0],SC[k0][i]),o.uv(S[k1],SC[k1][i]),o.uv(S[k1],SC[k1][j]),o.uv(S[k0],SC[k0][j])]:null;
+        face(mat,P,[A.n[0]*dOff,dY,A.n[2]*dOff],UV);
+      }
+    }
+    if(o.caps){
+      const A0=axes(s0,0),A1=axes(s1,0);
+      face(mat,W[0].slice(),v3sc(A0.t,-1));
+      face(mat,W[W.length-1].slice(),A1.t);
+    }
+    if(o.tag){
+      let o0=1e9,o1=-1e9,y0=1e9,y1=-1e9;
+      for(const k of keep)for(const q of SC[k]){o0=Math.min(o0,q[0]);o1=Math.max(o1,q[0]);y0=Math.min(y0,q[1]);y1=Math.max(y1,q[1]);}
+      STRUCT.push({tag:o.tag,s0:s0,s1:s1,o0:o0,o1:o1,y0:y0,y1:y1});
+    }
+    return self;
+  };
+  // 曲線に沿う直方体(cbox と同じ形を結合ジオメトリで)。底面を省くときは o.noBottom
+  self.cbox=function(mat,x0,x1,offC,hw,y0,y1,o){
+    o=o||{};
+    const sect=()=>[[offC-hw,y0],[offC+hw,y0],[offC+hw,y1],[offC-hw,y1]];
+    return self.loft(mat,x0,x1,sect,Object.assign({closed:true,caps:true},o));
+  };
+  self.bounds=()=>bx;
+  self.verts=()=>{let v=0;for(const q of B.values())v+=q.nv;return v;};
+  /* 積んだ面を材質ごとに1つの Mesh にして parent へ足す。空なら何もしない */
+  self.flush=function(parent){
+    const out=[];
+    for(const [mat,q] of B){
+      if(!q.nv) continue;
+      const g=new THREE.BufferGeometry();
+      g.setAttribute('position',new THREE.Float32BufferAttribute(q.p,3));
+      g.setAttribute('normal',new THREE.Float32BufferAttribute(q.n,3));
+      if(mat.vertexColors) g.setAttribute('color',new THREE.Float32BufferAttribute(q.c,3));
+      if(q.u.length) g.setAttribute('uv',new THREE.Float32BufferAttribute(q.u,2));
+      g.setIndex(q.i);
+      const m=new THREE.Mesh(g,mat);
+      parent.add(m); out.push(m);
+      MG_STAT.meshes++; MG_STAT.tris+=q.i.length/3; MG_STAT.verts+=q.nv;
+    }
+    B.clear();
+    return out;
+  };
+  return self;
+}
+/* ---- 近くだけ見せる細部(LOD) ----
+   結合した細部の群を「中心と半径」で登録し、カメラとの距離で表示を切り替える。
+   判定は描く直前のカメラで行う(ループと撮影モードの render の両方から呼ぶ)。 */
+const LODS=[];
+let LOD_STRUCT=1;                 // 距離の倍率(スマホでは縮める)
+function lodAdd(obj,b,dist){
+  const x=(b.x0+b.x1)/2, y=(b.y0+b.y1)/2, z=(b.z0+b.z1)/2;
+  const r=Math.hypot(b.x1-b.x0,b.y1-b.y0,b.z1-b.z0)/2;
+  if(!(r<1e8)) return;            // 空の群
+  LODS.push({o:obj,x:x,y:y,z:z,r:r,d:dist});
+}
+function lodStruct(){
+  const p=camera.position;
+  for(const L of LODS){
+    const v=Math.hypot(p.x-L.x,p.y-L.y,p.z-L.z)-L.r < L.d*LOD_STRUCT;
+    if(L.o.visible!==v) L.o.visible=v;
+  }
 }
 
 /* ============ 4. 地表・道路・水緑・施設(平面図準拠) ============ */
@@ -1248,6 +1487,19 @@ function platDetail(x0,x1,offC,hw,y){
 const staLabels=[],tagLabels=[],xingLabels=[];
 // ホームドアの定義。実体は列車の諸元(扉配置・編成長)が要るので9章の後で組み立てる。
 const PSD_DEF=[];
+/* 駅ごとの結合ジオメトリ(3b章)。mg=常に描く部品 / md=近くだけ描く細部(LOD)。
+   7章(駅の構造)と9章(ホームドア)が積み、9章の最後に stFlush() でまとめて Mesh にする。 */
+const LOD_ST=520;                    // 駅の細部を描く距離[m]
+const STG=STA.map(st=>({st:st, g:new THREE.Group(), d:new THREE.Group(), mg:MG(), md:MG()}));
+function stFlush(){
+  for(const S of STG){
+    const b=S.md.bounds(), bb={x0:b.x0,x1:b.x1,y0:b.y0,y1:b.y1,z0:b.z0,z1:b.z1};
+    S.mg.flush(S.g); S.md.flush(S.d);
+    S.g.add(S.d); scene.add(S.g);
+    S.g.name='駅 '+S.st.n; S.d.name='駅の細部 '+S.st.n;
+    lodAdd(S.d,bb,LOD_ST);
+  }
+}
 function tag(t,s,y,off,rd){const sp=textSprite(t,null,false);sp.scale.set(96,19,1);
   const p=frame(s,off);sp.position.set(p.x,y,p.z);
   if(rd){sp.visible=false;xingLabels.push(sp);}   // 道路系=「踏切名」トグルに連動
@@ -1771,6 +2023,8 @@ const NIGHT=(function(){
     // 「真っ暗な板の上を走る」絵になる
     ['slab',   0x101216], ['deckNew', 0x101216], ['deckOld', 0x0e1014],
     ['barrier',0x14161b], ['rail',    0x1d2026], ['pole', 0x0e1014],
+    // 結合ジオメトリ(3b章):駅はホーム・上屋と同じく明るめ、高架橋は桁と同じ
+    ['stVC',   0x272318], ['vdVC',    0x101216],
   ];
   function set(on){
     G.visible=!!on;
@@ -3005,6 +3259,19 @@ const PSD=[];
 const G_PSD_LEAF=new THREE.BoxGeometry(1,1.22,.07);
 const MAT_PSDL=M(0xdfe2e5);
 const PSD_OPEN=0.80;                      // 開口の半幅[m](開口1.60m)
+/* 開口と開口の間の固定部(戸袋)。扉はこの中へ引き込まれる。
+   駅ごとの結合ジオメトリ(STG)へ積む:1個ずつ Mesh にすると1列あたり約250回の描画になり、
+   ホームドアだけで運転モードの描画の7割を占めていた(2026-10 実測 5,400回/画)。
+   ・戸袋(白)と笠木(濃灰)は常に描く。京王の藍の帯と開口脇の支柱は近くだけ(LOD) */
+const PSD_H=1.22, PSD_T=0.24;             // 高さ(ホーム面から)・戸袋の厚さ[m]
+function psdFixed(S,a,b,off,y){
+  const m=(a+b)/2, L=b-a, yp=y+1.1;
+  S.mg.col(0xe9ebee).box(MAT.stVC,m,off,yp,yp+PSD_H-0.10,L,PSD_T,{skip:'-y',tag:'ホームドア'});
+  S.mg.col(0x59626d).box(MAT.stVC,m,off,yp+PSD_H-0.10,yp+PSD_H,L+0.02,PSD_T+0.06,{skip:'-y'});
+  S.md.col(0x1b2a66).box(MAT.stVC,m,off,yp+PSD_H-0.36,yp+PSD_H-0.28,Math.max(0.05,L-0.02),PSD_T+0.012,{skip:'-y+y'});
+  for(const e of[a+0.05,b-0.05])
+    S.md.col(0xc4c9cf).box(MAT.stVC,e,off,yp,yp+PSD_H+0.04,0.10,PSD_T+0.08,{skip:'-y'});
+}
 for(const d of PSD_DEF){
   const st=d.st, ro=runOff(st.x);
   for(const off of d.drs){
@@ -3031,13 +3298,14 @@ for(const d of PSD_DEF){
     const trackOff=dir>0?-ro:ro;
     const side=(off>trackOff?1:-1)*localZSign(st.x,dir);
     CUR=st.kk?KOUKU[st.kk-1].VGs:null;
-    // 開口と開口の間の固定部
+    // 開口と開口の間の固定部(戸袋)。駅の結合ジオメトリへ積む
+    const SG=STG[STA.indexOf(st)];
     let prev=d.x0;
     for(const c of open){
-      if(c-PSD_OPEN-prev>0.05) cbox(prev,c-PSD_OPEN,off,.06,d.y+1.1,d.y+2.32,MAT.hdoor);
+      if(c-PSD_OPEN-prev>0.05) psdFixed(SG,prev,c-PSD_OPEN,off,d.y);
       prev=c+PSD_OPEN;
     }
-    if(d.x1-prev>0.05) cbox(prev,d.x1,off,.06,d.y+1.1,d.y+2.32,MAT.hdoor);
+    if(d.x1-prev>0.05) psdFixed(SG,prev,d.x1,off,d.y);
     // 扉(2枚引き)。曲線に追従させるためインスタンスで置き、開閉は行列を更新する
     const inst=new THREE.InstancedMesh(G_PSD_LEAF,MAT_PSDL,open.length*2);
     add(inst);
@@ -3046,6 +3314,7 @@ for(const d of PSD_DEF){
   }
 }
 CUR=null;
+stFlush();      // 駅の結合ジオメトリ(7章の構造+ホームドア)を Mesh にする
 // 開度 r(0=閉/1=開)を反映する
 const _psdM=new THREE.Matrix4(),_psdQ=new THREE.Quaternion(),_psdE=new THREE.Euler(),
       _psdV=new THREE.Vector3(),_psdS=new THREE.Vector3(PSD_OPEN,1,1);
@@ -3469,6 +3738,7 @@ const IS_MOBILE=/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)||
 if(IS_MOBILE){
   renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));   // 解像度上限で描画負荷を抑える
   LOD_NEAR=260;                                             // 高精細モデルの適用範囲を短縮
+  LOD_STRUCT=0.6;                                           // 駅・高架橋の細部も近くだけに
   renderer.shadowMap.enabled=false;sun.castShadow=false;    // 影は1パス増えるので無効
   const lockLandscape=()=>{                                 // 可能なら横画面に固定
     if(screen.orientation&&screen.orientation.lock) screen.orientation.lock('landscape').catch(()=>{});
@@ -3556,6 +3826,7 @@ function loop(now){
   // 影の写す範囲を注視点へ追従させる(太陽の向きは変えない)
   sunFollow(cam.tx,cam.tz,
     Math.hypot(camera.position.x-cam.tx,camera.position.y,camera.position.z-cam.tz));
+  lodStruct();            // 駅・高架橋の細部は近くだけ描く(今のカメラで判定)
   renderer.render(scene,camera);
 }
 
@@ -3861,6 +4132,7 @@ const CINE=(function(){
     // そのままだと1コマ前のカメラ位置で判定され、カットの頭で前面の部品が消える
     for(const t of trains) for(const c of t.cars) if(c.visible) lodCar(c);
     for(const c of parkedCars) lodCar(c);
+    lodStruct();                 // 駅・高架橋の細部も今のカメラで判定する
     renderer.render(scene,camera);
   }
   return {
