@@ -75,6 +75,10 @@
   #tools button:hover{border-color:var(--keio-indigo)}
   #tools button.on{background:var(--keio-indigo);color:#fff;border-color:var(--keio-indigo)}
   #tools button.ride.on{background:var(--keio-pink);border-color:var(--keio-pink)}
+  /* 時刻・季節の切替(4つ並びの小さなボタン) */
+  #tools .seg{display:flex;align-items:center;gap:3px}
+  #tools .seg b{font:700 10.5px/1 inherit;color:var(--dim);min-width:27px}
+  #tools .seg button{flex:1;min-width:26px;padding:6px 0;text-align:center}
   #tools button:focus-visible{outline:2px solid var(--keio-pink);outline-offset:1px}
   #nav{left:12px;right:196px;top:12px;padding:10px 14px 8px}   /* 上部固定・右のボタン群を回避 */
   #nav .cap{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px}
@@ -151,6 +155,8 @@
   <button id="btnTrain" class="on">列車走行 ON</button>
   <button id="btnLabel" class="on">駅ラベル ON</button>
   <button id="btnXing">踏切名 OFF</button>
+  <div class="seg" id="segTime" role="group" aria-label="時刻"><b>時刻</b><button data-k="morning">朝</button><button data-k="noon">昼</button><button data-k="evening">夕</button><button data-k="night">夜</button></div>
+  <div class="seg" id="segSeason" role="group" aria-label="季節"><b>季節</b><button data-k="spring">春</button><button data-k="summer">夏</button><button data-k="autumn">秋</button><button data-k="winter">冬</button></div>
 </div>
 
 <div class="panel" id="spd">
@@ -4311,7 +4317,9 @@ let cineOn=false;         // 撮影モード:実時間のループを止め、CI
 function loop(now){
   requestAnimationFrame(loop);
   if(cineOn){last=now;return;}
-  const dt=Math.min(.05,(now-last)/1000);last=now;
+  // 最初のコマは rAF の時刻が読み込み完了の時刻より前のことがあり、差が負になる
+  // (そのままだと列車や雪が数秒ぶん逆に進む)。0〜0.05秒に収める
+  const dt=clamp((now-last)/1000,0,.05);last=now;
   stepWorld(dt);
   if(rideOn){
     stepRide(dt);
@@ -4352,6 +4360,7 @@ function loop(now){
   // 影の写す範囲を注視点へ追従させる(太陽の向きは変えない)
   sunFollow(cam.tx,cam.tz,
     Math.hypot(camera.position.x-cam.tx,camera.position.y,camera.position.z-cam.tz));
+  CINE.tick(dt);          // 雪・花びら(冬・春)を進め、空をカメラの真上へ
   lodStruct();            // 駅・高架橋の細部は近くだけ描く(今のカメラで判定)
   renderer.render(scene,camera);
 }
@@ -4400,9 +4409,11 @@ const CINE=(function(){
     morning:{n:'朝',  az: 12, el:19, sun:0xffd9a8, si:0.62,
              hs:0xdfe6f2, hg:0x8d8a86, hi:0.74, expo:1.18,
              sky:{top:0x8fb4dd, hor:0xf0e2d2, bot:0xc9ccce, glow:0xffe9c6}, fog:[2200,10000]},
-    noon   :{n:'昼',  az: 80, el:62, sun:0xfff4e0, si:0.78,
-             hs:0xe4ecf4, hg:0x8a8d90, hi:0.84, expo:1.18,
-             sky:{top:0x8fb8e8, hor:0xd9e7f2, bot:0xc6d0d6, glow:0xf6ecd8}, fog:[2800,12000]},
+    // 昼は画面の既定の見え方(3章の太陽・半球光・空の"見え方"・フォグ)と同じ値にする。
+    // 画面のメニューは開いた時に 昼 を当てるので、ここがずれると既定の絵が変わってしまう
+    noon   :{n:'昼',  dir:{x:2400,y:3200,z:1600}, sun:0xfff4e0, si:0.72,
+             hs:0xe4ecf4, hg:0x8a8d90, hi:0.82, expo:1.18,
+             sky:{top:0x9cc0e8, hor:0xd6e4ef, bot:0xc6d0d6, glow:0xf2e6d4}, fog:[2600,11500]},
     evening:{n:'夕',  az:168, el:14, sun:0xffb070, si:0.60,
              hs:0xe9d9cf, hg:0x87807c, hi:0.62, expo:1.18,
              sky:{top:0x7d9ec8, hor:0xf2c89a, bot:0xb8a89c, glow:0xffd9a0}, fog:[1800,9000]},
@@ -4424,8 +4435,9 @@ const CINE=(function(){
   let curTime='noon', curSeason='summer';
   function setTime(k){
     const t=TIME[k]||TIME.noon; curTime=k;
-    const a=t.az*Math.PI/180, e=t.el*Math.PI/180;
-    setSunDir({x:Math.cos(e)*Math.cos(a)*4000, y:Math.sin(e)*4000, z:Math.cos(e)*Math.sin(a)*4000});
+    const a=(t.az||0)*Math.PI/180, e=(t.el||0)*Math.PI/180;
+    setSunDir(t.dir?Object.assign({},t.dir)
+      :{x:Math.cos(e)*Math.cos(a)*4000, y:Math.sin(e)*4000, z:Math.cos(e)*Math.sin(a)*4000});
     sun.color.copy(srgb(t.sun)); sun.intensity=t.si;
     hemi.color.copy(srgb(t.hs)); hemi.groundColor.copy(srgb(t.hg)); hemi.intensity=t.hi;
     renderer.toneMappingExposure=t.expo;
@@ -4670,6 +4682,10 @@ const CINE=(function(){
     shotStation:shotStation, shotFront:shotFront, shotAerial:shotAerial, stage:stage, STAGE:STAGE,
     render:render, caption:caption, setFar:setFar, setShadow:setShadow,
     fx:FX, fxTime:()=>fxT,
+    /* 実時間のループから毎コマ呼ぶ(画面のメニューで時刻・季節を選んだとき用)。
+       撮影の render() と同じく、空はカメラの真上へ移し、雪・花びらを今の時刻で置き直す */
+    tick(dt){fxT+=dt; skyDome.position.set(camera.position.x,0,camera.position.z); FX.update(fxT);},
+    now:()=>({time:curTime,season:curSeason}),
     stations:STA.map(s=>({n:s.n,x:s.x})),
     setSize(w,h){renderer.setPixelRatio(1);renderer.setSize(w,h,false);
       camera.aspect=w/h;camera.updateProjectionMatrix();},
@@ -4680,6 +4696,26 @@ window.CINE=CINE;
 // 検証用(tools/verify_k8render.js):車両だけを白い一様な光の正射影で描き、
 // v4 の照合ツール(側面45項目・前面14項目)で測るための入口
 window.K8API={makeCar:makeCar, setCarDoors:setCarDoors, renderer:renderer, K8:K8, scene:scene};
+
+/* ---- 時刻・季節(画面のメニュー) ----
+   撮影モードと同じ CINE.setTime / setSeason を使う(太陽の向き・光の色・露出・空・フォグ・
+   夜の灯り・地表と樹木の色・冬の雪/春の花びら)。選んだ組合せはこの端末に覚えておき、
+   次に開いたときも使う(保存できない環境では既定の 昼・夏)。 */
+const LOOK_UI={time:'noon',season:'summer'};
+function setLookUI(t,s){
+  if(t&&CINE.times.indexOf(t)>=0){LOOK_UI.time=t;CINE.setTime(t);}
+  if(s&&CINE.seasons.indexOf(s)>=0){LOOK_UI.season=s;CINE.setSeason(s);}
+  for(const b of document.querySelectorAll('#segTime button')) b.classList.toggle('on',b.dataset.k===LOOK_UI.time);
+  for(const b of document.querySelectorAll('#segSeason button')) b.classList.toggle('on',b.dataset.k===LOOK_UI.season);
+  try{localStorage.setItem('keio3d.look',JSON.stringify(LOOK_UI));}catch(e){}
+}
+for(const b of document.querySelectorAll('#segTime button')) b.onclick=()=>setLookUI(b.dataset.k,null);
+for(const b of document.querySelectorAll('#segSeason button')) b.onclick=()=>setLookUI(null,b.dataset.k);
+{
+  let saved=null;
+  try{saved=JSON.parse(localStorage.getItem('keio3d.look')||'null');}catch(e){saved=null;}
+  setLookUI((saved&&saved.time)||'noon',(saved&&saved.season)||'summer');
+}
 
 trains.forEach(placeTrain);
 requestAnimationFrame(loop);
