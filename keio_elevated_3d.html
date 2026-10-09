@@ -190,11 +190,12 @@ if(!window.THREE){document.body.insertAdjacentHTML('beforeend','<div class="pane
      1. 与件データ        : 駅STA/踏切XINGS(実名25)/交差道路/8工区KOUKU/手順STEPS/可視表VIS
      2. 縦断・断面・平面線形: railY(縦断) mainOff(本線の振り) deckHalf(桁半幅)
                               GEO→GP→CT(実座標スプライン) frame(s,off) nearestS
-     3. シーン基盤        : renderer/材質MAT/車体・レンガ等テクスチャ/工区グループ/strip・box・cyl
+     3. シーン基盤        : renderer/材質MAT/工区グループ/strip・box・cyl
+    3b. 結合ジオメトリ    : MG(材質ごとに結合・頂点カラー・掃引)/LOD(lodStruct)/登録簿STRUCT
      4. 地表・道路・施設  : 幹線/踏切道スタブ/側道/玉川上水/給水所/変電所/駅前広場
-     5. 高架橋・架線      : deckRunHalf=南半(VGa:下り線部)+北半(VGb:上り線部)/橋脚/架線柱
+     5. 高架橋・架線      : 架線柱/RCラーメン高架橋(床版・高欄・縦梁・柱と横梁・継目・道床・まくらぎ)
      6. 軌道ほか          : 本線・副本線・留置線(2本併設)・分岐器・井の頭線・世田谷線・地上線/仮線
-     7. 駅                : cbox(曲線追従)によるホーム・ホームドア・駅舎意匠・側面外観・駅名サイン
+     7. 駅                : ホーム・大屋根/上屋・柱・階段とEV・駅名標・外装(公表デザイン FAC)・高架下駅舎
      8. 街並み            : 街区整列の建物/樹木(幹+樹冠)
      9. 列車              : テクスチャ車体+パンタ(走行6本・滞泊編成)
     10. カメラ・モード    : オービット/運転モードrideOn(ワンハンドルマスコン)/列車追尾chaseOn
