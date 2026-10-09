@@ -87,7 +87,7 @@ function tracksAt(s, end) {
 }
 const STA_TAGS = new Set(['ホーム', '点字ブロック', 'ホーム端の柵', 'ホームドア', '階段の囲い', 'エレベーター',
   'ベンチ', '自動販売機', '乗務員モニター', 'ホームの柱', '吊りレール', '屋根の梁', '大屋根', '上屋',
-  '駅舎', '駅舎の庇', '大庇', '大庇の柱', '大庇の縁']);
+  '駅舎', '駅舎の庇', '大庇', '大庇の柱', '大庇の縁', '橋上駅舎', '橋上駅舎の柱']);
 
 /* ---- 1. 建築限界:駅の部品が列車・パンタグラフの通る空間に入らない ---------- */
 {
@@ -146,7 +146,7 @@ const STA_TAGS = new Set(['ホーム', '点字ブロック', 'ホーム端の柵
 {
   let bad = null, n = 0;
   for (const q of X.STRUCT) {
-    if (q.tag !== '大屋根' && q.tag !== '屋根の梁') continue;
+    if (q.tag !== '大屋根' && q.tag !== '屋根の梁' && q.tag !== '橋上駅舎') continue;
     const s = (q.s0 + q.s1) / 2, y = X.railY(s);
     for (const t of tracksAt(s)) {
       const ox0 = t - REF.PANTO_HW, ox1 = t + REF.PANTO_HW;
@@ -190,6 +190,18 @@ const STA_TAGS = new Set(['ホーム', '点字ブロック', 'ホーム端の柵
     if (k < REF.STAIRS_PER_PLAT && !miss) miss = 'off=' + p.off.toFixed(2) + ' s=' + p.x0.toFixed(0) + ' ' + k + 'か所';
   }
   ok('各ホームに階段が' + REF.STAIRS_PER_PLAT + 'か所', miss === null, '幅4m以上の全ホーム(' + nP + '面)', miss || '全て');
+  // 地上駅(線路が地平)の階段は上の橋上駅舎へ上がる(利用者指示:仙川)。高架駅は高架下へ降りる。
+  // 地上か高架かは検証側がレール面の高さで決める(3m 未満=地上)
+  let badUp = null, nUp = 0;
+  for (const w of X.STAIRS) {
+    if (w.kind !== '階段') continue;
+    const ground = X.railY((w.s0 + w.s1) / 2) < 3;
+    if (ground) nUp++;
+    if (!!w.up !== ground && !badUp) badUp = [w.st.n, ground ? '地上駅なのに下りる' : '高架駅なのに上がる'];
+    if (ground && !X.STRUCT.some((q) => q.tag === '橋上駅舎' && q.s0 <= Math.max(w.s0, w.s1) + 0.5 && q.s1 >= Math.min(w.s0, w.s1) - 0.5 &&
+      q.o0 <= w.o0 && q.o1 >= w.o1) && !badUp) badUp = [w.st.n, '上った先に橋上駅舎が無い'];
+  }
+  ok('地上駅の階段は橋上駅舎へ上がる', badUp === null && nUp > 0, '地上駅=上り・高架駅=下り', badUp ? badUp.join(' ') : '上り' + nUp + 'か所');
 }
 // 2b. ホームの柱・ベンチ・自動販売機は井戸・EVの中に立たない(階段を増やしたので位置がぶつかりうる)
 {
