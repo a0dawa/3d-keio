@@ -14,7 +14,7 @@ const path = process.argv[2] || 'keio_elevated_3d.html';
 const X = require('./stub_three')(path,
   'STA:STA,STG:STG,STRUCT:STRUCT,TRACKS:TRACKS,railY:railY,frame:frame,PLATS:PLATS,' +
   'STAIRS:(typeof STAIRS!=="undefined"?STAIRS:[]),SIGNS:(typeof SIGNS!=="undefined"?SIGNS:[]),' +
-  'MAT:MAT,MAT_BRICK:MAT_BRICK,MAT_STONE:MAT_STONE,MAT_LOUVER:MAT_LOUVER,MAT_RIB:MAT_RIB,' +
+  'WEAVE:(typeof WEAVE!=="undefined"?WEAVE:[]),MAT:MAT,MAT_BRICK:MAT_BRICK,MAT_STONE:MAT_STONE,MAT_LOUVER:MAT_LOUVER,MAT_RIB:MAT_RIB,' +
   'platRange:platRange,deckHalf:deckHalf,' +
   'PSD:PSD,K8:K8,DECK_END:DECK_END,LODS:LODS,POLE_S:POLE_S,WIRE_CAT:WIRE_CAT');
 
@@ -42,7 +42,7 @@ const REF = {
   // パースから読んだ寸法(人物 約1.7m との比)
   LATTICE: [0.7, 1.2],     // 千歳烏山の格子の目[m](ホーム階の高さに約9段)
   LATTICE_ROWS: 6,         // 同 段の数の最小
-  BOND_TOL: 0.15,          // 同 小口積み:上下の段の縦材は半目(0.5目)ずれる。その許容[目]
+  WEAVE_SEP: [0.06, 0.30], // 同 平織り:交点で表の帯と裏の帯の層の差(帯が貫き合わない・浮きすぎない)[m]
   STAIRS_PER_PLAT: 2,      // 1つのホームの階段の数(利用者指示:1ホームに2か所)
   STAIR_GAP: 10,           // 2か所の階段の離れの最小[m](同じ場所に並べたものは1か所と数える)
   FIN_PITCH: [0.4, 0.65],  // 芦花公園の縦格子の間隔[m]
@@ -259,7 +259,8 @@ const STA_TAGS = new Set(['ホーム', '点字ブロック', 'ホーム端の柵
     return v.length > 1 ? (v[v.length - 1] - v[0]) / (v.length - 1) : 0;
   };
   const inR = (v, r) => v >= r[0] && v <= r[1];
-  // 千歳烏山の格子は小口積み:段ごとに縦材が格子の目の間隔で並び、上下の段で半目ずれる
+  // 千歳烏山の格子は平織り:縦の帯が格子の目の間隔で揃って並び、交点ごとに横と縦の帯の表裏が
+  // 上下・左右で交互に入れ替わる(利用者指示。2026-10 小口積みから訂正)
   { const byC = new Map();
     for (const q of north('外装:格子(縦)')) {
       const k = Math.round(q.y0 * 50);
@@ -267,19 +268,26 @@ const STA_TAGS = new Set(['ホーム', '点字ブロック', 'ホーム端の柵
       byC.get(k).push((q.s0 + q.s1) / 2);
     }
     const C = [...byC.keys()].sort((a, b) => a - b).map((k) => byC.get(k).sort((a, b) => a - b));
-    let pmin = 1e9, pmax = 0, bad = null, fmax = 0;
+    let pmin = 1e9, pmax = 0, bad = null;
     for (const c of C) for (let i = 1; i < c.length; i++) { const d = c[i] - c[i - 1]; pmin = Math.min(pmin, d); pmax = Math.max(pmax, d); }
-    for (let r = 1; r < C.length; r++) {
-      const a = C[r - 1], p = (a[a.length - 1] - a[0]) / Math.max(1, a.length - 1);
-      let f = ((C[r][0] - a[0]) / p) % 1; if (f < 0) f += 1;
-      fmax = Math.max(fmax, Math.abs(f - 0.5));
-      if (Math.abs(f - 0.5) > REF.BOND_TOL && !bad) bad = (r + 1) + '段目のずれ ' + f.toFixed(2) + '目';
-    }
+    for (let r = 1; r < C.length; r++)                // 縦の帯は段ごとにずれず、同じ位置に揃う
+      if ((C[r].length !== C[0].length || C[r].some((v, i) => Math.abs(v - C[0][i]) > 0.01)) && !bad) bad = (r + 1) + '段目で縦の帯がずれる';
     ok('千歳烏山の格子の目', C.length >= REF.LATTICE_ROWS && pmin >= REF.LATTICE[0] && pmax <= REF.LATTICE[1],
       REF.LATTICE.join('〜') + 'm・' + REF.LATTICE_ROWS + '段以上',
       C.length ? pmin.toFixed(2) + '〜' + pmax.toFixed(2) + 'm・' + C.length + '段' : '無し');
-    ok('千歳烏山の格子が小口積み(段ごとに半目ずれる)', bad === null && C.length >= 2, '0.5±' + REF.BOND_TOL + '目',
-      bad || (C.length >= 2 ? '最大の外れ ' + fmax.toFixed(2) + '目' : '段が無い')); }
+    // 平織り:交点ごとに表(外側)の帯が横と縦で入れ替わる。右隣・上の交点とは表裏が逆
+    const key = (q) => q.sg + ',' + q.r + ',' + q.c, W = new Map(X.WEAVE.map((q) => [key(q), q]));
+    const outerH = (q) => Math.abs(q.hor) > Math.abs(q.ver);
+    let n = 0;
+    for (const q of X.WEAVE) {
+      n++;
+      const sep = Math.abs(Math.abs(q.hor) - Math.abs(q.ver));
+      if ((sep < REF.WEAVE_SEP[0] || sep > REF.WEAVE_SEP[1]) && !bad) bad = '交点の層の差 ' + sep.toFixed(3) + 'm';
+      for (const nb of [W.get(q.sg + ',' + q.r + ',' + (q.c + 1)), W.get(q.sg + ',' + (q.r + 1) + ',' + q.c)])
+        if (nb && outerH(nb) === outerH(q) && !bad) bad = '段' + q.r + '・列' + q.c + 'の隣と表裏が同じ';
+    }
+    ok('千歳烏山の格子が平織り(交点ごとに表裏が交互)', bad === null && n > 100, '上下・左右で交互・層の差' + REF.WEAVE_SEP.join('〜') + 'm',
+      bad || n + '交点'); }
   { const L = north('外装:木の縦格子'), pt = pitchOf(L);
     const dep = L.length ? Math.min.apply(null, L.map((q) => q.o1 - q.o0)) : 0;
     ok('芦花公園の縦格子(間隔・見込み)', inR(pt, REF.FIN_PITCH) && dep >= REF.FIN_DEPTH - 1e-6,
