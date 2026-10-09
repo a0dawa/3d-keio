@@ -17,7 +17,7 @@ const X = require('./stub_three')(path,
   'PLAZA_S:PLAZA_S,PLAZA_OFF:PLAZA_OFF,SUBK:SUBK,SUBC:SUBC,' +
   'stepXRail:stepXRail,inoCars:inoCars,setaCars:setaCars,INO_LIM:INO_LIM,INO_CARS:INO_CARS,INO_PITCH:INO_PITCH,' +
   'INO_TRK:INO_TRK,SETA_LO:SETA_LO,SETA_HI:SETA_HI,SETA_CARS:SETA_CARS,SETA_PITCH:SETA_PITCH,' +
-  'XCAR:XCAR,K8GEO:K8GEO,' +
+  'XCAR:XCAR,K8GEO:K8GEO,XM_WHL:XM_WHL,' +
   'GAUGE_INO:GAUGE_INO,GAUGE_SETA:GAUGE_SETA,RAIL_W:RAIL_W');
 
 /* ---- 期待値(検証側が独立して持つ) ----------------------------------------
@@ -179,8 +179,11 @@ ok('樹木の数', T.length >= REF.MIN_TREES, '≥' + REF.MIN_TREES + '本', T.l
     }
     ok('交差鉄道は専用モデル', bad === null, '8000系と別', bad ? bad[0] : '井の頭線/世田谷線とも専用');
     // 軌間は線区ごと(井の頭線1067mm / 世田谷線1372mm)。車輪の左右位置で測る。
-    const wheelZ = (c) => { let m = 0; c.traverse((o) => {
-      const g = o.geometry; if (g && g.type === 'Cyl' && Math.abs(o.position.z) > m) m = Math.abs(o.position.z); }); return m; };
+    // 車輪は材質ごとに結合した1つのジオメトリなので、その頂点の |z| の平均(左右対称の円柱の中心)で測る
+    const wheelZ = (c) => { let sum = 0, n = 0; c.traverse((o) => {
+      if (o.material !== X.XM_WHL || !o.geometry || !o.geometry.attributes || !o.geometry.attributes.position) return;
+      const P = o.geometry.attributes.position.array; for (let i = 2; i < P.length; i += 3) { sum += Math.abs(P[i]); n++; } });
+      return n ? sum / n : 0; };
     const wantI = (X.GAUGE_INO + X.RAIL_W) / 2, wantS = (X.GAUGE_SETA + X.RAIL_W) / 2;
     const gotI = wheelZ(X.inoCars[0]), gotS = wheelZ(X.setaCars[0]);
     ok('交差鉄道の軌間', Math.abs(gotI - wantI) < 1e-6 && Math.abs(gotS - wantS) < 1e-6,
