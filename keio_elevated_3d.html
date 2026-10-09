@@ -2217,6 +2217,7 @@ function canopy(S,x0,x1,pc,hw,y,col){
    形の大きいもの(帯・格子・縦材)は mg、細い方立などは md(近くだけ)。
    不透明の板は厚みのある箱で作る(片面の板だとホームの内側から見て消える)。 */
 const FD=0.15, FAC_Y0=-0.6;
+const WEAVE=[];                 // 千歳烏山の格子の交点(横・縦の帯の off)。検証用
 const fO=(sg,d)=>s=>sg*(deckHalf(s)+d);
 function fBand(Sx,mat,col,s0,s1,sg,d,th,y0,y1,o){        // 厚さ th の板(外面が d)
   if(col!==null) Sx.col(col);
@@ -2349,17 +2350,44 @@ const FAC={
   /* 千歳烏山:温かみのある灰褐色の粗目の格子がホーム階を覆う。格子は単純なマス目ではなく、
      レンガの小口積みのように段ごとに縦材を半目ずらす(利用者指示)。目は0.9m×0.8m、
      見付16〜18cm・見込み35cm。奥はガラス。下は暗い灰の太い桁 */
+  /* 千歳烏山:平織り(利用者指示)。横の帯と縦の帯が交点ごとに表と裏を入れ替えて編まれる。
+     交点 (段 r, 列 c) で r+c が偶数なら横の帯が表、奇数なら縦の帯が表。帯は交点の間で表の層と
+     裏の層の間を斜めに渡る(横の帯=交点ごとに標本を置いた掃引/縦の帯=交点の間ごとの面)。
+     交点の表裏は登録簿 WEAVE に残す(⑪が上下・左右で交互か確かめる) */
   '千歳烏山':function(S,st,sg,y){
-    const a=st.x-STD.RL+1, b=st.x+STD.RL-1, yg=y-GIRDER, y0=y+FAC_Y0, y1=y+STD.FAS0, G=0.9, GY=0.8, D=0.35;
+    const G=0.9, GY=0.8, W=0.17, T=0.07, dO=FD+0.33, dI=FD+0.24;   // 目・帯の幅・帯の厚さ・表と裏の層
+    const n=Math.floor((2*STD.RL-2)/G), a=st.x-n*G/2, b=a+n*G, yg=y-GIRDER, y0=y+FAC_Y0, y1=y+STD.FAS0;
+    const R=Math.floor((y1-y0-0.3)/GY), hr=r=>y0+0.25+GY*(r+0.5);    // 横の帯の中心の高さ
+    const dep=(r,c,hor)=>((r+c)%2===0)===hor?dO:dI;                  // 交点の層(表=dO)
     fBand(S.mg,SV,0x575859,a,b,sg,FD,0.25,yg,y0,{tag:'外装:高架の側面'});
     fGlass(S.mg,a,b,sg,FD-0.06,y0,y1);
-    for(let h=y0,r=0;h<y1-0.2;h+=GY,r++){
-      fRail(S.mg,0xb09b82,a,b,sg,FD,D,h,h+0.16,'外装:格子(横)');
-      const top=Math.min(h+GY,y1), sh=(r%2)*G/2;          // 1段おきに半目ずらす
-      for(let s=a+sh;s<=b+0.01;s+=G)
-        S.mg.col(0x9c8770).box(SV,s,sg*(deckHalf(s)+FD+D/2),h+0.16,top,0.18,D,{skip:'-y+y',tag:'外装:格子(縦)'});
+    for(let r=0;r<R;r++){                                            // 横の帯
+      const h=hr(r);
+      S.mg.col(0xb09b82).loft(SV,a,b,s=>{const c=Math.round((s-a)/G), E=deckHalf(s), d=dep(r,c,true);
+        return [[sg*(E+d-T/2),h-W/2],[sg*(E+d+T/2),h-W/2],[sg*(E+d+T/2),h+W/2],[sg*(E+d-T/2),h+W/2]];},
+        {closed:true,step:G,tol:0.0005,maxL:1e9,tag:'外装:格子(横)'});
     }
-    fRail(S.mg,0x8a7764,a,b,sg,FD,0.4,y1-0.05,y1+0.12);
+    const P=(s,d,yy)=>{const f=frame(s,sg*(deckHalf(s)+d));return [f.x,yy,f.z];};
+    for(let c=0;c<=n;c++){                                           // 縦の帯(交点の間ごとに斜めの面)
+      const s=a+c*G, A=S.mg.axes(s,0), out=v3sc(A.n,sg);
+      const pts=[[y0,dep(0,c,false)]];
+      for(let r=0;r<R;r++) pts.push([hr(r),dep(r,c,false)]);
+      pts.push([y1,dep(R-1,c,false)]);
+      S.mg.col(0x9c8770);
+      for(let k=0;k<pts.length-1;k++){
+        const [ya,da]=pts[k], [yb,db]=pts[k+1];
+        for(const [u,v,nrm] of[[T/2,T/2,out],[-T/2,-T/2,v3sc(out,-1)]])      // 外面・内面
+          S.mg.face(SV,[P(s-W/2,da+u,ya),P(s+W/2,da+u,ya),P(s+W/2,db+v,yb),P(s-W/2,db+v,yb)],nrm);
+        for(const sd of[-1,1])                                                  // 側面
+          S.mg.face(SV,[P(s+sd*W/2,da-T/2,ya),P(s+sd*W/2,da+T/2,ya),P(s+sd*W/2,db+T/2,yb),P(s+sd*W/2,db-T/2,yb)],v3sc(A.t,sd));
+      }
+      for(let r=0;r<R;r++){
+        const h=hr(r), dv=dep(r,c,false), dh=dep(r,c,true), E=deckHalf(s);
+        STRUCT.push({tag:'外装:格子(縦)',s0:s-W/2,s1:s+W/2,o0:Math.min(sg*(E+dv-T/2),sg*(E+dv+T/2)),o1:Math.max(sg*(E+dv-T/2),sg*(E+dv+T/2)),y0:h-W/2,y1:h+W/2});
+        WEAVE.push({sg:sg,r:r,c:c,s:s,y:h,hor:sg*(E+dh),ver:sg*(E+dv)});
+      }
+    }
+    fRail(S.mg,0x8a7764,a,b,sg,FD,0.45,y1-0.05,y1+0.12);
   },
 };
 
