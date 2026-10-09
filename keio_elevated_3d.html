@@ -207,7 +207,7 @@ if(!window.THREE){document.body.insertAdjacentHTML('beforeend','<div class="pane
      ・断面/高さ: RAIL_H・DECK_DROP・GIRDER・WIDE([中心s,桁半幅,一定区間半長])・BUMPS
      ・踏切     : XINGS=[名称, s位置]
      ・工事手順 : KOUKU(s0/s1=工区範囲, m=工法A側方/B仮線/C直上, jv/note)・STEPS文言・VIS可視表
-     ・配色     : MAT(構造物)/brickMat・woodMat・latticeMat(駅意匠)/car_spec由来の色(車両)
+     ・配色     : MAT(構造物)/7章 FAC(駅の外装)・頂点カラー(結合ジオメトリ)/car_spec由来の色(車両)
 
    ■ 保守メモ
      ・編集後は <script> 内を抽出し node --check で構文確認を推奨
@@ -778,63 +778,6 @@ const wireMat=mkMat('LineBasicMaterial',{color:0x3d434a});
 // レール・ガラス・水面は Standard なので scene.environment から空を映す
 // (envMapIntensity は材質側で指定済み)。
 // 車両の塗色はジオメトリで表現(makeCar内で色指定)。旧テクスチャ方式は廃止。
-function patTex(draw,w,h,rx,ry){
-  const cv=document.createElement('canvas');cv.width=w;cv.height=h;
-  draw(cv.getContext('2d'));
-  const t=canvasTex(cv);
-  t.wrapS=THREE.RepeatWrapping;t.wrapT=THREE.RepeatWrapping;t.repeat.set(rx,ry);
-  return t;
-}
-// --- 公式パース(2019.5.30)の側面意匠を再現するテクスチャ群 ---
-// 代田橋:木質の縦フィン(高さ不揃い)/明大前:グレーパネル+紫アクセント/桜上水:金属リブ+木質
-// 上北沢:落ち着いた横帯+ガラス/芦花公園:木質縦格子(書架)/千歳烏山:粗目格子/下高井戸:温色の大庇
-const finMat=mkMat('MeshLambertMaterial',{map:patTex(c=>{
-  c.fillStyle='#6f665c';c.fillRect(0,0,128,128);
-  for(let x=0;x<128;x+=8){const h=26+((x*37)%46);   // 縦フィン(上端が波打つ)
-    c.fillStyle=(x/8)%2?'#c39a5f':'#b08a52';
-    c.fillRect(x,h,6,128-h);}
-},128,128,26,1)});
-const meidaiMat=mkMat('MeshLambertMaterial',{map:patTex(c=>{
-  c.fillStyle='#8f959c';c.fillRect(0,0,128,128);
-  for(let i=0;i<8;i++)for(let j=0;j<4;j++){
-    const r=(i*7+j*13)%11;
-    c.fillStyle=r<2?'#7b3f9d':r<4?'#cfd4d9':r<6?'#aeb4ba':'#9aa1a8';
-    c.fillRect(i*16+2,j*32+3,12,26);}
-},128,128,9,1)});
-const ribMat=mkMat('MeshLambertMaterial',{map:patTex(c=>{
-  c.fillStyle='#b9bcc0';c.fillRect(0,0,128,128);
-  for(let x=0;x<128;x+=10){c.fillStyle=(x/10)%2?'#a7abaf':'#c9ccd0';c.fillRect(x,0,8,128);}
-},128,128,12,1)});
-const kamiMat=mkMat('MeshLambertMaterial',{map:patTex(c=>{
-  c.fillStyle='#7f8ea3';c.fillRect(0,0,128,128);
-  c.fillStyle='#9fb0c2';c.fillRect(0,10,128,30);
-  c.fillStyle='#6c7b8f';c.fillRect(0,74,128,44);
-},128,128,10,1)});
-const shelfMat=mkMat('MeshLambertMaterial',{map:patTex(c=>{
-  c.fillStyle='#3f2f22';c.fillRect(0,0,128,128);
-  for(let x=0;x<128;x+=9){const w=5+((x*13)%3);      // 木質縦格子=書架
-    c.fillStyle=(x/9)%3===0?'#a8763f':(x/9)%3===1?'#c69a5c':'#8d5f31';
-    c.fillRect(x,0,w,128);}
-},128,128,24,1)});
-const brickMat=mkMat('MeshLambertMaterial',{map:patTex(c=>{
-  c.fillStyle='#a8604f';c.fillRect(0,0,128,64);
-  c.strokeStyle='#c9a08f';c.lineWidth=3;
-  for(let y=0;y<=64;y+=16){c.beginPath();c.moveTo(0,y);c.lineTo(128,y);c.stroke();}
-  for(let r=0;r<4;r++)for(let x=(r%2)*16;x<=128;x+=32){c.beginPath();c.moveTo(x,r*16);c.lineTo(x,r*16+16);c.stroke();}
-},128,64,10,3)});
-const woodMat=mkMat('MeshLambertMaterial',{map:patTex(c=>{
-  c.fillStyle='#9c8a6a';c.fillRect(0,0,128,128);
-  for(let x=0;x<128;x+=16){c.fillStyle=(x/16)%2?'#8a7a5c':'#a5926f';c.fillRect(x,0,14,128);}
-},128,128,8,1)});
-const latticeMat=mkMat('MeshLambertMaterial',{map:patTex(c=>{
-  c.fillStyle='#5d4a36';c.fillRect(0,0,128,128);            // 格子の奥(影)
-  c.fillStyle='#c99a63';                                     // 温かみのある粗目格子
-  for(let x=0;x<128;x+=26)c.fillRect(x,0,11,128);
-  for(let y=0;y<128;y+=26)c.fillRect(0,y,128,11);
-  c.fillStyle='#e0b782';
-  for(let x=0;x<128;x+=26)c.fillRect(x,0,4,128);
-},128,128,9,2)});
-
 // 工区グループ(VG=新高架/GD=地上下り/GU=地上上り/GG=バラスト・踏切/TP=仮線)
 // 工区の構造グループ(高架南/中/北・駅施設)。工事手順モードは撤去済み
 for(const K of KOUKU){
@@ -1452,8 +1395,6 @@ function textSprite(main,sub,big){
     map:canvasTex(cv),depthTest:false,toneMapped:false}));
   sp.renderOrder=10;scene.add(sp);return sp;
 }
-const MAT_TACTILE=M(0xe0b93c);     // 点字ブロック(黄)
-const MAT_ENDFENCE=M(0xb9bec4);    // ホーム端の柵
 const TACTILE_IN=0.45, TACTILE_HW=0.15;   // 縁からの距離 / 帯の半幅[m]
 const TACTILE_TOL=2.5;                     // 縁の外側どれだけ以内に線路があれば「線路側」か[m]
 const PLATS=[];                            // ホームの登録簿(検証用)
@@ -1468,21 +1409,24 @@ function trackNear(s,off,tol){
 }
 /* ホームの付帯物:縁の点字ブロックと、ホーム端(短辺)の柵。
    x0..x1 がホームの範囲、offC が中心、hw が半幅。 */
-function platDetail(x0,x1,offC,hw,y){
-  const tac=[], fen=[];
-  const mid=(x0+x1)/2;
+function platDetail(S,x0,x1,offC,hw,y,o){
+  const tac=[], fen=[], V=MAT.stVC;
+  const mid=(x0+x1)/2, yt=y+1.1;
   for(const sg of [-1,1]){         // 点字ブロック:線路のある縁から45cm内側に幅30cm
     const edge=offC+sg*hw;
     if(!trackNear(mid,edge+sg*TACTILE_TOL/2,TACTILE_TOL/2)) continue;
-    const o=offC+sg*(hw-TACTILE_IN);
-    cbox(x0+0.3,x1-0.3,o,TACTILE_HW,y+1.10,y+1.13,MAT_TACTILE,10);
-    tac.push(o);
+    const of=offC+sg*(hw-TACTILE_IN);
+    S.mg.col(0xe0b93c).loft(V,x0+0.3,x1-0.3,()=>[[of-TACTILE_HW,yt],[of+TACTILE_HW,yt],[of+TACTILE_HW,yt+0.012],[of-TACTILE_HW,yt+0.012]],
+      {closed:true,tag:'点字ブロック'});
+    tac.push(of);
   }
-  for(const e of [x0+0.25,x1-0.25]){   // ホーム端の柵(転落防止)
-    cbox(e-0.06,e+0.06,offC,hw,y+1.1,y+2.20,MAT_ENDFENCE,2);
+  for(const e of [x0+0.25,x1-0.25]){   // ホーム端の柵(転落防止)。板+笠木+支柱
+    S.mg.col(0xb9bec4).box(V,e,offC,yt,yt+1.1,0.05,hw*2-0.1,{skip:'-y',tag:'ホーム端の柵'});
+    S.md.col(0xe0b93c).box(V,e,offC,yt+0.45,yt+0.6,0.055,hw*2-0.12);
+    S.md.col(0x8d949b).box(V,e,offC,yt+1.1,yt+1.15,0.08,hw*2);
     fen.push(e);
   }
-  PLATS.push({x0:x0,x1:x1,off:offC,hw:hw,y:y,tactile:tac,fence:fen});
+  PLATS.push({x0:x0,x1:x1,off:offC,hw:hw,y:y,tactile:tac,fence:fen,lampY:(o&&o.lampY)||y+3.3});
 }
 const staLabels=[],tagLabels=[],xingLabels=[];
 // ホームドアの定義。実体は列車の諸元(扉配置・編成長)が要るので9章の後で組み立てる。
@@ -1516,37 +1460,492 @@ function cbox(x0,x1,offC,hw,y0,y1,mat,step){   // 曲線追従の直方体(荒�
   box(.3,y1-y0,hw*2,mat,x0+.15,(y0+y1)/2,offC);
   box(.3,y1-y0,hw*2,mat,x1-.15,(y0+y1)/2,offC);
 }
-function signTex(t){
-  const cv=document.createElement('canvas');cv.width=512;cv.height=96;
+/* ---- 駅の構造の寸法(レール面 y=railY を基準の高さ[m]) -----------------------
+   大屋根は架線柱の頂部(POLE_TOP=7.00)より上に置く(屋根の梁が架線設備に当たらない)。 */
+const STD={
+  PLAT:1.10,              // ホーム面
+  LIP:0.18, RECESS:0.25,  // ホーム縁の張出しの厚さ / その下の引っ込み(退避空間)
+  RAIL0:3.95, RAIL1:4.20, // 吊りレール(駅名標・照明を吊る)の下端・上端
+  BEAM:7.05,              // 大屋根の梁の下端
+  CEIL:7.55,              // 大屋根の天井
+  ROOF:7.85, CROWN:0.25,  // 屋根面(軒)と中央の盛り上がり
+  FAS0:7.15, FAS1:8.25,   // 軒先の鼻隠し
+  RL:108,                 // 大屋根の半長[m](ホームの半長105+3)
+  COLP:10.5,              // ホームの柱の間隔[m]
+  CAN0:4.65, CAN1:5.05,   // 片持ちの上屋(既存駅)の天井・屋根面
+};
+// ホームの並び [中心off, 半幅]。PLAT_EDGE(2b章)と同じ値(片方だけ変えないこと)
+const PLT_OF={isl:[[0,3.5]], hachi:[[0,3.0]], side:[[-5.85,2.25],[5.85,2.25]],
+              quad:[[-6.05,2.5],[6.05,2.5]], ctx:[[-6.05,2.5],[6.05,2.5]], gnd:[[0,3.0],[7.85,1.7]]};
+// ホームドアの列(縁から0.12m内側=戸袋の厚さの半分)。仙川も縁の内側に置く
+const DRS_OF={isl:[-3.38,3.38], hachi:[-2.88,2.88], side:[-3.72,3.72],
+              quad:[-3.67,3.67,-8.43,8.43], ctx:[-3.67,3.67,-8.43,8.43], gnd:[-2.88,2.88]};
+// 公表デザイン(2019.5.30)の7駅は大屋根+側面の外装。既存駅(笹塚・八幡山・仙川)は片持ちの上屋
+const BIGROOF=st=>(st.t==='isl'||st.t==='side'||st.t==='quad');
+const ROMA=['Sasazuka','Daitabashi','Meidaimae','Shimo-takaido','Sakurajosui',
+            'Kami-kitazawa','Hachimanyama','Roka-koen','Chitose-karasuyama','Sengawa'];
+
+/* ---- サインの画像(駅名標・駅舎の看板)。全駅を1枚のキャンバスにまとめる ----------
+   1枚にすれば材質も1つで済み、全駅の看板を駅ごと1回の描画で描ける。
+   512×128 のこま を 4列×8行。駅 i は こま 3i=駅名標(左に新宿方)/3i+1=駅名標(左に八王子方)/
+   3i+2=駅舎の看板。最後の2こまは共通(出口・改札口)。
+   駅名標は線路に向けて両面に吊る。見る向きで左右の駅が入れ替わるので2種類を持つ。 */
+const SIGN_CW=512, SIGN_CH=128, SIGN_COLS=4, SIGN_ROWS=8;
+const SIGN_CV=document.createElement('canvas');
+SIGN_CV.width=SIGN_CW*SIGN_COLS; SIGN_CV.height=SIGN_CH*SIGN_ROWS;
+(function(){
+  const c=SIGN_CV.getContext('2d');
+  const F='"Hiragino Sans","Yu Gothic UI","Noto Sans JP",IPAGothic,sans-serif';
+  const fit=(t,px,wmax,wt)=>{let f=px;c.font=wt+' '+f+'px '+F;
+    while(f>10&&c.measureText(t).width>wmax){f-=2;c.font=wt+' '+f+'px '+F;}};
+  const cell=k=>[(k%SIGN_COLS)*SIGN_CW,Math.floor(k/SIGN_COLS)*SIGN_CH];
+  STA.forEach(function(st,i){
+    for(const v of[0,1]){                       // 駅名標:白地に駅名・ローマ字、下の帯に前後の駅
+      const q=cell(3*i+v), x=q[0], y=q[1];
+      c.fillStyle='#fbfbf8';c.fillRect(x,y,SIGN_CW,SIGN_CH);
+      c.fillStyle='#1c2733';c.textAlign='center';c.textBaseline='alphabetic';
+      fit(st.n,60,330,'700');c.fillText(st.n,x+256,y+62);
+      c.fillStyle='#55606c';fit(ROMA[i],22,330,'600');c.fillText(ROMA[i],x+256,y+88);
+      c.fillStyle='#e4007f';c.fillRect(x,y+94,SIGN_CW,4);
+      c.fillStyle='#1b2a66';c.fillRect(x,y+98,SIGN_CW,30);
+      const east=STA[i-1]?STA[i-1].n:'', west=STA[i+1]?STA[i+1].n:'';
+      const L=v?west:east, R=v?east:west;
+      c.fillStyle='#ffffff';c.textBaseline='middle';
+      if(L){c.textAlign='left';fit('◀ '+L,20,220,'600');c.fillText('◀ '+L,x+12,y+113);}
+      if(R){c.textAlign='right';fit(R+' ▶',20,220,'600');c.fillText(R+' ▶',x+500,y+113);}
+    }
+    const q=cell(3*i+2), x=q[0], y=q[1];        // 駅舎の看板:藍地に白抜き
+    c.fillStyle='#1b2a66';c.fillRect(x,y,SIGN_CW,SIGN_CH);
+    c.fillStyle='#e4007f';c.fillRect(x,y+114,SIGN_CW,8);
+    c.fillStyle='#ffffff';c.textBaseline='middle';
+    c.textAlign='left';fit('京王線',26,110,'600');c.fillText('京王線',x+16,y+58);
+    c.textAlign='center';fit(st.n+'駅',64,270,'700');c.fillText(st.n+'駅',x+262,y+58);
+    c.textAlign='right';fit('KEIO',24,90,'800');c.fillText('KEIO',x+498,y+58);
+  });
+  const ex=cell(3*STA.length), gt=cell(3*STA.length+1);
+  c.fillStyle='#f2c230';c.fillRect(ex[0],ex[1],SIGN_CW,SIGN_CH);
+  c.fillStyle='#1c2733';c.textAlign='center';c.textBaseline='middle';
+  fit('出口  Exit',64,460,'700');c.fillText('出口  Exit',ex[0]+256,ex[1]+64);
+  c.fillStyle='#24313f';c.fillRect(gt[0],gt[1],SIGN_CW,SIGN_CH);
+  c.fillStyle='#ffffff';fit('改札口  Gates',58,460,'700');c.fillText('改札口  Gates',gt[0]+256,gt[1]+64);
+})();
+const SIGN_TEX=canvasTex(SIGN_CV);
+// 夜は看板が内照で光る(emissiveMap に同じ画像を使う。8b章の EMI が emissive を足す)
+MAT.sign=M(0xffffff,{map:SIGN_TEX,emissiveMap:SIGN_TEX});
+// こま k の UV(左下・右下・右上・左上)
+function signUV(k){
+  const u0=(k%SIGN_COLS)/SIGN_COLS, u1=u0+1/SIGN_COLS;
+  const r=Math.floor(k/SIGN_COLS), v1=1-r/SIGN_ROWS, v0=v1-1/SIGN_ROWS;
+  return [[u0,v0],[u1,v0],[u1,v1],[u0,v1]];
+}
+/* 看板を1枚貼る。中心(s,off)・幅 w・高さ y0〜y1、向き face=+1(北=+off向き)/-1(南)/
+   'e'(新宿方=-s向き)/'w'(+s向き)。見る人の左に UV の左端が来るように頂点を並べる。 */
+const SIGNS=[];                      // 看板の登録簿(検証が向きと駅名の左右を確かめる)
+function signQuad(Sx,k,s,off,y0,y1,w,face){
+  SIGNS.push({k:k,s:s,off:off,y0:y0,y1:y1,w:w,face:face});
+  const A=Sx.axes(s,off), c=[A.f.x,0,A.f.z];
+  let L,R,out;                                 // 見る人から見た左端・右端の水平方向
+  if(face===1||face===-1){
+    const f=face;                              // 北向きの面を見る人は南を向く→左は新宿方(-s)
+    L=v3sc(A.t,-f*w/2); R=v3sc(A.t,f*w/2); out=v3sc(A.n,f);
+  }else{
+    const f=(face==='w')?1:-1;                 // +s向きの面を見る人は -s を向く→左は +off 側
+    L=v3sc(A.n,f*w/2); R=v3sc(A.n,-f*w/2); out=v3sc(A.t,f);
+  }
+  const P=(h,y)=>[c[0]+h[0],y,c[2]+h[2]];
+  Sx.face(MAT.sign,[P(L,y0),P(R,y0),P(R,y1),P(L,y1)],out,signUV(k));
+}
+/* ---- 駅の外装(公表デザイン)と駅舎の模様のテクスチャ ---- */
+// レンガ(代田橋):1こま=4段×2丁。UV は 1m あたり (1/0.44, 1/0.28) で与える
+const brickTex=(function(){
+  const cv=document.createElement('canvas');cv.width=128;cv.height=64;
   const c=cv.getContext('2d');
-  c.fillStyle='#f4f4f1';c.fillRect(0,0,512,96);
-  c.fillStyle='#1b2a66';c.fillRect(0,80,512,16);
-  c.fillStyle='#e4007f';c.fillRect(0,72,512,8);
-  c.fillStyle='#1c2733';c.font='700 50px "Hiragino Sans","Yu Gothic UI",sans-serif';
-  c.textAlign='center';c.fillText(t,256,52);
-  return canvasTex(cv);
+  const tone=['#a8604f','#9c5646','#b36a56','#a35b4a','#ad6552'];
+  for(let r=0;r<4;r++)for(let k=-1;k<3;k++){
+    c.fillStyle=tone[(r*3+k+5)%tone.length];
+    c.fillRect(k*64+(r%2)*32+2,r*16+2,60,12);
+  }
+  c.globalCompositeOperation='destination-over';c.fillStyle='#cdbfae';c.fillRect(0,0,128,64);
+  const t=canvasTex(cv);t.wrapS=t.wrapT=THREE.RepeatWrapping;return t;
+})();
+const MAT_BRICK=M(0xffffff,{map:brickTex});
+// 書架(芦花公園):高さ・幅・色の不揃いな本の背。1こま=幅2m・棚1段ぶん
+const bookTex=(function(){
+  const cv=document.createElement('canvas');cv.width=256;cv.height=128;
+  const c=cv.getContext('2d');
+  c.fillStyle='#2d2219';c.fillRect(0,0,256,128);              // 棚の奥(暗い)
+  const tone=['#a8763f','#c69a5c','#8d5f31','#d2b07a','#7a5a3a','#b98d55','#e0c08e'];
+  let x=0,k=0;
+  while(x<256){
+    const w=5+((k*37)%9), h=78+((k*53)%44), gap=((k*29)%11===0)?7:1;
+    c.fillStyle=tone[(k*5)%tone.length];c.fillRect(x,128-h,w,h);
+    c.fillStyle='rgba(0,0,0,.18)';c.fillRect(x+w-1,128-h,1,h);  // 背の陰
+    x+=w+gap;k++;
+  }
+  const t=canvasTex(cv);t.wrapS=t.wrapT=THREE.RepeatWrapping;return t;
+})();
+const MAT_BOOK=M(0xffffff,{map:bookTex});
+// 半透明のパネル(明大前の"透明感のある素材"・エレベーターの扉まわり)
+MAT.frost=mkMat('MeshLambertMaterial',{color:0xeef2f4,transparent:true,opacity:.62,side:THREE.DoubleSide});
+
+/* ---- 駅の構造(2026-10 作り込み) -------------------------------------------
+   【設計方針】駅は次の部品に分けて組み立てる。すべて駅ごとの結合ジオメトリ(STG)へ積むので、
+   細かくしても描画の呼び出しは駅あたり材質の数(10回程度)で済む。遠くでは細部(md)を省く。
+     ホーム    … 縁の張出し(下は退避空間)・縁石・点字ブロック・端の柵・番線の機器
+     屋根      … 大屋根(公表デザインの7駅)/片持ちの上屋(既存駅)。梁・天井・鼻隠し・天窓
+     柱        … ホームの樹状柱(枝で屋根の梁を受ける)。架線柱は屋根の梁と同じ位置で受ける
+     昇降      … 階段とエスカレーターの井戸(床を抜く)・エレベーター
+     サイン    … 吊りレールの駅名標(線路に向けて両面)・出口の案内・駅舎の看板
+     ベンチ等  … ベンチ・自動販売機・乗務員用モニター
+     外装      … 側面(ホーム階)と高架下の駅舎。公表デザインの要点を形で表す
+   公表デザインの要点(京王電鉄 2019.5.30 の発表文。図は参照できていない):
+     代田橋   … レンガ調+透明感のある素材(近隣の歴史的建築物・玉川上水の流れ)
+     明大前   … 透明感のある素材をリズミカルに組み合わせる(街の賑やかさと移り変わり)
+     下高井戸 … 温かな色彩の大庇を街へ向けて広げる(商店街との繋がり)
+     桜上水   … 木質調など自然と調和する質感・柔らかな配色(静かな住宅街と共存)
+     上北沢   … 落ち着いた色合いの素材+透明感のある素材(桜並木が映える)
+     芦花公園 … 木質調の縦格子を並べて書架を表現(文学にゆかりのある街)
+     千歳烏山 … 温かみのある配色+開放感のある粗目の格子(街との一体感)
+   八幡山(1970年に高架化済み)・笹塚(既設高架)・仙川(地上)は発表の対象外なので、
+   既存駅らしい片持ちの上屋とする。 */
+const SV=MAT.stVC;
+const fv=(v,s)=>(typeof v==='function')?v(s):v;
+// 水平な面(o0<o1)。up=true で上向き
+function hS(Sx,mat,s0,s1,o0,o1,yf,up,o){
+  return Sx.loft(mat,s0,s1,s=>[[fv(o0,s),yf],[fv(o1,s),yf]],Object.assign({side:up?-1:1},o||{}));
+}
+// 鉛直な面(y0<y1)。side=+1 で +off 向き
+function vS(Sx,mat,s0,s1,o,y0,y1,side,o2){
+  return Sx.loft(mat,s0,s1,s=>[[fv(o,s),y0],[fv(o,s),y1]],Object.assign({side:side},o2||{}));
+}
+// 線路方向に通る角材(断面 off o±hw・高さ y0〜y1)
+function bar(Sx,col,s0,s1,o,hw,y0,y1,o2){
+  Sx.col(col).loft(SV,s0,s1,s=>{const c=fv(o,s);return [[c-hw,y0],[c+hw,y0],[c+hw,y1],[c-hw,y1]];},
+    Object.assign({closed:true,caps:true},o2||{}));
+}
+// その s が井戸・エレベーターの近く(柱やベンチを置かない範囲)か
+const nearAny=(s,list,m)=>list.some(q=>s>q.s0-m&&s<q.s1+m);
+
+/* ホームの躯体。線路に面する縁は張出し(厚さ LIP)の下を RECESS だけ引っ込める
+   (実物のホーム下の退避空間)。線路の無い縁(相対式の背面など)は垂直に落とす。
+   wells の範囲は床を抜いて井戸にする(その区間は井戸の左右に分けて作る)。 */
+function platBody(S,x0,x1,pc,hw,y,wells){
+  const mg=S.mg, yb=y-DECK_DROP, yt=y+STD.PLAT, yl=yt-STD.LIP, mid=(x0+x1)/2;
+  const tL=trackNear(mid,pc-hw-TACTILE_TOL/2,TACTILE_TOL/2);
+  const tR=trackNear(mid,pc+hw+TACTILE_TOL/2,TACTILE_TOL/2);
+  const cuts=[x0,x1];
+  for(const w of wells) cuts.push(clamp(w.s0,x0,x1),clamp(w.s1,x0,x1));
+  cuts.sort((a,b)=>a-b);
+  for(let k=0;k<cuts.length-1;k++){
+    const a=cuts[k], b=cuts[k+1]; if(b-a<0.01) continue;
+    const m=(a+b)/2, w=wells.find(q=>m>q.s0&&m<q.s1);
+    const spans=w?[[pc-hw,w.o0],[w.o1,pc+hw]]:[[pc-hw,pc+hw]];
+    for(const sp of spans){
+      const l=sp[0], r=sp[1], eL=(l===pc-hw), eR=(r===pc+hw);
+      // 床版。C[i]=点iから点i+1までの面の色。上面の縁0.5mは明るい縁石
+      const P=[], C=[];
+      const pt=(p,c)=>{P.push(p);C.push(c);};
+      pt([l,yl],0x8a8d92);
+      pt([r,yl],eR?0xdcd9cf:0x9a9da2);
+      if(eR){pt([r,yt],0xd8d5ca);pt([r-0.5,yt],0xbdbcb5);} else pt([r,yt],0xbdbcb5);
+      if(eL) pt([l+0.5,yt],0xd8d5ca);
+      pt([l,yt],eL?0xdcd9cf:0x9a9da2);
+      mg.loft(SV,a,b,()=>P,{closed:true,caps:true,cols:C,tag:'ホーム'});
+      // 床版の下の躯体。線路側は引っ込める(張出しの下に影ができる)
+      const iL=(eL&&tL)?STD.RECESS:0, iR=(eR&&tR)?STD.RECESS:0;
+      const Q=[[l+iL,yb],[r-iR,yb],[r-iR,yl],[l+iL,yl]];
+      const QC=[0x777a80,(eR&&tR)?0x6c7075:(eR?0xb3b6ba:0x8d9095),0x777a80,(eL&&tL)?0x6c7075:(eL?0xb3b6ba:0x8d9095)];
+      mg.loft(SV,a,b,()=>Q,{closed:true,caps:true,cols:QC});
+    }
+  }
+}
+/* 階段とエスカレーターの井戸。入口は s0 側、奥(s1)は手すり壁で閉じる。
+   幅の左55%が階段、残りがエスカレーター(下り)。床版の下に続く先は暗がりにする。 */
+function stairWell(S,w,y){
+  const mg=S.mg, md=S.md, yt=y+STD.PLAT, yb=y-DECK_DROP;
+  const oS=w.o0+(w.o1-w.o0)*0.55;
+  mg.col(0x23272c); hS(mg,SV,w.s0,w.s1,w.o0,w.o1,yb+0.02,true);           // 井戸の底
+  const rise=0.165, run=0.30, N=Math.ceil((yt-yb)/rise);
+  for(let k=0;k<N;k++){                                                   // 階段(段の塊を積む)
+    const sA=w.s0+k*run, yB=Math.max(yb+0.04,yt-(k+1)*rise);
+    mg.col(0x9b9994).box(SV,sA+run/2,(w.o0+oS)/2,yb,yB,run,oS-w.o0-0.02,{skip:'-y'});
+    md.col(0xcdbd84).box(SV,sA+0.03,(w.o0+oS)/2,yB,yB+0.006,0.06,oS-w.o0-0.04,{skip:'-y'});   // 段鼻の滑り止め
+  }
+  // エスカレーター:乗り口の床板(金属)と、30°で下る踏み段の帯
+  const sC=w.s0+0.7, dl=(yt-yb-0.04)/Math.tan(Math.PI/6), eo=(oS+w.o1)/2, ehw=(w.o1-oS)/2-0.06;
+  mg.col(0xb4b8bd).box(SV,w.s0+0.35,eo,yt-0.04,yt,0.7,ehw*2,{skip:'-y'});
+  mg.col(0x3a3e44).box(SV,sC+dl/2,eo,yt-0.06-dl*Math.tan(Math.PI/6)/2-0.03,yt-0.06-dl*Math.tan(Math.PI/6)/2+0.03,
+    dl/Math.cos(Math.PI/6),ehw*2,{pitch:-Math.PI/6});
+  for(const o of[oS+0.03,w.o1-0.03]){                                     // 欄干(ガラス)と手すり
+    const A=mg.axes(sC,o), B=mg.axes(sC+dl,o);
+    const p0=[A.f.x,yt,A.f.z], p1=[B.f.x,yb+0.04,B.f.z];
+    mg.face(MAT.glass,[p0,p1,[p1[0],p1[1]+0.9,p1[2]],[p0[0],p0[1]+0.9,p0[2]]],A.n);
+    md.col(0x1a1c1f).tube(SV,[p0[0],p0[1]+0.93,p0[2]],[p1[0],p1[1]+0.93,p1[2]],0.04,6);
+  }
+  // 囲い:長辺2面と奥の面にガラスの手すり壁(高さ1.1m)。下に金属の幅木、上に笠木
+  const H=1.1;
+  vS(mg,MAT.glass,w.s0,w.s1,w.o0,yt,yt+H,-1); vS(mg,MAT.glass,w.s0,w.s1,w.o1,yt,yt+H,1);
+  {const A0=mg.axes(w.s1,w.o0), A1=mg.axes(w.s1,w.o1);
+   mg.face(MAT.glass,[[A0.f.x,yt,A0.f.z],[A1.f.x,yt,A1.f.z],[A1.f.x,yt+H,A1.f.z],[A0.f.x,yt+H,A0.f.z]],A0.t);}
+  for(const o of[w.o0,w.o1]){
+    bar(mg,0xc3c7cc,w.s0,w.s1,o,0.04,yt,yt+0.12,{tag:'階段の囲い'});
+    bar(md,0xd4d8dc,w.s0,w.s1,o,0.035,yt+H,yt+H+0.05);
+  }
+  mg.col(0xc3c7cc).box(SV,w.s1,(w.o0+w.o1)/2,yt,yt+0.12,0.08,w.o1-w.o0,{skip:'-y'});
+  md.col(0xd4d8dc).box(SV,w.s1,(w.o0+w.o1)/2,yt+H,yt+H+0.05,0.07,w.o1-w.o0,{skip:'-y'});
+  for(let s=w.s0+1.5;s<w.s1-0.5;s+=1.5) for(const o of[w.o0,w.o1])          // 支柱
+    md.col(0xc3c7cc).box(SV,s,o,yt,yt+H,0.05,0.05,{skip:'-y'});
+  // 入口の案内(出口=黄)。井戸の入口の上に、ホームの向きに両面で吊る
+  const k=3*STA.length;
+  signQuad(md,k,w.s0-0.6,(w.o0+w.o1)/2,yt+2.25,yt+2.62,1.4,'e');
+  signQuad(md,k,w.s0-0.62,(w.o0+w.o1)/2,yt+2.25,yt+2.62,1.4,'w');
+  md.col(0x2b3036).box(SV,w.s0-0.61,(w.o0+w.o1)/2,yt+2.23,yt+2.64,0.015,1.44);
+}
+/* エレベーター:ガラスのかご路(2m角)・四隅の柱・上の機械箱(駅の色)・扉(ステンレス) */
+function elevator(S,s,o,y,col){
+  const mg=S.mg, yt=y+STD.PLAT, H=2.5;
+  mg.box(MAT.glass,s,o,yt,yt+H,2.0,2.0,{skip:'-y+y',tag:'エレベーター'});
+  for(const a of[-0.97,0.97])for(const b of[-0.97,0.97])
+    mg.col(0xb9bec4).box(SV,s+a,o+b,yt,yt+H,0.08,0.08,{skip:'-y'});
+  mg.col(col).box(SV,s,o,yt+H,yt+H+0.25,2.1,2.1);
+  mg.col(0xc9cdd2).box(SV,s-1.02,o,yt,yt+2.1,0.04,1.05,{skip:'-y'});        // 扉(新宿方を向く)
+  mg.col(0x5b6470).box(SV,s-1.03,o,yt+2.1,yt+2.3,0.03,1.2,{skip:'-y'});      // 扉の上の表示
+  S.md.col(0x30353b).box(SV,s+0.1,o,yt,yt+2.3,1.6,1.6,{skip:'-y'});          // かご(ガラス越しに見える)
+}
+/* ホームの付帯物(ベンチ・自動販売機・乗務員用モニター)。近くだけ描く */
+function benchAt(md,s,o,y,face){                 // face=+1/-1:座る人が向く off の向き
+  const yt=y+STD.PLAT;
+  md.col(0xa87c50).box(SV,s,o,yt+0.40,yt+0.46,1.8,0.44,{tag:'ベンチ'});
+  md.col(0xa87c50).box(SV,s,o-face*0.24,yt+0.50,yt+0.88,1.8,0.05);
+  for(const d of[-0.75,0.75]) md.col(0x6c737b).box(SV,s+d,o,yt,yt+0.40,0.06,0.40,{skip:'-y'});
+}
+function vendAt(md,s,o,y,face,k){
+  const yt=y+STD.PLAT, c=[0xc8242b,0x2a5caa,0xe8e8e8][k%3];
+  md.col(0xeceeef).box(SV,s,o,yt,yt+1.83,0.98,0.72,{skip:'-y',tag:'自動販売機'});
+  md.col(c).box(SV,s,o+face*0.365,yt+0.75,yt+1.75,0.9,0.02);
+  md.col(0x1d2228).box(SV,s,o+face*0.37,yt+1.05,yt+1.6,0.7,0.02);
+}
+function monitorAt(md,s,o,y,dirS){               // dirS:モニターを見る運転士の来る向き(±s)
+  const yt=y+STD.PLAT;
+  md.col(0x5b6470).cyl(SV,s,o,yt,yt+2.6,0.05,6,{tag:'乗務員モニター'});
+  md.col(0x2c3138).box(SV,s,o,yt+2.35,yt+2.85,0.12,0.62);
+  md.col(0x6d8fb0).box(SV,s-dirS*0.065,o,yt+2.42,yt+2.78,0.01,0.52);
 }
 
+/* ---- 屋根 ---- */
+// 大屋根(ホーム階全体を覆う)。梁は柱の位置と架線柱の位置に入れる(架線柱は屋根の梁で受ける)
+function bigRoof(S,st,y,colLines){
+  const mg=S.mg, md=S.md, c0=st.x, R0=c0-STD.RL, R1=c0+STD.RL;
+  const E=s=>deckHalf(s)+0.38;
+  mg.col(0xe9e9e5); hS(mg,SV,R0,R1,s=>-E(s),E,y+STD.CEIL,false,{tag:'大屋根'});   // 天井
+  mg.col(0x9aa1a8).loft(SV,R0,R1,s=>[[-E(s),y+STD.ROOF],[0,y+STD.ROOF+STD.CROWN],[E(s),y+STD.ROOF]],{side:-1});
+  for(const sg of[-1,1])                                                         // 鼻隠し(駅の色)
+    mg.col(st.c).loft(SV,R0,R1,s=>{const o=sg*E(s),i=sg*(E(s)-0.2);
+      return [[i,y+STD.FAS0],[o,y+STD.FAS0],[o,y+STD.FAS1],[i,y+STD.FAS1]];},{closed:true,caps:true});
+  for(const s of[R0,R1]){                                                        // 妻側の屋根の厚み
+    const e=E(s), A=mg.axes(s,0), P=(o,yy)=>{const f=frame(s,o);return [f.x,yy,f.z];};
+    mg.col(0xc9ccd0).face(SV,[P(-e,y+STD.CEIL),P(e,y+STD.CEIL),P(e,y+STD.ROOF),P(0,y+STD.ROOF+STD.CROWN),P(-e,y+STD.ROOF)],
+      v3sc(A.t,s<c0?-1:1));
+  }
+  // 梁(柱の位置と架線柱の位置)。下面は天井より下に見える
+  const lines=colLines.concat(POLE_S.filter(p=>p>R0+1&&p<R1-1));
+  for(const s of lines){
+    const e=E(s)-0.25;
+    mg.col(0xd5d8db).box(SV,s,0,y+STD.BEAM,y+STD.CEIL,0.32,e*2,{skip:'+y',tag:'屋根の梁'});
+  }
+  // 天窓(ホームの上。空が映るガラスの帯)
+  for(const p of PLT_OF[st.t]){
+    const a=c0-92, b=c0+92, o0=p[0]-1.0, o1=p[0]+1.0;
+    const yr=s=>o=>y+STD.ROOF+STD.CROWN*(1-Math.abs(o)/E(s));
+    mg.loft(MAT.glass,a,b,s=>[[o0,yr(s)(o0)+0.12],[o1,yr(s)(o1)+0.12]],{side:-1});
+    for(const o of[o0,o1]) bar(mg,0x7b828a,a,b,o,0.06,yr(c0)(o)-0.05,yr(c0)(o)+0.16);
+  }
+}
+// 片持ちの上屋(既存駅)。ホームの中心線の柱で受ける
+function canopy(S,x0,x1,pc,hw,y,col){
+  const mg=S.mg, w=hw+0.35, yc=y+STD.CAN0, yr=y+STD.CAN1;
+  mg.col(0xdedfda); hS(mg,SV,x0,x1,pc-w,pc+w,yc,false,{tag:'上屋'});
+  mg.col(0x8d949b).loft(SV,x0,x1,()=>[[pc-w,yr-0.08],[pc,yr+0.12],[pc+w,yr-0.08]],{side:-1});
+  for(const sg of[-1,1])
+    mg.col(col).loft(SV,x0,x1,()=>{const o=pc+sg*w;return [[o-sg*0.14,yc-0.1],[o,yc-0.1],[o,yr],[o-sg*0.14,yr]];},{closed:true,caps:true});
+  for(const s of[x0,x1]){
+    const A=mg.axes(s,pc), P=(o,yy)=>{const f=frame(s,o);return [f.x,yy,f.z];};
+    mg.col(0xc9ccd0).face(SV,[P(pc-w,yc),P(pc+w,yc),P(pc+w,yr-0.08),P(pc,yr+0.12),P(pc-w,yr-0.08)],v3sc(A.t,s<(x0+x1)/2?-1:1));
+  }
+}
+
+/* ---- 側面の外装(公表デザイン)。sg=+1:北面/-1:南面 ----------------------------
+   外装の外面は桁端から d=0.15m 外。範囲は大屋根と同じ。
+   形の大きいもの(帯・格子・棚)は mg、細い縦材などは md(近くだけ)。 */
+const FD=0.15;
+const fO=(sg,d)=>s=>sg*(deckHalf(s)+d);
+function fBand(Sx,mat,col,s0,s1,sg,d,th,y0,y1,o){        // 厚さ th の板(外面が d)
+  if(col!==null) Sx.col(col);
+  Sx.loft(mat,s0,s1,s=>{const o2=sg*(deckHalf(s)+d);return [[o2-sg*th,y0],[o2,y0],[o2,y1],[o2-sg*th,y1]];},
+    Object.assign({closed:true,caps:true},o||{}));
+}
+function fRail(Sx,col,s0,s1,sg,d,dep,y0,y1,tag){        // 外装に沿って通る横材(曲線に追従)
+  fBand(Sx,SV,col,s0,s1,sg,d+dep,dep,y0,y1,{tag:tag});
+}
+function fGlass(Sx,s0,s1,sg,d,y0,y1){ vS(Sx,MAT.glass,s0,s1,fO(sg,d),y0,y1,sg); }
+function fFin(Sx,col,sx,sg,d,w,dep,y0,y1,tag){            // 外装の面から外へ dep 張り出す縦材
+  Sx.col(col).box(SV,sx,sg*(deckHalf(sx)+d+dep/2),y0,y1,w,dep,{skip:'-y',tag:tag});
+}
+const FAC={
+  // レンガ調の腰壁+ガラス。ガラスの前を横ルーバーが波打って流れる(玉川上水の流れ)
+  '代田橋':function(S,st,sg,y){
+    const a=st.x-STD.RL+1, b=st.x+STD.RL-1, yg=y-GIRDER, c0=st.x;
+    fBand(S.mg,MAT_BRICK,null,a,b,sg,FD,0.25,yg,y+1.7,{uv:(s,p)=>[s/0.44,p[1]/0.28],tag:'外装:レンガ調'});
+    fGlass(S.mg,a,b,sg,FD-0.05,y+1.7,y+STD.FAS0);
+    fBand(S.mg,SV,0xd8d1c4,a,b,sg,FD,0.2,y+6.55,y+STD.FAS0);
+    const bay=1.8;
+    for(let s=a;s<b-0.01;s+=bay){
+      const m=s+bay/2, ph=(m-c0)/48*Math.PI*2;
+      for(const h of[y+3.5+0.75*Math.sin(ph), y+5.35+0.55*Math.sin(ph+1.9)])
+        fFin(S.mg,0xe9e3d6,m,sg,FD,bay-0.06,0.32,h,h+0.12,'外装:流れのルーバー');
+      fFin(S.md,0x4b4239,s,sg,FD-0.05,0.08,0.16,y+1.7,y+6.55);
+    }
+  },
+  // 透明・半透明・白い板を不揃いな幅で並べる。段の高さも板ごとにずらす(リズム)
+  '明大前':function(S,st,sg,y){
+    const a=st.x-STD.RL+1, b=st.x+STD.RL-1, yg=y-GIRDER;
+    fBand(S.mg,SV,0xd9dcdf,a,b,sg,FD,0.25,yg,y-0.6);
+    const W=[1.2,0.6,1.2,1.8,0.6,1.2,0.6,1.8,1.2,0.6], T='cffcsfcfsf', U='fcsfcfcffc';
+    let s=a, k=0;
+    while(s<b-0.05){
+      const w=Math.min(W[k%W.length],b-s), split=y+((k*7)%3===0?4.2:(k%2?5.0:3.4));
+      for(const [y0,y1,t] of[[y-0.6,split,T[k%T.length]],[split,y+STD.FAS0,U[(k*3)%U.length]]]){
+        if(t==='s') fBand(S.mg,SV,0xf1f2f0,s+0.03,s+w-0.03,sg,FD,0.08,y0,y1);
+        else vS(S.mg,t==='c'?MAT.glass:MAT.frost,s,s+w,fO(sg,FD-0.02),y0,y1,sg);
+        STRUCT.push({tag:'外装:リズムの板 '+t,s0:s,s1:s+w,o0:sg*(deckHalf(s)+FD-0.1),o1:sg*(deckHalf(s)+FD),y0:y0,y1:y1});
+        fFin(S.md,0xcfd3d6,s+w/2,sg,FD,w,0.08,y1-0.04,y1+0.04);              // 横の見切り
+      }
+      fFin(S.md,0xcfd3d6,s,sg,FD,0.05,0.12,y-0.6,y+STD.FAS0);                 // 縦の見切り
+      s+=w; k++;
+    }
+  },
+  // 下部は温白色の腰壁、上はガラスと細い縦リブ。街側の大庇は高架下の駅舎(bldg)で作る
+  '下高井戸':function(S,st,sg,y){
+    const a=st.x-STD.RL+1, b=st.x+STD.RL-1, yg=y-GIRDER;
+    fBand(S.mg,SV,0xe8e0d4,a,b,sg,FD,0.25,yg,y+1.5);
+    fGlass(S.mg,a,b,sg,FD-0.05,y+1.5,y+STD.FAS0);
+    for(let s=a;s<b;s+=0.6) fFin(S.md,0xd4cfc6,s,sg,FD,0.05,0.28,y+1.5,y+STD.FAS0);
+    fBand(S.mg,SV,0xe0b386,a,b,sg,FD+0.3,0.3,y+1.4,y+1.6,{tag:'外装:暖色の帯'});   // 暖色の水平帯
+  },
+  // 柔らかなベージュの腰壁+木質の縦ルーバー(3色の木目を不規則に)
+  '桜上水':function(S,st,sg,y){
+    const a=st.x-STD.RL+1, b=st.x+STD.RL-1, yg=y-GIRDER;
+    fBand(S.mg,SV,0xe3d8c5,a,b,sg,FD,0.25,yg,y+1.3);
+    fBand(S.mg,SV,0xc4a77f,a,b,sg,FD-0.1,0.1,y+1.3,y+STD.FAS0);              // ルーバーの奥(遠景の色)
+    const tone=[0xb08a5a,0xc39a68,0x9c7a4e,0xb8946a];
+    for(let s=a,k=0;s<b;s+=0.4,k++) fFin(S.md,tone[(k*7)%4],s,sg,FD-0.1,0.07,0.3,y+1.3,y+STD.FAS0,'外装:木のルーバー');
+    for(const h of[y-0.5,y+0.4]) fRail(S.mg,0xd6cab5,a,b,sg,FD,0.03,h,h+0.03);        // 目地
+  },
+  // 落ち着いた色の腰壁と上部、その間に透明な帯(桜並木を映す)
+  '上北沢':function(S,st,sg,y){
+    const a=st.x-STD.RL+1, b=st.x+STD.RL-1, yg=y-GIRDER;
+    fBand(S.mg,SV,0x6d665e,a,b,sg,FD,0.25,yg,y+1.2,{tag:'外装:落ち着いた色'});
+    fGlass(S.mg,a,b,sg,FD-0.05,y+1.2,y+4.6);
+    STRUCT.push({tag:'外装:透明の帯',s0:a,s1:b,o0:sg*(deckHalf(st.x)+FD-0.1),o1:sg*(deckHalf(st.x)+FD),y0:y+1.2,y1:y+4.6});
+    fBand(S.mg,SV,0x8b847a,a,b,sg,FD,0.25,y+4.6,y+STD.FAS0,{tag:'外装:落ち着いた色'});
+    for(let s=a;s<b;s+=1.5) fFin(S.md,0x4a4540,s,sg,FD-0.05,0.07,0.14,y+1.2,y+4.6);
+    for(const h of[y+5.4,y+6.25]) fRail(S.md,0x6f6961,a,b,sg,FD,0.02,h,h+0.04);
+  },
+  // 書架:棚板・側板(木)と、棚ごとの本の背(高さ・幅・色が不揃い)
+  '芦花公園':function(S,st,sg,y){
+    const a=st.x-STD.RL+1, b=st.x+STD.RL-1, yg=y-GIRDER, gap=1.2;
+    fBand(S.mg,SV,0x3a2c20,a,b,sg,FD-0.35,0.12,yg,y+STD.FAS0);               // 書架の奥
+    for(let h=yg+0.4;h<y+STD.FAS0-0.3;h+=gap){
+      fBand(S.mg,SV,0xb58a55,a,b,sg,FD+0.06,0.46,h-0.06,h,{tag:'外装:書架の棚'});   // 棚板
+      const top=Math.min(h+gap-0.06,y+STD.FAS0);
+      vS(S.mg,MAT_BOOK,a,b,fO(sg,FD-0.12),h,top,sg,{uv:(s,p)=>[s/2.0,(p[1]-h)/(gap-0.06)],tag:'外装:本の背'});
+    }
+    for(let s=a;s<=b+0.01;s+=7.2) fFin(S.mg,0xa37a48,s,sg,FD-0.35,0.10,0.87,yg,y+STD.FAS0);   // 側板
+  },
+  // 粗目の格子(1.6m角・見付22cm・見込み45cm)。奥はガラス
+  '千歳烏山':function(S,st,sg,y){
+    const a=st.x-STD.RL+1, b=st.x+STD.RL-1, yg=y-GIRDER, G=1.6;
+    fBand(S.mg,SV,0xb8a593,a,b,sg,FD,0.25,yg,y-0.4);
+    fGlass(S.mg,a,b,sg,FD-0.05,y-0.4,y+STD.FAS0);
+    for(let s=a;s<=b+0.01;s+=G) fFin(S.mg,0xc99a63,s,sg,FD,0.22,0.45,y-0.4,y+STD.FAS0,'外装:格子(縦)');
+    for(let h=y-0.4;h<y+STD.FAS0-0.2;h+=G) fRail(S.mg,0xd8ad78,a,b,sg,FD,0.45,h,h+0.22,'外装:格子(横)');
+  },
+};
+
+/* ---- 高架下の駅舎 -------------------------------------------------------
+   桁下の駅舎。長辺の中央に入口(ガラス・庇・看板)。外壁は駅のデザインに合わせる。 */
+function bldg(S,st,y){
+  const mg=S.mg, md=S.md, c0=st.x, H=STA_BLDG_HALF, hb=y-GIRDER-0.05, E=deckHalf(c0)-1.0;
+  const a=c0-H, b=c0+H;
+  mg.col(0xe9e7e2).cbox(SV,a,b,0,E,0,hb,{tag:'駅舎'});
+  for(const sg of[-1,1]){
+    const o=sg*(E+0.02), oo=fO(sg,-1.0+0.02);
+    // 入口:暗い奥+ガラス+枠、上に庇と看板
+    mg.col(0x2b3036); vS(mg,SV,c0-6,c0+6,oo,0,3.3,sg);
+    vS(mg,MAT.glass,c0-6,c0+6,fO(sg,-1.0+0.06),0,3.3,sg);
+    for(let s=c0-6;s<=c0+6.01;s+=1.5) md.col(0xbfc4c9).box(SV,s,sg*(E+0.07),0,3.3,0.06,0.08,{skip:'-y'});
+    mg.col(st.c).box(SV,c0,sg*(E+0.9),3.45,3.7,14,1.8,{tag:'駅舎の庇'});
+    signQuad(mg,3*STA.indexOf(st)+2,c0,sg*(E+0.04),3.95,5.15,4.8,sg);
+    // 外壁(入口の左右)
+    const sides=[[a,c0-6.3],[c0+6.3,b]];
+    for(const [s0,s1] of sides){
+      if(st.n==='代田橋'){
+        fBand(mg,MAT_BRICK,null,s0,s1,sg,-1.0+0.05,0.04,0,3.9,{uv:(s,p)=>[s/0.44,p[1]/0.28]});
+        vS(mg,MAT.glass,s0,s1,fO(sg,-1.0+0.04),3.9,hb-0.3,sg);
+      }else if(st.n==='明大前'){
+        for(let s=s0,k=0;s<s1-0.1;s+=1.2,k++)
+          vS(mg,(k%3===1)?MAT.glass:MAT.frost,s,Math.min(s+1.2,s1),fO(sg,-1.0+0.04),0.3,hb-0.3,sg);
+      }else if(st.n==='下高井戸'){
+        fBand(mg,SV,0xeee4d6,s0,s1,sg,-1.0+0.05,0.04,0,hb-0.3);
+      }else if(st.n==='桜上水'){
+        fBand(mg,SV,0xe3d8c5,s0,s1,sg,-1.0+0.05,0.04,0,hb-0.3);
+        for(let s=s0,k=0;s<s1;s+=0.4,k++) fFin(md,[0xb08a5a,0xc39a68,0x9c7a4e][k%3],s,sg,-1.0+0.05,0.07,0.2,0.4,hb-0.4);
+      }else if(st.n==='上北沢'){
+        fBand(mg,SV,0x6d665e,s0,s1,sg,-1.0+0.05,0.04,0,2.6);
+        vS(mg,MAT.glass,s0,s1,fO(sg,-1.0+0.04),2.6,hb-0.3,sg);
+      }else if(st.n==='芦花公園'){
+        fBand(mg,SV,0x3a2c20,s0,s1,sg,-1.0+0.05,0.04,0,hb-0.3);
+        for(let h=0.4;h<hb-1.0;h+=1.2){
+          fBand(mg,SV,0xb58a55,s0,s1,sg,-1.0+0.3,0.3,h-0.06,h);
+          vS(mg,MAT_BOOK,s0,s1,fO(sg,-1.0+0.06),h,h+1.14,sg,{uv:(s,p)=>[s/2.0,(p[1]-h)/1.14]});
+        }
+      }else if(st.n==='千歳烏山'){
+        vS(mg,MAT.glass,s0,s1,fO(sg,-1.0+0.04),0,hb-0.3,sg);
+        for(let s=s0;s<=s1+0.01;s+=1.6) fFin(mg,0xc99a63,s,sg,-1.0+0.05,0.22,0.4,0,hb-0.3);
+        for(let h=1.6;h<hb-0.4;h+=1.6) fRail(mg,0xd8ad78,s0,s1,sg,-1.0+0.05,0.4,h,h+0.22);
+      }
+    }
+  }
+  // 下高井戸:温かな色彩の大庇を街(線路の両側)へ広げる。出4.6m・長さ92m、下面は木の羽目板
+  if(st.n==='下高井戸'){
+    const e0=c0-46, e1=c0+46, yE=4.6;
+    for(const sg of[-1,1]){
+      mg.col(st.c).loft(SV,e0,e1,s=>{const i=sg*(deckHalf(s)-1.0), q=sg*(deckHalf(s)+4.6);
+        return [[i,yE],[q,yE+0.22],[q,yE+0.5],[i,yE+0.45]];},{closed:true,caps:true,tag:'大庇'});
+      for(let k=0;k<17;k++){
+        const o=s=>sg*(deckHalf(s)-0.8+k*0.32);
+        md.col(k%2?0xc68a52:0xb57a45).loft(SV,e0+0.3,e1-0.3,s=>{const c=o(s),h=yE-0.02+0.22*((c-sg*(deckHalf(s)-1.0))*sg)/5.6;
+          return [[c-0.12,h-0.04],[c+0.12,h-0.04],[c+0.12,h],[c-0.12,h]];},{closed:true});
+      }
+      for(let s=e0+4;s<e1-3;s+=14.0)
+        mg.col(0x5a4636).cyl(SV,s,sg*(deckHalf(s)+4.2),0,yE+0.2,0.12,8,{tag:'大庇の柱'});
+    }
+  }
+}
+
+/* ---- 駅を組み立てる ---- */
+const STAIRS=[];                     // 階段・エレベーターの登録簿(検証用)
 for(const s of STA){
-  const y=railY(s.x),c0=s.x;
+  const y=railY(s.x),c0=s.x, i=STA.indexOf(s), S=STG[i];
   CUR=s.kk?KOUKU[s.kk-1].VGs:null;
-  if(s.t==='gnd'){   // 仙川:上下線間の島式+上り線北側の単式(2面2線)。本線は±4.55(BUMPS)
-    cbox(c0-105,c0+105,0,3.0,y,y+1.1,MAT.plat);          // ホーム長210m
-    cbox(c0-105,c0+105,0,3.4,y+4.6,y+5.0,MAT.canopy);
-    platDetail(c0-105,c0+105,0,3.0,y);
-    cbox(c0-105,c0+105,7.85,1.7,y,y+1.1,MAT.plat);
-    cbox(c0-105,c0+105,7.85,2.1,y+4.6,y+5.0,MAT.canopy);
-    platDetail(c0-105,c0+105,7.85,1.7,y);
-    PSD_DEF.push({st:s,y:y,drs:[-3.2,3.2],x0:c0-103,x1:c0+103});
-  }else if(s.t==='ctx'){                       // 笹塚:島式2面4線(既存)
-    for(const g of[-6.05,6.05]){cbox(c0-155,c0+55,g,2.5,y,y+1.1,MAT.plat);   // 笹塚:既設210m
-      cbox(c0-154,c0+54,g,2.8,y+4.9,y+5.4,MAT.canopy);}
-    PSD_DEF.push({st:s,y:y,drs:[-3.67,3.67,-8.43,8.43],x0:c0-153,x1:c0+53});
+  if(s.t==='ctx'){                   // 笹塚:島式2面4線(既存)
     // 配線図準拠:本線=外側±10.1(BUMPS)/内側±2=新宿方から続く留置線(西端は車止め・200m収容)
     layTrack('笹塚留置線南',DOM.x0+8,c0+355,()=>-2);
     layTrack('笹塚留置線北',DOM.x0+8,c0+355,()=>2);
-    box(1.4,1.4,3.2,M(0x8a4a42),c0+355,railY(c0+355)+.7,-2);   // 車止め(南留置線・西端355m)
-    box(1.4,1.4,3.2,M(0x8a4a42),c0+355,railY(c0+355)+.7, 2);   // 車止め(北留置線)
+    for(const o of[-2,2]){         // 車止め(西端355m)
+      S.mg.col(0x8a4a42).box(SV,c0+355,o,railY(c0+355),railY(c0+355)+1.4,1.4,3.2);
+      S.md.col(0xe8e2d0).box(SV,c0+355-0.71,o,railY(c0+355)+0.9,railY(c0+355)+1.3,0.02,2.4);
+    }
     { // 両渡り分岐器×3:1組=50m。5次スムーズステップ(加加速度連続)で最も滑らかなS字に
       const s5=t=>{t=clamp(t,0,1);return t*t*t*(t*(t*6-15)+10);};
       // 分岐器の曲線は高密度サンプリング(2m刻み)で滑らかに
@@ -1562,92 +1961,97 @@ for(const s of STA){
       xo(c0+52,c0+162,-10.1,-2);xo(c0+52,c0+162,-2,-10.1); // 南本線⇔南留置線(110m)
       xo(c0+72,c0+122,2,-2);    xo(c0+72,c0+122,-2,2);     // 留置線間(50m・さらに東へ40m移動)
     }
-    // 点字ブロックは「線路のある縁」だけに敷く。内側は上の留置線を敷いてから判定する
-    // (先に呼ぶと留置線がまだ TRACKS に無く、内側の縁に敷かれない)。
     CUR=s.kk?KOUKU[s.kk-1].VGs:null;
-    for(const g of[-6.05,6.05]) platDetail(c0-155,c0+55,g,2.5,y);
-  }else{
-    const fc=M(s.c);
-    const PLT=(s.t==='isl')?[[0,3.5]]:(s.t==='hachi')?[[0,3.0]]:
-              (s.t==='side')?[[-5.85,2.25],[5.85,2.25]]:[[-6.05,2.5],[6.05,2.5]];
-    const DRS=(s.t==='isl')?[-3.38,3.38]:(s.t==='hachi')?[-2.88,2.88]:
-              (s.t==='side')?[-3.72,3.72]:[-3.67,3.67,-8.43,8.43];
-    for(const pp of PLT){
-      cbox(c0-105,c0+105,pp[0],pp[1],y,y+1.1,MAT.plat);
-      cbox(c0-106,c0+106,pp[0],pp[1]+.35,y+5.0,y+5.5,MAT.canopy);
-      platDetail(c0-105,c0+105,pp[0],pp[1],y);
-      box(3,y+1,3,MAT.glass,c0+30,(y+1)/2,pp[0]);
-      box(7,y+1,3.2,M(0xd9dbde),c0-30,(y+1)/2,pp[0]);
-    }
-    PSD_DEF.push({st:s,y:y,drs:DRS,x0:c0-103,x1:c0+103});
-    // 高架下駅舎+正面意匠(公式コンセプト2019の翻案)
-    const hw=deckHalf(c0),hb=y-GIRDER;
-    cbox(c0-STA_BLDG_HALF,c0+STA_BLDG_HALF,0,hw-1,0,hb,M(0xe9e7e2),8);
-    for(const g of[-1,1]){
-      const fo=g*(hw-.1);
-      if(s.n==='代田橋'){
-        cbox(c0-23.5,c0+23.5,fo,.3,0,hb*.58,brickMat,8);
-        cbox(c0-23.5,c0+23.5,g*(hw-.15),.25,hb*.58+.2,hb*.92,MAT.glass,8);
-      }else if(s.n==='明大前'){
-        for(let i2=0;i2<7;i2++)box(5.4,hb-.8-((i2%2)?1.4:0),.5,MAT.glass,c0-21+i2*7,(hb-.8)/2+.4,fo);
-      }else if(s.n==='下高井戸'){
-        cbox(c0-23.5,c0+23.5,fo,.3,0,hb*.55,fc,8);
-        cbox(c0-30,c0+30,g*(hw+1.9),2.5,hb+.05,hb+.75,fc,10);
-        for(const dx of[-26,0,26])box(.5,hb+.4,.5,fc,c0+dx,(hb+.4)/2,g*(hw+3.9));
-      }else if(s.n==='桜上水'){
-        cbox(c0-23.5,c0+23.5,fo,.3,0,hb*.6,woodMat,8);
-      }else if(s.n==='上北沢'){
-        cbox(c0-23.5,c0+23.5,fo,.3,0,hb*.44,fc,8);
-        cbox(c0-23.5,c0+23.5,g*(hw-.15),.25,hb*.5,hb*.9,MAT.glass,8);
-      }else if(s.n==='芦花公園'){
-        for(let i2=0;i2<30;i2++){const lx=c0-22+44*i2/29;
-          box(.5,hb-.4,.75,fc,lx,(hb-.4)/2+.2,fo);}
-      }else if(s.n==='千歳烏山'){
-        cbox(c0-23.5,c0+23.5,fo,.3,0,hb-.5,latticeMat,8);
-      }
-    }
-    // 側面外観:公式パース(2019.5.30)のデザインポイントを各駅で作り分け
-    for(const g of[-1,1]){
-      const so=g*(hw-.05);
-      if(s.n==='代田橋'){          // 木質の縦フィン+レンガ調の基部
-        cbox(c0-107,c0+107,so,.18,y+.15,y+4.15,finMat);
-        cbox(c0-107,c0+107,g*(hw-.1),.16,y-.55,y+.1,brickMat);
-      }else if(s.n==='明大前'){    // 透明素材+パネルをリズミカルに(紫アクセント)
-        cbox(c0-107,c0+107,so,.18,y+1.5,y+4.0,meidaiMat);
-        for(let i2=0;i2<15;i2++){const lx=c0-105+210*i2/14;
-          box(6.6,1.9,.3,MAT.glass,lx,y+.5,g*(hw-.1));}
-      }else if(s.n==='下高井戸'){  // 温かな色彩の大庇+上部ガラスボックス
-        cbox(c0-107,c0+107,so,.18,y+1.9,y+4.1,ribMat);
-        cbox(c0-107,c0+107,g*(hw-.1),.15,y-.3,y+1.7,MAT.glass);
-        cbox(c0-46,c0+46,g*(hw+2.6),3.0,hb+.1,hb+.5,fc);            // 街へ広がる大庇
-        for(const dx of[-38,-13,13,38])box(.55,hb+.3,.55,fc,c0+dx,(hb+.3)/2,g*(hw+5.0));
-      }else if(s.n==='桜上水'){    // 金属リブ+木質調の基部(住宅街と共存)
-        cbox(c0-107,c0+107,so,.18,y+1.1,y+4.15,ribMat);
-        cbox(c0-107,c0+107,g*(hw-.1),.16,y-.55,y+1.0,woodMat);
-      }else if(s.n==='上北沢'){    // 落ち着いた色合い+透明感(桜並木が映える)
-        cbox(c0-107,c0+107,so,.18,y+1.7,y+4.1,kamiMat);
-        cbox(c0-107,c0+107,g*(hw-.1),.15,y-.35,y+1.5,MAT.glass);
-      }else if(s.n==='芦花公園'){  // 木質の縦格子=書架(文学の街)
-        cbox(c0-107,c0+107,so,.22,y-.25,y+4.15,shelfMat);
-        cbox(c0-109,c0+109,g*(hw+.05),.3,y+4.2,y+4.9,M(0x2f2a24));  // 暗色の見切り
-      }else if(s.n==='千歳烏山'){  // 温かみのある配色+開放感のある粗目格子
-        cbox(c0-107,c0+107,so,.24,y-.55,y+4.3,latticeMat);
-      }
-      cbox(c0-109,c0+109,g*(hw-.02),.25,y+5.95,y+6.85,fc);          // 屋根見付
-      for(let i2=0;i2<21;i2++){const lx=c0-105+210*i2/20;
-        box(.6,y+6.4,.6,M(0xd7d8d3),lx,(y+6.4)/2,g*(hw-.32));}      // 柱形リズム
-      const sg=new THREE.Mesh(new THREE.BoxGeometry(24,1.9,.24),
-        mkMat('MeshLambertMaterial',{map:signTex('KEIO '+s.n)}));
-      const q2=frame(c0,g*(hw+.12));sg.position.set(q2.x,y+4.7,q2.z);sg.rotation.y=-q2.a;add(sg);
-    }
-    cbox(c0-108,c0+108,0,hw-.3,y+6.55,y+7.0,MAT.canopy);
   }
+  // 点字ブロックは「線路のある縁」だけに敷く。笹塚の内側は上の留置線を敷いてから判定する
+  // (先に判定すると留置線がまだ TRACKS に無く、内側の縁に敷かれない)。
+  const pr=platRange(s), x0=pr[0], x1=pr[1], pm=(x0+x1)/2, big=BIGROOF(s);
+  const lampY=big?y+STD.RAIL0-0.06:y+STD.CAN0-0.08;
+  const lifts=[];                    // 井戸とエレベーター(柱・ベンチを避ける)
+  PLT_OF[s.t].forEach(function(pp,pi){
+    const pc=pp[0], hw=pp[1];
+    const back=(s.t==='side')?Math.sign(pc):0;               // 相対式は背面(線路の無い側)
+    const narrow=hw<2.0;                                     // 仙川の単式(幅3.4m)は井戸を置かない
+    const ww=hw>=3.4?2.8:hw>=2.9?2.4:hw>=2.4?2.2:1.9, wc=pc+back*(hw-ww/2-0.35);
+    const wells=narrow?[]:[{s0:pm-38,s1:pm-22,o0:wc-ww/2,o1:wc+ww/2}];
+    platBody(S,x0,x1,pc,hw,y,wells);
+    platDetail(S,x0,x1,pc,hw,y,{lampY:lampY});
+    for(const w of wells){stairWell(S,w,y);lifts.push(w);STAIRS.push({st:s,kind:'階段',s0:w.s0,s1:w.s1,o0:w.o0,o1:w.o1});}
+    if(!narrow){
+      elevator(S,pm+28,wc,y,s.c);
+      lifts.push({s0:pm+27,s1:pm+29});
+      STAIRS.push({st:s,kind:'エレベーター',s0:pm+27,s1:pm+29,o0:wc-1,o1:wc+1});
+    }
+    // 柱:大屋根は樹状柱(2本の枝で梁を受ける)、上屋は中心線の柱
+    const colO=back?pc+back*(hw-0.9):pc;
+    for(let k=-9;k<=9;k++){
+      const cs=pm+k*STD.COLP;
+      if(cs<x0+3||cs>x1-3||nearAny(cs,lifts,1.4)) continue;
+      const top=big?y+STD.BEAM:y+STD.CAN0;
+      S.mg.col(0xe4e6e8).cyl(SV,cs,colO,y+STD.PLAT,top-(big?1.4:0),big?0.2:0.16,10,{tag:'ホームの柱'});
+      if(big){
+        const A=S.mg.axes(cs,colO), yb2=top-1.4;
+        for(const d of[-2.2,2.2]){
+          const B=S.mg.axes(cs+d,colO);
+          S.mg.col(0xe4e6e8).tube(SV,[A.f.x,yb2-0.05,A.f.z],[B.f.x,top,B.f.z],0.11,6);
+        }
+        S.mg.col(0xe4e6e8).cyl(SV,cs,colO,yb2-0.2,yb2+0.05,0.26,10);
+      }else{
+        S.mg.col(0xd5d8db).box(SV,cs,pc,y+STD.CAN0-0.35,y+STD.CAN0,0.3,hw*2+0.5,{skip:'+y'});   // 上屋の梁
+      }
+      S.md.col(0xb9bec4).box(SV,cs,colO,y+STD.PLAT,y+STD.PLAT+0.04,0.55,0.55,{skip:'-y'});     // 柱脚
+    }
+    // 吊りレール(大屋根)/上屋の下に、駅名標と照明
+    const ry0=big?y+STD.RAIL0:y+STD.CAN0-0.2, ry1=big?y+STD.RAIL1:y+STD.CAN0;
+    if(big){
+      bar(S.mg,0x9aa1a8,x0+4,x1-4,pc,0.15,ry0,ry1,{tag:'吊りレール'});
+      for(let r=x0+5;r<x1-4;r+=5.25){const A=S.md.axes(r,pc);
+        S.md.col(0x9aa1a8).tube(SV,[A.f.x,ry1,A.f.z],[A.f.x,y+STD.CEIL,A.f.z],0.025,4);}
+    }
+    S.md.col(0xf6f5ee); hS(S.md,SV,x0+5,x1-5,pc-0.09,pc+0.09,ry0-0.02,false);               // 照明の帯
+    for(let k=-2;k<=2;k++){
+      const ss=pm+k*35; if(nearAny(ss,lifts,1.5)) continue;
+      for(const f of[1,-1]) signQuad(S.mg,3*i+(f>0?0:1),ss,pc+f*0.035,ry0-0.55,ry0-0.1,1.6,f);
+      S.mg.col(0x3a4048).box(SV,ss,pc,ry0-0.57,ry0-0.08,1.66,0.06);
+      S.md.col(0x5b6470).box(SV,ss,pc,ry0-0.08,ry0,0.04,0.04);
+    }
+    // ベンチ・自動販売機・乗務員用モニター(近くだけ)
+    for(let k=-9;k<=8;k+=2){
+      const bs=pm+(k+0.5)*STD.COLP; if(bs<x0+6||bs>x1-6||nearAny(bs,lifts,2.5)) continue;
+      if(back) benchAt(S.md,bs,pc+back*(hw-0.5),y,-back);
+      else if(hw>=2.4){ benchAt(S.md,bs,pc+0.32,y,1); benchAt(S.md,bs,pc-0.32,y,-1); }
+    }
+    if(!narrow){
+      for(let k=0;k<2;k++){
+        const vs=pm+32.5+k*1.0;
+        if(back) vendAt(S.md,vs,pc+back*(hw-0.42),y,-back,k);
+        else {vendAt(S.md,vs,pc+0.38,y,1,k); vendAt(S.md,vs,pc-0.38,y,-1,k+1);}
+      }
+    }
+    for(const sg of[-1,1]){        // 乗務員用モニター:列車が着く端(下り=西端・上り=東端)の手前
+      const edge=pc+sg*hw;
+      if(!trackNear(pm,edge+sg*TACTILE_TOL/2,TACTILE_TOL/2)) continue;
+      const tOff=edge+sg*1.5, dir=(tOff<0)?1:-1;              // 南側の線路=下り
+      const ms=dir>0?x1-8:x0+8;
+      monitorAt(S.md,ms,edge-sg*1.1,y,dir);
+    }
+    if(!big) canopy(S,x0+(s.t==='ctx'?1:2),x1-(s.t==='ctx'?1:2),pc,hw,y,0x9aa0a6);
+  });
+  PSD_DEF.push({st:s,y:y,drs:DRS_OF[s.t],x0:x0+2,x1:x1-2});
+  if(big){
+    // 大屋根の梁は柱の列にも入れる(柱の位置は全ホームで同じ s に揃えている)
+    const cl=[]; for(let k=-9;k<=9;k++){const cs=pm+k*STD.COLP; if(cs>x0+3&&cs<x1-3) cl.push(cs);}
+    bigRoof(S,s,y,cl);
+    for(const sg of[-1,1]) FAC[s.n](S,s,sg,y);
+  }
+  if(STA_BLDG(s)) bldg(S,s,y);
   CUR=null;
   const sp=textSprite(s.n,s.cfg,true);
   sp.scale.set(105,36,1);   // 駅名ラベル(小型化)
   const p=frame(c0,0);sp.position.set(p.x,railY(c0)+38,p.z);
   staLabels.push(sp);
 }
+
 for(const gq of XINGS){
   const sp=textSprite('旧 '+gq[0]+'踏切',null,false);
   sp.scale.set(64,12.6,1);
