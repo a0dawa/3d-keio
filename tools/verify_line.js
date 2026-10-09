@@ -18,7 +18,9 @@ const X = require('./stub_three')(path,
   'parkedCars:parkedCars,YARD_A:YARD_A,YARD_B:YARD_B,YARD_E:YARD_E,YARD_W:YARD_W,K8:K8,' +
   'INOKASHIRA_X:INOKASHIRA_X,SETAGAYA_X:SETAGAYA_X,BRIDGE:BRIDGE,KAN7_X:KAN7_X,' +
   'KANPACHI_X:KANPACHI_X,XINGS:XINGS,' +
-  'WIRE_CAT:WIRE_CAT,WIRE_TRO:WIRE_TRO,BEAM_LOW:BEAM_LOW,POLE_TOP:POLE_TOP');
+  'WIRE_CAT:WIRE_CAT,WIRE_TRO:WIRE_TRO,BEAM_LOW:BEAM_LOW,POLE_TOP:POLE_TOP,' +
+  'VIA_COLS:(typeof VIA_COLS!=="undefined"?VIA_COLS:[]),STRUCT:(typeof STRUCT!=="undefined"?STRUCT:[]),' +
+  'ROAD_SKIP:ROAD_SKIP,PS0:PS0');
 
 /* ---- 設計上の要件(検証側が独立して持つ) ---------------------------------- */
 const REQ = {
@@ -127,8 +129,9 @@ if (X.TRACKS && X.WIRES) {
       bad ? bad.join(' ') : spans + 'スパンすべて');
   }
   /* 2-4c 高架下に構造物がある位置に橋脚を立てないこと。
-     柱は桁半幅の内側(±(hw-1.2))に建つので、高架下駅舎の中を貫いてしまう。
-     期待値(駅舎の半長・横断部の幅)は検証側が独立に持つ。 */
+     横断する道路・鉄道・河川の上には立てない。高架下駅舎の範囲では柱の列は通してよいが、
+     柱は駅舎の壁より内側に収まること(壁を貫いて見えない)。駅舎の壁の位置は登録簿 STRUCT の
+     '駅舎' から、柱の太さは検証側の値で測る。期待値(横断部の幅)は検証側が独立に持つ。 */
   {
     const BLDG_HALF = 23;          // 高架下駅舎のs方向の半長[m]
     // 高架下を横切るもの [名称, s, 柱を立てない半幅[m]]
@@ -136,16 +139,22 @@ if (X.TRACKS && X.WIRES) {
     ['仙川', X.BRIDGE.s, 12], ['環七', X.KAN7_X, 16], ['環八', X.KANPACHI_X, 18]];
     for (const g of X.XINGS) CROSS.push(['踏切道 ' + g[0], g[1], 6]);
     let bad = null;
+    const COL_HALF = 0.48;                                   // 柱の半幅(面取りした角柱の外接)
     for (const x of X.PIERS) {
       for (const st of X.STA) {
         if (st.t === 'ctx' || st.t === 'gnd') continue;      // 高架下駅舎を持たない駅
-        if (Math.abs(x - st.x) < BLDG_HALF && !bad)
-          bad = [st.n + 'の駅舎内', 's=' + x.toFixed(0)];
+        if (Math.abs(x - st.x) >= BLDG_HALF + 1) continue;
+        const b = X.STRUCT.find((q) => q.tag === '駅舎' && x >= q.s0 - 1 && x <= q.s1 + 1);
+        const c = X.VIA_COLS.find((q) => Math.abs(q.s - x) < 0.01);
+        if (!b || !c) { if (!bad) bad = [st.n + 'の駅舎', b ? '柱の登録なし' : '駅舎の登録なし']; continue; }
+        for (const o of c.offs)
+          if ((o - COL_HALF < b.o0 || o + COL_HALF > b.o1) && !bad)
+            bad = [st.n + 'の駅舎の壁を柱が貫く', 's=' + x.toFixed(0), 'off=' + o.toFixed(2)];
       }
       for (const c of CROSS)
         if (Math.abs(x - c[1]) < c[2] && !bad) bad = [c[0] + 'の直上', 's=' + x.toFixed(0)];
     }
-    ok('構造物の上に橋脚が無い', bad === null, '駅舎・横断部に0本',
+    ok('構造物の上に橋脚が無い', bad === null, '横断部に0本・駅舎の壁の内側',
       bad ? bad.join(' ') : X.PIERS.length + '本すべて');
   }
   /* 2-4d 桜上水の留置線:2本とも東端から西端まで通しで敷かれていること。
@@ -213,6 +222,80 @@ if (X.TRACKS && X.WIRES) {
   rows.push(['敷設した線路', '-', X.TRACKS.length + '本', 'OK']);
 } else {
   rows.push(['架線の検査', 'TRACKS/WIRES', '未登録(スキップ)', '--']);
+}
+
+/* ---- 3. 高架橋の構造(RCラーメン) -------------------------------------------
+   柱・梁・床版・高欄は結合ジオメトリで作るので、登録簿(VIA_COLS・STRUCT)で測る。
+   構造上の目安は検証側が持つ(HTMLからは読まない)。 */
+{
+  const V = {
+    COL_IN: 1.0,       // 柱の中心は桁端から1.0m以上内側(側道に出ない)
+    COL_GAP: 9.6,      // 1列の柱の間隔の上限[m](横梁の支間)
+    SPAN_MAX: 45,      // 柱の列の間隔の上限[m](道路・鉄道を跨ぐ桁の支間)
+    PAR_H: 2.1,        // 高欄の上端(レール面から)[m]=従来の防音壁と同じ
+    BODY_HW: 1.385 + 0.06, BODY_Y: [0.3, 4.3],
+  };
+  const C = X.VIA_COLS;
+  ok('柱の列がある', C.length > 300, '300列以上', C.length + '列');
+  let bIn = null, bGap = null, bSpan = null, bTop = null;
+  for (let i = 0; i < C.length; i++) {
+    const c = C[i], h = X.deckHalf(c.s);
+    if (c.offs.length < 2 && !bIn) bIn = ['s=' + c.s.toFixed(0), c.offs.length + '本'];
+    for (const o of c.offs) if (Math.abs(o) > h - V.COL_IN + 1e-6 && !bIn) bIn = ['s=' + c.s.toFixed(0), 'off=' + o.toFixed(2), '桁端' + h.toFixed(2)];
+    for (let k = 1; k < c.offs.length; k++) {
+      const g = c.offs[k] - c.offs[k - 1];
+      if (g > V.COL_GAP && !bGap) bGap = ['s=' + c.s.toFixed(0), g.toFixed(2) + 'm'];
+    }
+    if (Math.abs(c.top - (X.railY(c.s) - 2.4)) > 0.01 && !bTop) bTop = ['s=' + c.s.toFixed(0), c.top.toFixed(2)];
+    if (i > 0) {
+      const d = c.s - C[i - 1].s;
+      if (d > V.SPAN_MAX && !bSpan) bSpan = [C[i - 1].s.toFixed(0) + '〜' + c.s.toFixed(0), d.toFixed(0) + 'm'];
+    }
+  }
+  ok('柱が桁の下に収まる', bIn === null, '桁端から' + V.COL_IN + 'm以上内側・2本以上', bIn ? bIn.join(' ') : '全て');
+  ok('1列の柱の間隔', bGap === null, '≤' + V.COL_GAP + 'm', bGap ? bGap.join(' ') : '全て');
+  ok('柱の列の間隔(支間)', bSpan === null, '≤' + V.SPAN_MAX + 'm', bSpan ? bSpan.join(' ') : '全て');
+  ok('柱の上端=横梁の下端', bTop === null, 'レール面-2.4m', bTop ? bTop.join(' ') : '全て');
+  // 床版と高欄が全線に途切れなく続く(登録簿の区間を合成して隙間を探す)
+  const cover = (tag, pred) => {
+    const seg = X.STRUCT.filter((q) => q.tag === tag && pred(q)).map((q) => [q.s0, q.s1]).sort((a, b) => a[0] - b[0]);
+    let end = X.DOM.x0, gap = null;
+    for (const g of seg) { if (g[0] > end + 0.05 && !gap) gap = [end.toFixed(1), g[0].toFixed(1)]; end = Math.max(end, g[1]); }
+    if (end < X.DECK_END - 0.05 && !gap) gap = [end.toFixed(1), X.DECK_END.toFixed(1)];
+    return gap;
+  };
+  const gS = cover('床版', () => true), gN = cover('高欄', (q) => q.o0 > 0), gSo = cover('高欄', (q) => q.o1 < 0);
+  ok('床版が途切れない', gS === null, X.DOM.x0.toFixed(0) + '〜' + X.DECK_END, gS ? '隙間 ' + gS.join('〜') : '連続');
+  ok('高欄が両側で途切れない', gN === null && gSo === null, '北・南とも連続',
+    gN ? '北 ' + gN.join('〜') : gSo ? '南 ' + gSo.join('〜') : '連続');
+  // 高欄の高さと位置(桁端に立つ)
+  let bP = null;
+  for (const q of X.STRUCT) {
+    if (q.tag !== '高欄') continue;
+    const s = (q.s0 + q.s1) / 2, top = q.y1 - Math.max(X.railY(q.s0), X.railY(q.s1));
+    const h = Math.max(X.deckHalf(q.s0), X.deckHalf(q.s1)) + 0.06;   // 笠木は外へ6cm張り出す
+    if (Math.abs(top - V.PAR_H) > 0.05 && !bP) bP = ['s=' + s.toFixed(0), '高さ' + top.toFixed(2)];
+    const outer = Math.max(Math.abs(q.o0), Math.abs(q.o1));
+    // 掃引は2m標本・誤差2cmで間引くので、標本の間の曲がり(幅のなめらかな変化)ぶんを5cmまで許す
+    if (Math.abs(outer - h) > 0.05 && !bP) bP = ['s=' + s.toFixed(0), '外面' + outer.toFixed(2) + '≠桁端+笠木' + h.toFixed(2)];
+  }
+  ok('高欄の高さ・位置', bP === null, 'レール面+' + V.PAR_H + 'm・桁端', bP ? bP.join(' ') : '全て');
+  // 高架の部品(高欄・ケーブルトラフ・柱・梁)が車両の通る空間に入らない
+  let bC = null, n = 0;
+  for (const q of X.STRUCT) {
+    if (['高欄', 'ケーブルトラフ', '柱', '横梁', '縦梁'].indexOf(q.tag) < 0) continue;
+    n++;
+    for (const s of [q.s0, (q.s0 + q.s1) / 2, q.s1]) {
+      const y = X.railY(s);
+      for (const t of X.TRACKS) {
+        if (s < t.x0 || s > t.x1) continue;
+        const o = t.zf(s);
+        if (q.y1 > y + V.BODY_Y[0] && q.y0 < y + V.BODY_Y[1] && q.o1 > o - V.BODY_HW && q.o0 < o + V.BODY_HW && !bC)
+          bC = [q.tag, 's=' + s.toFixed(0), t.id];
+      }
+    }
+  }
+  ok('高架の部品が車両に当たらない', bC === null, '0件(' + n + '部品)', bC ? bC.join(' ') : '0件(' + n + '部品)');
 }
 
 /* ---- 出力 ---- */

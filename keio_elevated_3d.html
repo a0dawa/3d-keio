@@ -512,10 +512,10 @@ const ROAD_SKIP=[[INOKASHIRA_X,12],[SETAGAYA_X,8],[BRIDGE.s,12],[KAN7_X,16],[KYU
   [HOSHA23_X,11],[H154_X,10],[H128_X,9],[H133_X,9],[H215_X,9],[KANPACHI_X,18],[H216_X,9],[H217_X,10]];
 for(const gq of XINGS)ROAD_SKIP.push([gq[1],7]);
 const PIERS=[];   // 建てた橋脚のs座標(検証用の登録簿)
-// 高架下に駅舎がある区間にも柱を立てない(柱が駅舎を貫いて見える)
+/* 高架下駅舎の範囲にも柱の列は通す。RCラーメンの柱は桁端から2.0m内側(駅舎の壁は1.0m内側)
+   なので駅舎の中に収まり、壁を貫かない(旧来の橋脚は桁端から1.2mで壁を貫いたので省いていた)。 */
 const STA_BLDG=st=>(st.t!=='ctx'&&st.t!=='gnd');   // 高架下駅舎を持つ駅
 const STA_BLDG_HALF=23;                            // 駅舎のs方向の半長[m](7章と同じ値)
-for(const st of STA) if(STA_BLDG(st)) ROAD_SKIP.push([st.x,STA_BLDG_HALF+1.5]);
 // --- 8工区(範囲は駅中心間の中点で自動導出) ---
 const mid2=(a,b)=>Math.round((a+b)/2);
 const KOUKU=[
@@ -773,6 +773,7 @@ const MAT={
   // 駅と高架橋で分けるのは、夜に足す emissive(照らされている度合い)が違うため
   stVC:M(0xffffff,{vertexColors:true}),
   vdVC:M(0xffffff,{vertexColors:true}),
+  tie:M(0xb4b1a8),
 };
 const wireMat=mkMat('LineBasicMaterial',{color:0x3d434a});
 // レール・ガラス・水面は Standard なので scene.environment から空を映す
@@ -994,10 +995,18 @@ function MG(){
       face(mat,W[0].slice(),v3sc(A0.t,-1));
       face(mat,W[W.length-1].slice(),A1.t);
     }
-    if(o.tag){
-      let o0=1e9,o1=-1e9,y0=1e9,y1=-1e9;
-      for(const k of keep)for(const q of SC[k]){o0=Math.min(o0,q[0]);o1=Math.max(o1,q[0]);y0=Math.min(y0,q[1]);y1=Math.max(y1,q[1]);}
-      STRUCT.push({tag:o.tag,s0:s0,s1:s1,o0:o0,o1:o1,y0:y0,y1:y1});
+    /* 登録簿へは 6m 以下の区間ごとに残す。面は標本の間を直線で結んだものなので、
+       区間の両端の断面を同じく直線で補間して範囲を取れば、幅の変わる所でも過大にならない */
+    if(o.tag) for(let kk=0;kk<keep.length-1;kk++){
+      const ka=keep[kk],kb=keep[kk+1], L=S[kb]-S[ka], m=Math.max(1,Math.ceil(L/6));
+      for(let j=0;j<m;j++){
+        let o0=1e9,o1=-1e9,y0=1e9,y1=-1e9;
+        for(const u of[j/m,(j+1)/m]) for(let i=0;i<n;i++){
+          const q0=SC[ka][i],q1=SC[kb][i], of=q0[0]+(q1[0]-q0[0])*u, yy=q0[1]+(q1[1]-q0[1])*u;
+          o0=Math.min(o0,of);o1=Math.max(o1,of);y0=Math.min(y0,yy);y1=Math.max(y1,yy);
+        }
+        STRUCT.push({tag:o.tag,s0:S[ka]+L*j/m,s1:S[ka]+L*(j+1)/m,o0:o0,o1:o1,y0:y0,y1:y1});
+      }
     }
     return self;
   };
@@ -1098,17 +1107,6 @@ box(9,.25,150,MAT.water,BRIDGE.s,.12,0);             // 仙川(河川)=仙川橋
 
 /* ============ 5. 高架橋・橋脚・架線(工区グループ別) ============ */
 const yTop=x=>railY(x)-DECK_DROP, yBot=x=>railY(x)-GIRDER;
-const oV=(x,v)=>v===99?deckHalf(x):v===-99?-deckHalf(x):v;
-function deckPart(x0,x1,mat,o0,o1,edge){   // 桁の帯 o0..o1(±99=桁端)。edge:'S'/'N'は側面+防音壁付き
-  strip(x0,x1,12,x=>[x,yTop(x),oV(x,o0)],x=>[x,yTop(x),oV(x,o1)],mat);
-  if(edge==='S'){
-    strip(x0,x1,12,x=>[x,yTop(x),-deckHalf(x)],x=>[x,yBot(x),-deckHalf(x)],mat);
-    strip(x0,x1,12,x=>[x,railY(x)+2.1,-deckHalf(x)+.25],x=>[x,yTop(x),-deckHalf(x)+.25],MAT.barrier);
-  }else if(edge==='N'){
-    strip(x0,x1,12,x=>[x,yBot(x),deckHalf(x)],x=>[x,yTop(x),deckHalf(x)],mat);
-    strip(x0,x1,12,x=>[x,yTop(x),deckHalf(x)-.25],x=>[x,railY(x)+2.1,deckHalf(x)-.25],MAT.barrier);
-  }
-}
 // 架線柱を建てる。門型(ビーム式)。柱はテーパー付きの鋼管、ビームは上下弦を前後
 // 2本ずつ持つ立体トラスにして、真横から見ても正面から見ても骨組みが見えるようにする。
 function buildPoles(xs){
@@ -1150,40 +1148,9 @@ const RANGES=[[DOM.x0,Math.round(PS0),null]];   // 事業起点以東=既存高�
 for(const K of KOUKU)RANGES.push([K.s0,K.s1,K]);
 for(const R of RANGES){
   const K=R[2],r0=R[0],r1=Math.min(R[1],DECK_END);if(r1-r0<2)continue;
-  // 2面4線工区(quad)は 南(下り部)/中(上り部)/北(副本線部) の3段階に対応する3分割
-  const parts=(K&&K.quad)?[[-99,.7,'VGa','S'],[.5,6.3,'VGb',null],[6.1,99,'VGn','N']]
-                         :[[-99,.7,'VGa','S'],[.5,99,'VGb','N']];
-  const bounds=[r0,PS0,OLD_B0,OLD_B1,r1].filter(v=>v>=r0&&v<=r1).sort((a,b)=>a-b);
-  for(const pt of parts){
-    CUR=K?K[pt[2]]:null;
-    for(let i=0;i<bounds.length-1;i++){
-      const m0=bounds[i],m1=bounds[i+1];if(m1-m0<2)continue;
-      const mid=(m0+m1)/2,isOld=mid<PS0||(mid>=OLD_B0&&mid<OLD_B1);
-      deckPart(m0,m1,isOld?MAT.deckOld:MAT.deckNew,pt[0],pt[1],pt[3]);
-    }
-  }
+  // 桁・柱は下の「高架橋(RCラーメン)」でまとめて作る。ここは高架下の陰と架線柱だけ
   CUR=K?K.VGa:null;
   strip(r0,r1,30,x=>[x,.05,-(deckHalf(x)-.5)],x=>[x,.05,deckHalf(x)-.5],MAT.ao);
-  // 高架下に道路・鉄道・河川・駅舎がある位置には柱を立てない(ROAD_SKIP)
-  const xs=[];for(let x=r0+16;x<r1-6;x+=30)if(railY(x)>3.4&&!ROAD_SKIP.some(rr=>Math.abs(x-rr[0])<rr[1]))xs.push(x);
-  for(const x of xs)PIERS.push(x);   // 登録簿(検証用)
-  if(xs.length){   // 橋脚:南柱→VGa/梁→VGb/北柱→VGn(quad工区)またはVGb
-    const mkI=n=>new THREE.InstancedMesh(new THREE.BoxGeometry(1,1,1),MAT.pier,n);
-    const iA=mkI(xs.length*2),iB=mkI(xs.length),iC=mkI(xs.length*2);
-    const m4=new THREE.Matrix4(),q=new THREE.Quaternion(),e=new THREE.Euler();
-    let a2=0,b2=0,c2=0;
-    const put=(inst,idx,s,y,off,sx,sy,sz)=>{const p=frame(s,off);e.set(0,-p.a,0);q.setFromEuler(e);
-      m4.compose(new THREE.Vector3(p.x,y,p.z),q,new THREE.Vector3(sx,sy,sz));inst.setMatrixAt(idx,m4);};
-    for(const x of xs){
-      const hw=deckHalf(x),hb=yBot(x);
-      put(iA,a2++,x,hb/2,-(hw-1.2),1.3,hb,1.3);put(iA,a2++,x,.25,-(hw-1.2),2.6,.5,2.6);
-      put(iB,b2++,x,hb-.7,0,1.5,1.4,hw*2-1.2);
-      put(iC,c2++,x,hb/2,hw-1.2,1.3,hb,1.3);put(iC,c2++,x,.25,hw-1.2,2.6,.5,2.6);
-    }
-    CUR=K?K.VGa:null;add(iA);
-    CUR=K?K.VGb:null;add(iB);
-    CUR=K?(K.quad?K.VGn:K.VGb):null;add(iC);
-  }
   // 架線柱:鋼管柱2本+立体トラスビーム(上下弦各2本・垂直材・斜材)+柱脚。
   // 碍子と可動ブラケットは線路が出揃う6章で付ける(線路ごとに必要なため)。
   CUR=R[2]?R[2].VGa:null;
@@ -1192,9 +1159,154 @@ for(const R of RANGES){
 CUR=null;
 buildPoles(polesIn(DECK_END,DOM.x1));   // 仙川方の地上部
 
+/* ---- 高架橋(2026-10 作り込み):RCラーメン高架橋 ------------------------------
+   【設計方針】連続立体交差の高架橋の標準形(RCラーメン)を、線路の座標で組み立てる。
+     床版      … 張出し床版(先端0.25m・付け根0.40m)。張出しの下は縦梁の外面へ下がる
+     地覆・高欄 … 外面の下に明るい地覆の帯、上に笠木(内外へ張り出す)。高さはレール面+2.1m
+     縦梁      … 桁端から2.0m内側に通る(高架の下から見上げたときの梁の線)
+     柱・横梁   … 10m間隔(3径間=30mで1ブロック、継目は径間の中央)。柱は面取りした角柱で
+                  根元に根巻き。桁幅が広い所(駅・留置線)は柱を3〜4本に増やす
+     継目      … 30mごと。高欄・地覆の外面に目地
+     道床・まくらぎ・レールの腹 … 6章の track() がここへ積む(まくらぎはインスタンス)
+     排水管    … 3本に1本の柱に沿って地上へ
+   既設区間(笹塚方の既存高架・八幡山の流用部)は同じ形で古いコンクリートの色にする。
+   取付部(仙川方)で桁下が低くなる所は、縦梁を地面まで下ろして擁壁にする。
+   部品は 240m ごとの区画の結合ジオメトリにまとめる(視錐台カリングと LOD の単位)。
+   桁幅は deckHalf() をそのまま使う(桁幅の決め方は変えない)。 */
+const VIA={CH:240, SPAN:10, BLOCK:30, CANT:1.6, BEAM_IN:2.0, BW:0.8, COL_R:0.48,
+           PAR:2.1, PAR_T:0.24, SLAB:0.40, TIP:0.25, LOW:4.4, TIE:0.625, LOD:460};
+const VIA_COLS=[];        // 柱の列の登録簿 {s, offs:[...], top}(検証用)
+const VIA_CH=[];          // 区画 {s0,s1,mg,md,ties:[]}(6章の道床もここへ積む)
+for(let a=DOM.x0;a<DOM.x1-0.5;a+=VIA.CH)
+  VIA_CH.push({s0:a,s1:Math.min(DOM.x1,a+VIA.CH),mg:MG(),md:MG(),ties:[]});
+function viaEach(s0,s1,fn){
+  for(const C of VIA_CH){const a=Math.max(s0,C.s0),b=Math.min(s1,C.s1);if(b-a>0.01)fn(C,a,b);}
+}
+const isOldDeck=s=>s<PS0||(s>=OLD_B0&&s<OLD_B1);
+// 古い区間は色を落とす(既存の高架は年数を経たコンクリートの色)
+const viaCol=(s,hex)=>{if(!isOldDeck(s))return hex;
+  const k=0.80, r=((hex>>16)&255)*k, g=((hex>>8)&255)*k, b=(hex&255)*k*0.98;
+  return (Math.round(r)<<16)|(Math.round(g)<<8)|Math.round(b);};
+// 縦梁・柱の下端。桁下が低い取付部では地面まで下ろす(擁壁)
+const viaBot=s=>railY(s)>VIA.LOW?railY(s)-GIRDER:-0.3;
+const VD=MAT.vdVC;
+/* 高欄(地覆+壁+笠木)の断面。sg=+1:北側/-1:南側。外へ向かって +sg */
+function parSect(s,sg){
+  const E=deckHalf(s), y=railY(s), yT=y-DECK_DROP, yP=y+VIA.PAR, t=VIA.PAR_T;
+  const P=[[E-t,yT],[E-t,yP-0.12],[E-t-0.06,yP-0.12],[E-t-0.06,yP],[E+0.06,yP],[E+0.06,yP-0.12],
+           [E+0.02,yP-0.12],[E+0.02,yT+0.25],[E+0.05,yT+0.25],[E+0.05,yT-0.30],[E-0.10,yT-0.30]];
+  return P.map(q=>[sg*q[0],q[1]]);
+}
+{
+  const PC=[0xd6d8da,0xcfd2d5,0xdcdee0,0xe3e5e7,0xdcdee0,0xcfd2d5,0xc9cdd2,0xd0d3d6,0xd9dcdf,0xa9adb2,0xa9adb2];
+  for(const C of VIA_CH){
+    const a=C.s0, b=Math.min(C.s1,DECK_END); if(b-a<0.5) continue;
+    // 古い区間との境で色を切り替える(区切りで分けて掃引する)
+    const cuts=[a,b]; for(const v of[PS0,OLD_B0,OLD_B1]) if(v>a&&v<b) cuts.push(v);
+    cuts.sort((p,q)=>p-q);
+    for(let k=0;k<cuts.length-1;k++){
+      const s0=cuts[k], s1=cuts[k+1], m=(s0+s1)/2, cc=h=>viaCol(m,h);
+      // 床版:上面・張出しの下面・縦梁の間の下面
+      C.mg.loft(VD,s0,s1,s=>{const E=deckHalf(s),Eb=E-VIA.CANT,yT=railY(s)-DECK_DROP;
+        return [[-E,yT-VIA.TIP],[-Eb,yT-VIA.SLAB],[Eb,yT-VIA.SLAB],[E,yT-VIA.TIP],[E,yT],[-E,yT]];},
+        {closed:true,tol:0.01,cols:[cc(0xb3b8bd),cc(0xa9aeb3),cc(0xb3b8bd),cc(0xc4c8cd),cc(0xbfc3c7),cc(0xc4c8cd)],tag:'床版'});
+      // 高欄(両側)
+      for(const sg of[-1,1])
+        C.mg.loft(VD,s0,s1,s=>parSect(s,sg),{closed:true,tol:0.01,cols:PC.map(cc),tag:'高欄'});
+      // 縦梁(両側)。上面は床版の中なので作らない
+      for(const sg of[-1,1])
+        C.mg.col(cc(0xbcc1c6)).loft(VD,s0,s1,s=>{const o=sg*(deckHalf(s)-VIA.BEAM_IN),yT=railY(s)-DECK_DROP,bt=viaBot(s);
+          return [[o-VIA.BW/2,yT-VIA.SLAB],[o-VIA.BW/2,bt],[o+VIA.BW/2,bt],[o+VIA.BW/2,yT-VIA.SLAB]];},{side:1,tag:'縦梁'});
+      // ケーブルトラフ(高欄の内側。蓋の目地は近くだけ)
+      for(const sg of[-1,1])
+        C.md.col(cc(0xb7bbc0)).loft(VD,s0,s1,s=>{const E=deckHalf(s),yT=railY(s)-DECK_DROP,i=E-VIA.PAR_T;
+          return [[sg*(i-0.46),yT],[sg*(i-0.46),yT+0.26],[sg*i,yT+0.26]];},{side:sg>0?-1:1,tag:'ケーブルトラフ'});
+    }
+  }
+  // 柱と横梁:10m間隔。高架下に道路・鉄道・河川・駅舎がある位置には立てない(ROAD_SKIP)
+  const s0=Math.ceil((DOM.x0+3-5)/VIA.SPAN)*VIA.SPAN+5;
+  for(let s=s0;s<DECK_END-3;s+=VIA.SPAN){
+    if(railY(s)<=VIA.LOW) continue;                                   // 取付部は擁壁
+    if(ROAD_SKIP.some(rr=>Math.abs(s-rr[0])<rr[1])) continue;
+    const C=VIA_CH.find(q=>s>=q.s0&&s<q.s1); if(!C) continue;
+    const E=deckHalf(s), Ob=E-VIA.BEAM_IN, y=railY(s), yT=y-DECK_DROP, bt=viaBot(s);
+    const n=Math.max(2,Math.ceil(2*Ob/9.0)+1), offs=[];   // 横梁の支間を9m以下に
+    for(let k=0;k<n;k++) offs.push(-Ob+2*Ob*k/(n-1));
+    for(const o of offs){
+      C.mg.col(viaCol(s,0xbfc3c8)).cyl(VD,s,o,0.3,bt,VIA.COL_R,8,{tag:'柱'});
+      C.mg.col(viaCol(s,0xb0b4b8)).box(VD,s,o,-0.05,0.3,1.25,1.25,{skip:'-y'});           // 根巻き
+    }
+    C.mg.col(viaCol(s,0xb9bdc2)).box(VD,s,0,bt,yT-VIA.SLAB,VIA.BW,2*Ob+VIA.BW,{skip:'+y',tag:'横梁'});
+    VIA_COLS.push({s:s,offs:offs,top:bt});
+    PIERS.push(s);                                                     // 登録簿(検証用)
+    // 排水管:3本に1本、外側の柱に沿って地上へ(張出しの下から縦梁の外面を回る)
+    if(Math.round((s-5)/VIA.SPAN)%3===0) for(const sg of[-1,1]){
+      const A=C.md.axes(s+0.6,sg*(E-0.35)), B=C.md.axes(s+0.6,sg*(Ob+VIA.BW/2+0.12));
+      C.md.col(0x6b7178)
+        .tube(VD,[A.f.x,yT-VIA.TIP,A.f.z],[B.f.x,yT-VIA.SLAB-0.2,B.f.z],0.08,6)
+        .tube(VD,[B.f.x,yT-VIA.SLAB-0.2,B.f.z],[B.f.x,0.25,B.f.z],0.08,6);
+    }
+  }
+  // 継目(30mごと):高欄の外面と笠木・地覆に目地
+  for(let s=Math.ceil(DOM.x0/VIA.BLOCK)*VIA.BLOCK;s<DECK_END;s+=VIA.BLOCK){
+    const C=VIA_CH.find(q=>s>=q.s0&&s<q.s1); if(!C||railY(s)<=VIA.LOW) continue;
+    const E=deckHalf(s), y=railY(s), yT=y-DECK_DROP;
+    for(const sg of[-1,1]) C.md.col(0x5c6066).box(VD,s,sg*(E+0.055),yT-0.30,y+VIA.PAR+0.005,0.03,0.03,{skip:'-y'});
+  }
+}
+/* 道床(コンクリート)・まくらぎ・レールの腹。6章の track() から呼ぶ。
+   高架上は床版の上に、地上部は地面に置く。まくらぎは区画ごとのインスタンスで描く。 */
+function viaTrack(x0,x1,zf,yf){
+  viaEach(x0,x1,function(C,a,b){
+    C.mg.loft(VD,a,b,s=>{const o=zf(s),y=yf(s),bt=y>3?y-DECK_DROP:-0.05;
+      return [[o-1.35,bt],[o+1.35,bt],[o+1.2,y-0.12],[o-1.2,y-0.12]];},
+      {closed:true,cols:[0x6b7076,0x7d8288,0x80858b,0x7d8288]});
+    for(const ro of[-RAIL_OFF,RAIL_OFF])                       // レールの腹(頭頂面は MAT.rail)
+      C.md.col(0x4d5259).loft(VD,a,b,s=>{const o=zf(s)+ro,y=yf(s);
+        return [[o-0.034,y-0.02],[o+0.034,y-0.02],[o+0.034,y+RAIL_TOP-0.004],[o-0.034,y+RAIL_TOP-0.004]];},{closed:true});
+    for(let s=Math.ceil(a/VIA.TIE)*VIA.TIE;s<b;s+=VIA.TIE) C.ties.push([s,zf(s),yf(s)]);
+  });
+}
+/* まくらぎ1本の形。見えるのは上面と線路方向の2側面だけなので、その3面で作る
+   (箱の6面の半分の三角形で済む。数万本を描くので効く) */
+const TIE_GEO=(function(){
+  const L=0.12, H=0.065, W=1.15;   // 半長(線路方向)・半高・半幅
+  const P=[-L,H,-W, L,H,-W, L,H,W, -L,H,W,          // 上面
+           L,-H,-W, L,-H,W, L,H,W, L,H,-W,          // +x 側面
+           -L,-H,W, -L,-H,-W, -L,H,-W, -L,H,W];     // -x 側面
+  const N=[0,1,0,0,1,0,0,1,0,0,1,0, 1,0,0,1,0,0,1,0,0,1,0,0, -1,0,0,-1,0,0,-1,0,0,-1,0,0];
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.Float32BufferAttribute(P,3));
+  g.setAttribute('normal',new THREE.Float32BufferAttribute(N,3));
+  g.setIndex([0,2,1,0,3,2, 4,6,5,4,7,6, 8,10,9,8,11,10]);
+  return g;
+})();
+const TIE_LOD=280;                 // まくらぎを描く距離[m](それより遠くでは1画素未満)
+function viaFlush(){
+  const m4=new THREE.Matrix4(),q=new THREE.Quaternion(),e=new THREE.Euler(),v=new THREE.Vector3(),one=new THREE.Vector3(1,1,1);
+  for(const C of VIA_CH){
+    const g=new THREE.Group(), d=new THREE.Group();
+    const b=C.md.bounds(), bb={x0:b.x0,x1:b.x1,y0:b.y0,y1:b.y1,z0:b.z0,z1:b.z1};
+    C.mg.flush(g); C.md.flush(d);
+    if(C.ties.length){
+      const im=new THREE.InstancedMesh(TIE_GEO,MAT.tie,C.ties.length);
+      C.ties.forEach(function(t,i){
+        const f=frame(t[0],t[1]); e.set(0,-f.a,0); q.setFromEuler(e);
+        v.set(f.x,t[2]-0.12+0.065,f.z); m4.compose(v,q,one); im.setMatrixAt(i,m4);
+      });
+      im.instanceMatrix.needsUpdate=true;
+      const tg=new THREE.Group(); tg.add(im); d.add(tg);
+      lodAdd(tg,bb,TIE_LOD);
+    }
+    g.add(d); scene.add(g);
+    g.name='高架橋 '+C.s0.toFixed(0); d.name='高架橋の細部 '+C.s0.toFixed(0);
+    lodAdd(d,bb,VIA.LOD);
+  }
+}
+
 /* ============ 6. 軌道・架線・交差鉄道・地上線/仮線 ============ */
 function track(x0,x1,zf,yf){
-  strip(x0,x1,10,x=>[x,yf(x)-.12,zf(x)-1.5],x=>[x,yf(x)-.12,zf(x)+1.5],MAT.slab);
+  viaTrack(Math.min(x0,x1),Math.max(x0,x1),zf,yf);   // 道床・まくらぎ・レールの腹(5章の区画へ)
   for(const o of[-RAIL_OFF,RAIL_OFF])   // レール:内面間=GAUGE(1372mm)になる位置に置く
     strip(x0,x1,10,x=>[x,yf(x)+RAIL_TOP,zf(x)+o-RAIL_W/2],x=>[x,yf(x)+RAIL_TOP,zf(x)+o+RAIL_W/2],MAT.rail);
 }
@@ -1878,6 +1990,14 @@ function bldg(S,st,y){
   const mg=S.mg, md=S.md, c0=st.x, H=STA_BLDG_HALF, hb=y-GIRDER-0.05, E=deckHalf(c0)-1.0;
   const a=c0-H, b=c0+H;
   mg.col(0xe9e7e2).cbox(SV,a,b,0,E,0,hb,{tag:'駅舎'});
+  // 妻側(線路方向の端):窓の帯と通用口
+  for(const [s,f] of[[a,-1],[b,1]]){
+    const A=mg.axes(s,0), P=(o,yy)=>{const q=frame(s+f*0.03,o);return [q.x,yy,q.z];};
+    mg.col(0x3a4148).face(SV,[P(-E+1.5,2.9),P(E-1.5,2.9),P(E-1.5,4.7),P(-E+1.5,4.7)],v3sc(A.t,f));
+    mg.col(0x8c939b).face(SV,[P(-0.6,0),P(0.6,0),P(0.6,2.2),P(-0.6,2.2)],v3sc(A.t,f));
+    for(let o=-E+1.5;o<=E-1.5+0.01;o+=1.8)
+      md.col(0xbfc4c9).box(SV,s+f*0.05,o,2.9,4.7,0.06,0.07,{skip:'-y'});
+  }
   for(const sg of[-1,1]){
     const o=sg*(E+0.02), oo=fO(sg,-1.0+0.02);
     // 入口:暗い奥+ガラス+枠、上に庇と看板
@@ -2052,6 +2172,8 @@ for(const s of STA){
   staLabels.push(sp);
 }
 
+// 高架橋・道床の区画(5章・6章、笹塚の留置線は7章)を Mesh にする
+viaFlush();
 for(const gq of XINGS){
   const sp=textSprite('旧 '+gq[0]+'踏切',null,false);
   sp.scale.set(64,12.6,1);
@@ -2428,7 +2550,7 @@ const NIGHT=(function(){
     ['slab',   0x101216], ['deckNew', 0x101216], ['deckOld', 0x0e1014],
     ['barrier',0x14161b], ['rail',    0x1d2026], ['pole', 0x0e1014],
     // 結合ジオメトリ(3b章):駅はホーム・上屋と同じく明るめ、高架橋は桁と同じ
-    ['stVC',   0x272318], ['vdVC',    0x101216],
+    ['stVC',   0x272318], ['vdVC',    0x101216], ['tie', 0x0e1014],
   ];
   function set(on){
     G.visible=!!on;
