@@ -20,7 +20,7 @@ const REF = {
   FDOOR_W: 0.610,                            // 中央の非常扉の幅(公表)
   DOORX: [-7.05, -2.35, 2.35, 7.05], DOOR_W: 1.30,   // 客用扉の中心と幅(ホームドアの開口と揃う)
   WIN_PER_GAP: 2,                            // 扉間の窓の数(公表の説明:扉間に窓2枚)
-  LIGHT_TOP: 1.6,                            // 前照灯・尾灯の上端の上限(前面窓の下=公表の説明)
+  LAMP_Z: [1.555, 1.715],                    // 前照灯・尾灯は青帯の中(前面写真の実測 reference/keio9000/ftex9.png)
   TOL: 0.005,
 };
 
@@ -100,11 +100,15 @@ const G = X.K9GEO;
   const dy = range(dest, 1), dz = range(dest, 2), ny = range(num, 1), nz = range(num, 2);
   ok('行先表示器は中央扉の上', dy[0] >= -REF.FDOOR_W / 2 && dy[1] <= REF.FDOOR_W / 2 && dz[0] >= 3.0,
     '|y|≤' + REF.FDOOR_W / 2 + '・z≥3.0', 'y ' + dy[0].toFixed(2) + '〜' + dy[1].toFixed(2) + '・z ' + dz[0].toFixed(2));
-  ok('車号は向かって右の窓の上', ny[0] > REF.FDOOR_W / 2 && nz[0] >= 3.0,
+  ok('車号は向かって右の窓の上部', ny[0] > REF.FDOOR_W / 2 && nz[0] >= 3.0,
     'y>' + REF.FDOOR_W / 2 + '(向かって右=+y)・z≥3.0', 'y ' + ny[0].toFixed(2) + '〜' + ny[1].toFixed(2) + '・z ' + nz[0].toFixed(2));
-  const hl = v4pts(F.hl), tl = v4pts(F.tl);
-  ok('前照灯・尾灯は前面の下部', range(hl, 2)[1] < REF.LIGHT_TOP && range(tl, 2)[1] < REF.LIGHT_TOP && range(hl, 0)[0] > 9,
-    '上端<' + REF.LIGHT_TOP + 'm・前面', range(hl, 2)[1].toFixed(2) + ' / ' + range(tl, 2)[1].toFixed(2) + 'm');
+  const kd = v4pts(F.kind), ky = range(kd, 1), kz = range(kd, 2);
+  ok('種別表示器は向かって左の窓の上部', ky[1] < -REF.FDOOR_W / 2 && kz[0] >= 3.0,
+    'y<−' + REF.FDOOR_W / 2 + '・z≥3.0', 'y ' + ky[0].toFixed(2) + '〜' + ky[1].toFixed(2) + '・z ' + kz[0].toFixed(2));
+  const hl = v4pts(F.hl), tl = v4pts(F.tl), lz = REF.LAMP_Z;
+  const inBand = (P) => range(P, 2)[0] >= lz[0] - 1e-6 && range(P, 2)[1] <= lz[1] + 1e-6;
+  ok('前照灯・尾灯は青帯の中', inBand(hl) && inBand(tl) && range(hl, 0)[0] > 9,
+    'z ' + lz.join('〜') + '・前面', range(hl, 2).map((v) => v.toFixed(3)).join('〜') + ' / ' + range(tl, 2).map((v) => v.toFixed(3)).join('〜'));
   // 灯火は内=前照灯・外=尾灯(8000系と同じ並び)
   ok('前照灯が内・尾灯が外', range(hl.map((p) => [Math.abs(p[1])]), 0)[1] <= range(tl.map((p) => [Math.abs(p[1])]), 0)[0] + 1e-6,
     '前照灯の外端≤尾灯の内端', range(hl.map((p) => [Math.abs(p[1])]), 0)[1].toFixed(2) + ' ≤ ' + range(tl.map((p) => [Math.abs(p[1])]), 0)[0].toFixed(2));
