@@ -19,7 +19,7 @@ const X = require('./stub_three')(path,
   'SETA_LO:SETA_LO,SETA_HI:SETA_HI,SETA_CARS:SETA_CARS,SETA_PITCH:SETA_PITCH,' +
   'XCAR:XCAR,K8GEO:K8GEO,XM_WHL:XM_WHL,' +
   'GAUGE_INO:GAUGE_INO,GAUGE_SETA:GAUGE_SETA,RAIL_W:RAIL_W,prjXY:prjXY,frame:frame,' +
-  'VIA_COLS:VIA_COLS,EXPY:EXPY,railY:railY,DECK_END:DECK_END,ROADS_PL:ROADS_PL');
+  'VIA_COLS:VIA_COLS,EXPY:EXPY,railY:railY,DECK_END:DECK_END,ROADS_PL:ROADS_PL,CITY_LODS:CITY_LODS');
 
 /* ---- 期待値(検証側が独立して持つ) ----------------------------------------
    道路の幅は4章の描画寸法(box の第1引数)。ここでは"路面の半幅"だけを持ち、
@@ -297,6 +297,62 @@ if (LAND) {
   ok('自動車道の高架が京王線と当たらない', be === null && X.EXPY.deck.length === LAND.elev.filter((R) => R.P.some((v) => { const q = X.prjXY(v[0], v[1]); return q.s > X.DOM.x0 - 150 && q.s < X.DOM.x1 + 150 && Math.abs(q.off) < X.DOM.z + 60; })).length,
     '下面≥レール面+' + REF.EXPY_CLEAR + 'm・橋脚は側道の外',
     be ? be.join(' ') : '床版' + X.EXPY.deck.length + '面・重なる点' + ne + '・橋脚' + X.EXPY.piers.length + '基');
+}
+
+/* ---- 4c. LOD2(屋根の形) ----------------------------------------------------
+   plateau_bldg.js の LOD2 の面を検証側で独自に読み、近くの形(足跡の押し出しの代わりに面そのもの)を実際に作らせて、
+   ・データの面の点がすべて描かれた頂点にある(LOD2 の建物が平らな箱のままになっていない)
+   ・描いた三角形の向き(巻き順の法線)が頂点の法線と同じ側(裏返った面が無い)。足跡の押し出しの建物も同じに見る */
+{
+  const fs = require('fs'), pth = require('path');
+  const f = pth.join(pth.dirname(path), 'plateau_bldg.js');
+  const html = fs.readFileSync(path, 'utf8');
+  const g = {};
+  if (html.includes('<script src="plateau_bldg.js">') && fs.existsSync(f)) new Function('globalThis', fs.readFileSync(f, 'utf8'))(g);
+  const D = g.PLATEAU_BLDG;
+  if (D && D.lod2b64) {
+    // 足跡の1点目(LOD2 の点の基準)を PLT1 から
+    const b = Buffer.from(D.b64, 'base64'); const N = b.readUInt32LE(4); let o = 8; const P0 = [];
+    for (let n = 0; n < N; n++) { const nv = b.readUInt8(o); o += 4; P0.push([b.readInt32LE(o) / 10, b.readInt32LE(o + 4) / 10]); o += 8 + 4 * (nv - 1); }
+    const w = Buffer.from(D.lod2b64, 'base64'); const M = w.readUInt32LE(4); let q = 8; const L2 = [];
+    for (let k = 0; k < M; k++) {
+      const bi = w.readUInt32LE(q), ns = w.readUInt16LE(q + 4); q += 6; const V = []; let roofs = 0;
+      for (let j = 0; j < ns; j++) {
+        const t = w.readUInt8(q), nv = w.readUInt8(q + 1); q += 2; if (t === 1) roofs++;
+        for (let i = 0; i < nv; i++) { V.push([P0[bi][0] + w.readInt16LE(q) / 10, w.readUInt16LE(q + 4) / 10, P0[bi][1] + w.readInt16LE(q + 2) / 10]); q += 6; }
+      }
+      L2.push({ p0: P0[bi], V: V, roofs: roofs });
+    }
+    // 描かれている(登録簿にある)LOD2 の建物:足跡の1点目で対応を取る
+    const key = (x, z) => x.toFixed(1) + ',' + z.toFixed(1);
+    const drawn = new Set(B.filter((e) => e.poly).map((e) => key(e.poly[0][0], e.poly[0][1])));
+    const want = L2.filter((e) => drawn.has(key(e.p0[0], e.p0[1])));
+    // LOD2 の建物を含むまとまりの近くの形を作る
+    const VS = new Set(); let tris = 0, flip = 0, made = 0;
+    for (const C of X.CITY_LODS) {
+      if (!C.B.some((e) => e.l2)) continue;
+      const m = C.m[0] || C.make(C); made++;
+      const gg = m.geometry, Pa = gg.attributes.position.array, Na = gg.attributes.normal.array, Ia = gg.index.array;
+      for (let i = 0; i < Pa.length; i += 3) VS.add(Pa[i].toFixed(1) + ',' + Pa[i + 1].toFixed(1) + ',' + Pa[i + 2].toFixed(1));
+      for (let t = 0; t < Ia.length; t += 3) {
+        const a = Ia[t] * 3, c = Ia[t + 1] * 3, d = Ia[t + 2] * 3;
+        const ux = Pa[c] - Pa[a], uy = Pa[c + 1] - Pa[a + 1], uz = Pa[c + 2] - Pa[a + 2], vx = Pa[d] - Pa[a], vy = Pa[d + 1] - Pa[a + 1], vz = Pa[d + 2] - Pa[a + 2];
+        const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+        if (Math.hypot(nx, ny, nz) < 1e-6) continue;
+        tris++;
+        if (nx * Na[a] + ny * Na[a + 1] + nz * Na[a + 2] < 0) flip++;
+      }
+    }
+    let miss = 0, tot = 0, ex = null;
+    for (const e of want) for (const v of e.V) {
+      tot++;
+      if (!VS.has(v[0].toFixed(1) + ',' + v[1].toFixed(1) + ',' + v[2].toFixed(1))) { miss++; if (!ex) ex = '(' + v.map((u) => u.toFixed(1)).join(',') + ')'; }
+    }
+    ok('LOD2 の面が描かれる', want.length >= 300 && miss === 0, '300棟以上・面の点がすべて頂点に',
+      want.length + '棟(データ' + L2.length + ')・点' + tot + '・欠け' + miss + (ex ? ' 例' + ex : ''));
+    ok('建物の面が裏返らない', tris > 0 && flip === 0, '巻き順の法線=頂点の法線の側',
+      'まとまり' + made + '・三角形' + tris + '・裏返り' + flip);
+  }
 }
 
 /* ---- 5. 建物・樹木どうしが重ならない ------------------------------------- */

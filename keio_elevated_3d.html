@@ -3530,6 +3530,35 @@ function plbDecode(b64){                   // 2進 → [{P:[[x,z]…], h, st}](p
   }
   return out;
 }
+// LOD2 の屋根面・壁面(plateau_import.py の encode_lod2 の逆)。建物 L[i].l2 = [{t:1屋根/2壁, V:[[x,y,z]…]}…]
+function plbDecodeL2(b64,L){
+  const s=atob(b64), u8=new Uint8Array(s.length);
+  for(let i=0;i<s.length;i++) u8[i]=s.charCodeAt(i);
+  if(s.slice(0,4)!=='PL2A') throw new Error('PLATEAU の LOD2 データの形式が違う');
+  const dv=new DataView(u8.buffer), N=dv.getUint32(4,true);
+  let o=8, n2=0;
+  for(let k=0;k<N;k++){
+    const bi=dv.getUint32(o,true), ns=dv.getUint16(o+4,true); o+=6;
+    const b=L[bi], x0=b.P[0][0], z0=b.P[0][1], S=[];
+    for(let j=0;j<ns;j++){
+      const t=dv.getUint8(o), nv=dv.getUint8(o+1); o+=2;
+      const V=[];
+      for(let i=0;i<nv;i++){ V.push([x0+dv.getInt16(o,true)/10, dv.getUint16(o+4,true)/10, z0+dv.getInt16(o+2,true)/10]); o+=6; }
+      S.push({t:t,V:V});
+    }
+    b.l2=S; n2++;
+  }
+  return n2;
+}
+// 3次元の平らな多角形を三角形に:Newell の法線の最も大きい成分の軸を落として平面へ写し、耳切りする
+function polyTri3(V){
+  let nx=0,ny=0,nz=0;
+  for(let i=0;i<V.length;i++){const a=V[i],b=V[(i+1)%V.length]; nx+=(a[1]-b[1])*(a[2]+b[2]); ny+=(a[2]-b[2])*(a[0]+b[0]); nz+=(a[0]-b[0])*(a[1]+b[1]);}
+  const ax=Math.abs(nx),ay=Math.abs(ny),az=Math.abs(nz);
+  const Q=V.map(v=>ay>=ax&&ay>=az?[v[0],v[2]]:(ax>=az?[v[2],v[1]]:[v[0],v[1]]));
+  const l=Math.hypot(nx,ny,nz)||1;
+  return {T:earTri(Q), n:[nx/l,ny/l,nz/l]};
+}
 // 単純多角形の耳切り(屋根の三角形)。[[i,j,k]…]
 function earTri(P){
   const n=P.length, cr=(a,b,c)=>(b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0]);
@@ -3564,6 +3593,7 @@ function cityLod(){
 const CITY={buildings:[],trees:[]};    // 検証用の登録簿
 if(PLB){
   const L=plbDecode(PLB.b64), CH=new Map(), CHL=240;
+  const N_L2=PLB.lod2b64?plbDecodeL2(PLB.lod2b64,L):0;     // LOD2(屋根の形)がある建物は近くで面そのものを描く
   const PALS=[[0xe2dccf,0xd9d2c4,0xcfc8bb,0xe6e2d8,0xc9c3b8,0xd8d4cc],    // 低層(戸建て・アパート)
               [0xc9c8c4,0xd4d0c8,0xbdbab4,0xcfd3d6,0xd8d3c9],             // 中層
               [0xc2c8cf,0xb7bec6,0xd0d4d8,0xc8c4bd]];                      // 高層
@@ -3602,14 +3632,14 @@ if(PLB){
     const h=b.h, pal=PALS[h<9.5?0:(h<25?1:2)], hex=pal[Math.abs(Math.round(cx*7+cz*13))%pal.length];
     const r=Math.hypot(best.w,best.d)/2, k=Math.floor(s/CHL);
     let c=CH.get(k); if(!c){c={B:[],bx:[1e9,-1e9,1e9,-1e9,0]}; CH.set(k,c);}
-    c.B.push({P:P,h:h,cx:cx,cz:cz,ox:ox,oz:oz,w:best.w,d:best.d,a:a,hex:hex,big:best.w*best.d>=120||h>=9.5});   // 遠くでも描く:120m²以上か9.5m以上(集合住宅・大きな家)
+    c.B.push({P:P,h:h,l2:b.l2||null,cx:cx,cz:cz,ox:ox,oz:oz,w:best.w,d:best.d,a:a,hex:hex,big:best.w*best.d>=120||h>=9.5});   // 遠くでも描く:120m²以上か9.5m以上(集合住宅・大きな家)
     c.bx[0]=Math.min(c.bx[0],ox-r); c.bx[1]=Math.max(c.bx[1],ox+r); c.bx[2]=Math.min(c.bx[2],oz-r); c.bx[3]=Math.max(c.bx[3],oz+r); c.bx[4]=Math.max(c.bx[4],h);
     // 足跡の格子(樹木・街灯が中や縁に入らない)。外接矩形+余白が掛かるセル全部に入れる
     for(let gx=Math.floor((ox-r-PLB_PAD)/PLB_CELL);gx<=Math.floor((ox+r+PLB_PAD)/PLB_CELL);gx++)
       for(let gz=Math.floor((oz-r-PLB_PAD)/PLB_CELL);gz<=Math.floor((oz+r+PLB_PAD)/PLB_CELL);gz++){
         const kk=gx+','+gz; let l=PLB_GRID.get(kk); if(!l){l=[];PLB_GRID.set(kk,l);} l.push(P);
       }
-    CITY.buildings.push({s:s,off:off,x:ox,z:oz,w:best.w,d:best.d,h:h,a:a,r:r,poly:P,plateau:true});
+    CITY.buildings.push({s:s,off:off,x:ox,z:oz,w:best.w,d:best.d,h:h,a:a,r:r,poly:P,plateau:true,lod2:b.l2?b.l2.length:0});
     nIn++;
   }
   /* 中・遠は単位の箱のインスタンス(まとまりごとに外接球を持たせる)。屋根は頂点カラーで少し暗く */
@@ -3637,8 +3667,24 @@ if(PLB){
       // 法線の向きに表を向ける
       const ux=b[0]-a[0],uy=b[1]-a[1],uz=b[2]-a[2],vx=cc[0]-a[0],vy=cc[1]-a[1],vz=cc[2]-a[2];
       if((uy*vz-uz*vy)*n[0]+(uz*vx-ux*vz)*n[1]+(ux*vy-uy*vx)*n[2]>=0) I.push(o,o+1,o+2,o,o+2,o+3); else I.push(o,o+2,o+1,o,o+3,o+2);};
+    const tri=(a,b2,cc,n,cl)=>{const o=P.length/3; for(const q of [a,b2,cc]){P.push(q[0],q[1],q[2]);N.push(n[0],n[1],n[2]);Cc.push(cl.r,cl.g,cl.b);}
+      const ux=b2[0]-a[0],uy=b2[1]-a[1],uz=b2[2]-a[2],vx=cc[0]-a[0],vy=cc[1]-a[1],vz=cc[2]-a[2];
+      if((uy*vz-uz*vy)*n[0]+(uz*vx-ux*vz)*n[1]+(ux*vy-uy*vx)*n[2]>=0) I.push(o,o+1,o+2); else I.push(o,o+2,o+1);};
     for(const b of C.B){
       setSrgb(c,b.hex); const roof=c.clone().multiplyScalar(0.86), Q=b.P, h=b.h;
+      if(b.l2){
+        /* LOD2:屋根面・壁面をそのまま。屋根は上向き、壁は建物の重心から外向きに表を向ける */
+        for(const S of b.l2){
+          const r=polyTri3(S.V); let n=r.n;
+          if(S.t===1){ if(n[1]<0) n=[-n[0],-n[1],-n[2]]; }
+          else{
+            let mx=0,mz=0; for(const v of S.V){mx+=v[0];mz+=v[2];} mx=mx/S.V.length-b.cx; mz=mz/S.V.length-b.cz;
+            if(n[0]*mx+n[2]*mz<0) n=[-n[0],-n[1],-n[2]];
+          }
+          for(const t of r.T) tri(S.V[t[0]],S.V[t[1]],S.V[t[2]],n,S.t===1?roof:c);
+        }
+        continue;
+      }
       for(let i=0;i<Q.length;i++){
         const a=Q[i], d=Q[(i+1)%Q.length], mx=(a[0]+d[0])/2-b.cx, mz=(a[1]+d[1])/2-b.cz;
         let nx=d[1]-a[1], nz=-(d[0]-a[0]); const l=Math.hypot(nx,nz)||1; nx/=l; nz/=l; if(nx*mx+nz*mz<0){nx=-nx;nz=-nz;}

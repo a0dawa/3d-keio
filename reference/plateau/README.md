@@ -69,6 +69,15 @@ python3 -I tools/plateau_import.py --html keio_elevated_3d.html --min-area 25 --
   (`LU.tint`)。実データの緑があるときは既定の地表(住宅地など)を灰褐色へ3割寄せる(全面が芝生に見えない)。
   水面は1つの Mesh。模式の仙川の帯は描かない。建物・樹木は水面に入らない
 
+## LOD2(屋根の形。2026-10。`plateau_bldg.js` の lod2b64)
+
+- 建築物の GML のうち `bldg:lod2Solid` を持つ建物(沿線の22メッシュで1,340棟。笹塚・明大前・下高井戸・千歳烏山の駅の周りに多い)は、
+  `bldg:boundedBy` の RoofSurface/WallSurface/GroundSurface に `lod2MultiSurface`(標高つきの3次元の面)がある
+- `plateau_import.py` が屋根面・壁面の外周を、足跡の1点目からの差(0.1m)と GroundSurface の最も低い標高からの高さ(0.1m)で
+  別の2進 `PL2A` に入れる(帯の中で715棟・0.37MB)。足跡+高さ(PLT1)の並びと中身は変わらない
+- ビューア:近くの形(400m)で、LOD2 のある建物は足跡の押し出しの代わりに面そのものを描く(3次元の多角形は法線の最も大きい
+  成分の軸を落として耳切り。屋根は上向き、壁は建物の重心から外向きに表を向ける)。中・遠の箱は今のまま。描かれるのは547棟
+
 ## 取り込みの方法(試作:`tools/plateau_import.py`)
 
 ```bash
