@@ -1096,6 +1096,18 @@ function expyHit(px,pz,r){                 // 点(半径 r)が自動車道の橋
   for(const p of EXPY.piers) if(Math.abs(px-p[0])<1.0+r&&Math.abs(pz-p[1])<1.0+r) return true;
   return false;
 }
+/* 多角形が事業区間の帯(s:DOM±150・|off|<DOM.z+60)に掛かるか。頂点だけでなく辺の 20m ごとの点も見る
+   (帯を横切る長い道路は頂点が帯の外にしか無い) */
+function polyInDom(P){
+  for(let i=0;i<P.length;i++){
+    const a=P[i], b=P[(i+1)%P.length], m=Math.max(1,Math.ceil(Math.hypot(b[0]-a[0],b[1]-a[1])/20));
+    for(let k=0;k<m;k++){
+      const q=prjXY(a[0]+(b[0]-a[0])*k/m, a[1]+(b[1]-a[1])*k/m);
+      if(q.s>DOM.x0-150&&q.s<DOM.x1+150&&Math.abs(q.off)<DOM.z+60) return true;
+    }
+  }
+  return false;
+}
 function waterHit(px,pz,r){                // 点(半径 r)が水面(河川・池)に掛かるか
   for(const W of LU.water) if(px>W.bb[0]-r&&px<W.bb[1]+r&&pz>W.bb[2]-r&&pz<W.bb[3]+r&&polyDist(W.P,px,pz)<r) return true;
   return false;
@@ -1122,7 +1134,7 @@ if(PLL){
   const elev=R=>R.k===2&&R.sec===2;
   for(const R of plrDecode(PLL.road64)){
     const P=R.P; let inDom=false;
-    for(const p of P){const q=prjXY(p[0],p[1]); if(q.s>DOM.x0-150&&q.s<DOM.x1+150&&Math.abs(q.off)<DOM.z+60){inDom=true;break;}}
+    inDom=polyInDom(P);
     if(!inDom) continue;
     let x0=1e9,x1=-1e9,z0=1e9,z1=-1e9;
     for(const p of P){x0=Math.min(x0,p[0]);x1=Math.max(x1,p[0]);z0=Math.min(z0,p[1]);z1=Math.max(z1,p[1]);}
@@ -1163,7 +1175,7 @@ if(PLL){
     const W={P:[],N:[],I:[]};
     for(const R of plrDecode(PLL.land64,'PLU1')){
       let inDom=false;
-      for(const p of R.P){const q=prjXY(p[0],p[1]); if(q.s>DOM.x0-150&&q.s<DOM.x1+150&&Math.abs(q.off)<DOM.z+60){inDom=true;break;}}
+      inDom=polyInDom(R.P);
       if(!inDom) continue;
       let x0=1e9,x1=-1e9,z0=1e9,z1=-1e9;
       for(const p of R.P){x0=Math.min(x0,p[0]);x1=Math.max(x1,p[0]);z0=Math.min(z0,p[1]);z1=Math.max(z1,p[1]);}
@@ -1267,6 +1279,7 @@ if(PLL){
         if(polyDist(Q,ix,iz)>=0){ix=x-nx*0.8; iz=z-nz*0.8; if(polyDist(Q,ix,iz)>=0) continue;}
         const ox=x+(x-ix)/0.8*1.5, oz=z+(z-iz)/0.8*1.5;
         if(roadHit(ox,oz,0)) continue;
+        const qq=prjXY(ix,iz); if(qq.s<DOM.x0||qq.s>DOM.x1||Math.abs(qq.off)>DOM.z) continue;
         ROAD_LAMPS.push([ix,iz]);
       }
       acc-=L;
@@ -3594,6 +3607,20 @@ const CITY={buildings:[],trees:[]};    // 検証用の登録簿
 if(PLB){
   const L=plbDecode(PLB.b64), CH=new Map(), CHL=240;
   const N_L2=PLB.lod2b64?plbDecodeL2(PLB.lod2b64,L):0;     // LOD2(屋根の形)がある建物は近くで面そのものを描く
+  if(PLB.use64){const u=atob(PLB.use64); for(let i=0;i<L.length&&i<u.length;i++) L[i].use=u.charCodeAt(i);}   // 用途の区分(plateau_import.py の USAGE)
+  /* 用途ごとの外壁の色(sRGB)。住宅は暖かい白〜ベージュ、共同住宅は明るい灰〜生成り、業務は青灰、商業は温かい灰と
+     わずかな色、官公庁・学校は生成りとれんが寄り、倉庫・工場・供給処理は金属の灰。不明は高さで(従来どおり) */
+  const PAL_USE=[null,
+    [0xe6dccb,0xddd2bf,0xd6cbb6,0xe9e3d6,0xcfc5b5,0xdcd6cc],    // 1 戸建て住宅
+    [0xd9cfc0,0xcfc6b8,0xe0d8ca,0xd2c8b6],                       // 2 店舗・作業所併用住宅
+    [0xe4e1da,0xd8d4cb,0xc9c4b9,0xdcd7cf,0xcdc9c2],             // 3 共同住宅
+    [0xb7c0ca,0xaeb8c3,0xc3cad1,0xa9b2bd],                       // 4 業務
+    [0xd4c5b5,0xc9b8a8,0xbcc3c9,0xd8cfc4],                       // 5 商業・宿泊
+    [0xd8c8a8,0xcdb99a,0xe0d4bc],                                // 6 官公庁・文教厚生
+    [0xb9bec2,0xaeb4b9,0xc4c8cb],                                // 7 運輸倉庫
+    [0xb3b9bd,0xa8aeb3,0xbfc3c6],                                // 8 工場
+    [0xc0c4c0,0xb4b8b4],                                         // 9 供給処理
+    [0xc8c6b8,0xbdbbad]];                                        // 10 農林漁業ほか
   const PALS=[[0xe2dccf,0xd9d2c4,0xcfc8bb,0xe6e2d8,0xc9c3b8,0xd8d4cc],    // 低層(戸建て・アパート)
               [0xc9c8c4,0xd4d0c8,0xbdbab4,0xcfd3d6,0xd8d3c9],             // 中層
               [0xc2c8cf,0xb7bec6,0xd0d4d8,0xc8c4bd]];                      // 高層
@@ -3629,7 +3656,7 @@ if(PLB){
     }
     if(!best) continue;
     const ox=best.uc*best.ux-best.vc*best.uz, oz=best.uc*best.uz+best.vc*best.ux, a=Math.atan2(best.uz,best.ux);
-    const h=b.h, pal=PALS[h<9.5?0:(h<25?1:2)], hex=pal[Math.abs(Math.round(cx*7+cz*13))%pal.length];
+    const h=b.h, pal=PAL_USE[b.use||0]||PALS[h<9.5?0:(h<25?1:2)], hex=pal[Math.abs(Math.round(cx*7+cz*13))%pal.length];
     const r=Math.hypot(best.w,best.d)/2, k=Math.floor(s/CHL);
     let c=CH.get(k); if(!c){c={B:[],bx:[1e9,-1e9,1e9,-1e9,0]}; CH.set(k,c);}
     c.B.push({P:P,h:h,l2:b.l2||null,cx:cx,cz:cz,ox:ox,oz:oz,w:best.w,d:best.d,a:a,hex:hex,big:best.w*best.d>=120||h>=9.5});   // 遠くでも描く:120m²以上か9.5m以上(集合住宅・大きな家)
@@ -3639,7 +3666,7 @@ if(PLB){
       for(let gz=Math.floor((oz-r-PLB_PAD)/PLB_CELL);gz<=Math.floor((oz+r+PLB_PAD)/PLB_CELL);gz++){
         const kk=gx+','+gz; let l=PLB_GRID.get(kk); if(!l){l=[];PLB_GRID.set(kk,l);} l.push(P);
       }
-    CITY.buildings.push({s:s,off:off,x:ox,z:oz,w:best.w,d:best.d,h:h,a:a,r:r,poly:P,plateau:true,lod2:b.l2?b.l2.length:0});
+    CITY.buildings.push({s:s,off:off,x:ox,z:oz,w:best.w,d:best.d,h:h,a:a,r:r,poly:P,plateau:true,lod2:b.l2?b.l2.length:0,use:b.use||0,hex:hex});
     nIn++;
   }
   /* 中・遠は単位の箱のインスタンス(まとまりごとに外接球を持たせる)。屋根は頂点カラーで少し暗く */
@@ -3783,21 +3810,32 @@ if(PLB){
 }
 {
   // 本数は利用者指示で約2倍。街路樹の間隔を実際に近く詰め、残りは庭木として小さめに散らす
-  const N=2300;
-  const crown=new THREE.InstancedMesh(new THREE.ConeGeometry(2.3,5.2,7),mkMat('MeshLambertMaterial',{color:0xffffff}),N);
-  const trunk=new THREE.InstancedMesh(new THREE.CylinderGeometry(.22,.32,2.2,5,1,true),M(0x6e5a44),N);   // 蓋なし
-  const m4=new THREE.Matrix4(),q=new THREE.Quaternion(),col=new THREE.Color();
+  /* 実データの土地利用(4章 LANDS_PL)があれば、公園・緑地(11m 格子)と山林(6.5m 格子)の中にも植える。
+     格子を少しずらし、縁から樹冠の半径+0.5m 以上内側だけ。上限 2,500本。数が先に決まらないとインスタンスの枠を作れない */
+  const PARK=[];
+  for(const R of LANDS_PL){
+    if(R.k!==0&&R.k!==2) continue;
+    const g=R.k===2?6.5:11, sc0=R.k===2?0.95:0.85;
+    for(let x=Math.ceil(R.bb[0]/g)*g;x<R.bb[1];x+=g)for(let z=Math.ceil(R.bb[2]/g)*g;z<R.bb[3];z+=g){
+      const jx=x+(Math.random()-0.5)*g*0.6, jz=z+(Math.random()-0.5)*g*0.6, sc=sc0+Math.random()*0.35;
+      if(polyDist(R.P,jx,jz)<-(2.3*sc+0.5)) PARK.push([jx,jz,sc,R.k]);
+    }
+  }
+  while(PARK.length>2500) PARK.splice(Math.floor(Math.random()*PARK.length),1);
+  const N=2300+PARK.length;
+  /* 木は幹と樹冠を1つの形(頂点カラー:幹=茶・樹冠=白)にし、s の 960m ごとのまとまりのインスタンスにする。
+     まとまりごとに外接球を持たせて画面の外・影の範囲の外を間引く(1つにまとめると数千本を毎回描く)。
+     色(季節)はインスタンスの色で、幹にも掛かる(暗い茶になる)。登録簿の木 i は TREE_CH[ci].m の j 番目 */
+  const T=[], col=new THREE.Color();
   let i=0;
   // 樹冠の半径は 2.3*sc。占有半径はこれに合わせる(建物とも重ならない)
   // kind は樹種の別(既定='街路樹' / '桜')。季節の着色でここを見る
-  const put=(s,off,sc,c,kind)=>{
+  const put=(s,off,sc,c,kind,roadIn)=>{       // roadIn:道路区域へ入ってよい深さ(歩道の並木)
     if(i>=N)return false;
     const p=frame(s,off), rad=2.3*sc;
-    if(!cityFree(s,off,rad,p.x,p.z))return false;
+    if(!cityFree(s,off,rad,p.x,p.z,roadIn===undefined?0:rad+roadIn))return false;
     if(!occFree(p.x,p.z,rad))return false;
-    m4.compose(new THREE.Vector3(p.x,1.1,p.z),q,new THREE.Vector3(1,1,1));trunk.setMatrixAt(i,m4);
-    m4.compose(new THREE.Vector3(p.x,2.1+2.6*sc,p.z),q,new THREE.Vector3(sc,sc,sc));crown.setMatrixAt(i,m4);
-    crown.setColorAt(i,setSrgb(col,c));i++;
+    T.push([p.x,p.z,sc,c,s]); i++;
     occAdd(p.x,p.z,rad);
     CITY.trees.push({s:s,off:off,x:p.x,z:p.z,r:rad,kind:kind||'街路樹'});
     return true;
@@ -3805,21 +3843,82 @@ if(PLB){
   // 街路樹(高架の両側=側道の外)。占有域に当たる区間は自動的に間引かれる
   for(let x=DOM.x0+40;x<DECK_END-30;x+=26)
     for(const sg of[-1,1])put(x,sg*(deckHalf(x)+8.2),.85,0x7fa268);
-  // 甲州街道の歩道の街路樹(車道 off 145〜171 の外側)
-  for(let x=DOM.x0+20;x<DOM.x1-20;x+=23)
-    for(const o of[139.5,176.5])put(x,o,.8,0x6f9160);
-  for(let k=0;k<24;k++)put(X(7.8)+42,26+k*13,1.05,0xecb8cd,'桜');  // 桜並木
+  // 甲州街道の歩道の街路樹(車道 off 145〜171 の外側)。実データの道路があれば、幹線の縁の 2.6m 外に 23m ごと
+  if(!PLL){
+    for(let x=DOM.x0+20;x<DOM.x1-20;x+=23)
+      for(const o of[139.5,176.5])put(x,o,.8,0x6f9160);
+  }else for(const R of ROADS_PL){
+    if(R.k!==1||R.sec===2) continue;
+    const Q=R.P; let acc=11.5;
+    for(let j=0;j<Q.length;j++){
+      const a=Q[j], d=Q[(j+1)%Q.length], L=Math.hypot(d[0]-a[0],d[1]-a[1]); if(L<1e-6) continue;
+      const nx=(d[1]-a[1])/L, nz=-(d[0]-a[0])/L;
+      for(;acc<L;acc+=23){
+        const x=a[0]+(d[0]-a[0])*acc/L, z=a[1]+(d[1]-a[1])*acc/L;
+        const sg=polyDist(Q,x+nx*0.8,z+nz*0.8)<0?-1:1;             // 外向き
+        const tx=x+sg*nx*2.6, tz=z+sg*nz*2.6;
+        if(roadHit(tx,tz,1.0)) continue;                             // 交差部の区切りの線(外も道路)
+        const q=prjXY(tx,tz); if(q.s<DOM.x0||q.s>DOM.x1||Math.abs(q.off)>DOM.z) continue;   // 帯の外(道路の登録簿も無い)
+        put(q.s,q.off,.8,0x6f9160);
+      }
+      acc-=L;
+    }
+  }
+  // 公園・緑地・山林の木
+  for(const t of PARK){const q=prjXY(t[0],t[1]); put(q.s,q.off,t[2],t[3]===2?0x5f8a4e:(Math.random()<.5?0x7fa268:0x6f9160),'公園');}
+  /* 桜並木(上北沢)。実データの道路があれば、狙いの点から 25m 以内で**歩道の上**(道路区域の縁から 0.6〜1.5m 内側)を探す。
+     沿線の道路は両側に建物が迫るので、道路の外では植える余地が無い(模式の点のままだと24本中4本しか植わらなかった)。
+     樹冠は小さめ(0.65)にして建物に掛けない */
+  for(let k=0;k<24;k++){
+    const s0=X(7.8)+42, o0=26+k*13;
+    if(!PLL){put(s0,o0,1.05,0xecb8cd,'桜'); continue;}
+    let done=false;
+    for(let r=0;r<=25&&!done;r+=2.5)for(let a=0;a<8&&!done;a++){
+      const s=s0+r*Math.cos(a*Math.PI/4), o=o0+r*Math.sin(a*Math.PI/4), f=frame(s,o);
+      if(roadHit(f.x,f.z,-0.6)&&!roadHit(f.x,f.z,-1.5)&&put(s,o,0.65,0xecb8cd,'桜',1.5)) done=true;
+      if(r===0) break;
+    }
+  }
   for(let k=0;k<20;k++)put(JOSUI_X+(k-10)*7,(k-10)*34,.9,0x6f9160);// 玉川上水緑道
   let guard=0;
   while(i<N&&guard++<N*40){
     const x=DOM.x0+Math.random()*(DOM.x1-DOM.x0),z=(Math.random()*2-1)*DOM.z;
     put(x,z,.55+Math.random()*.5,Math.random()<.5?0x7fa268:0x6f9160);   // 庭木は小ぶり
   }
-  crown.count=i;trunk.count=i;
-  crown.instanceMatrix.needsUpdate=true;trunk.instanceMatrix.needsUpdate=true;
-  if(crown.instanceColor)crown.instanceColor.needsUpdate=true;
-  scene.add(crown);scene.add(trunk);
-  CITY.crown=crown; CITY.trunk=trunk;   // 季節の着色が実体を触れるように残す
+  // 1本の形(sc=1):幹 高さ2.2・半径0.32→0.22(5角・蓋なし)、樹冠 円錐 底2.1〜頂7.3・半径2.3(7角)
+  const treeGeo=()=>{const P=[],Nn=[],I=[],C=[];
+    const v=(x,y,z,nx,ny,nz,c)=>{P.push(x,y,z);Nn.push(nx,ny,nz);C.push(c[0],c[1],c[2]);return P.length/3-1;};
+    const TR=[0.62,0.46,0.34], CR=[1,1,1];
+    for(let k=0;k<5;k++){const a0=k/5*2*Math.PI,a1=(k+1)/5*2*Math.PI,c0=Math.cos(a0),s0=Math.sin(a0),c1=Math.cos(a1),s1=Math.sin(a1);
+      const A=v(.32*c0,0,.32*s0,c0,0,s0,TR),B=v(.32*c1,0,.32*s1,c1,0,s1,TR),Cc=v(.22*c1,2.2,.22*s1,c1,0,s1,TR),D=v(.22*c0,2.2,.22*s0,c0,0,s0,TR);
+      I.push(A,Cc,B,A,D,Cc);}
+    const sl=2.3/5.2;
+    for(let k=0;k<7;k++){const a0=k/7*2*Math.PI,a1=(k+1)/7*2*Math.PI,am=(a0+a1)/2,c0=Math.cos(a0),s0=Math.sin(a0),c1=Math.cos(a1),s1=Math.sin(a1);
+      const nl=Math.hypot(1,sl), A=v(2.3*c0,2.1,2.3*s0,c0/nl,sl/nl,s0/nl,CR),B=v(2.3*c1,2.1,2.3*s1,c1/nl,sl/nl,s1/nl,CR),Ap=v(0,7.3,0,Math.cos(am)/nl,sl/nl,Math.sin(am)/nl,CR);
+      I.push(A,Ap,B);
+      const b0=v(2.3*c0,2.1,2.3*s0,0,-1,0,CR),b1=v(2.3*c1,2.1,2.3*s1,0,-1,0,CR),bc=v(0,2.1,0,0,-1,0,CR); I.push(b0,b1,bc);}
+    return facesGeo(P,Nn,I,C);};
+  const TREE_MAT=mkMat('MeshLambertMaterial',{color:0xffffff,vertexColors:true});
+  const TREE_CH=new Map(), m4=new THREE.Matrix4(), q=new THREE.Quaternion(), v3=new THREE.Vector3(), s3=new THREE.Vector3();
+  T.forEach((t,k)=>{const ci=Math.floor(t[4]/960); let c=TREE_CH.get(ci); if(!c){c={L:[]};TREE_CH.set(ci,c);} CITY.trees[k].ci=ci; CITY.trees[k].j=c.L.length; c.L.push(t);});
+  for(const c of TREE_CH.values()){
+    const g=treeGeo(), im=new THREE.InstancedMesh(g,TREE_MAT,c.L.length);
+    let x0=1e9,x1=-1e9,z0=1e9,z1=-1e9;
+    c.L.forEach((t,j)=>{m4.compose(v3.set(t[0],0,t[1]),q,s3.set(t[2],t[2],t[2])); im.setMatrixAt(j,m4); im.setColorAt(j,setSrgb(col,t[3]));
+      x0=Math.min(x0,t[0]-3);x1=Math.max(x1,t[0]+3);z0=Math.min(z0,t[1]-3);z1=Math.max(z1,t[1]+3);});
+    g.boundingSphere=new THREE.Sphere(new THREE.Vector3((x0+x1)/2,4,(z0+z1)/2),Math.hypot(x1-x0,9,z1-z0)/2);
+    im.frustumCulled=true; im.instanceMatrix.needsUpdate=true; if(im.instanceColor) im.instanceColor.needsUpdate=true;
+    scene.add(im); c.m=im;
+  }
+  /* 季節の着色(applyLook)と検証が「登録簿の i 番目の木」で触れる窓口。cols は検証用のスタブが記録する色を登録簿の順に並べる */
+  CITY.treeChunks=TREE_CH;
+  CITY.crown={
+    setColorAt(k,c){const t=CITY.trees[k]; TREE_CH.get(t.ci).m.setColorAt(t.j,c);},
+    get instanceColor(){return {set needsUpdate(v){for(const c of TREE_CH.values()) if(c.m.instanceColor) c.m.instanceColor.needsUpdate=v;}};},
+    get cols(){return CITY.trees.map(t=>{const m=TREE_CH.get(t.ci).m; return m.cols?m.cols[t.j]:undefined;});},
+    set cols(a){for(const c of TREE_CH.values()) c.m.cols=[];},
+    get count(){return CITY.trees.length;}
+  };
 }
 
 /* ============ 8b. 夜の灯り ============

@@ -38,6 +38,9 @@ const REF = {
   ['補助217', 'H217_X', 8, undefined, '計画'], ['玉川上水', 'JOSUI_X', 7.5, 230]],
   // 実データの道路(plateau_land.js)があるときの基準。建物は道路の縁に接して建つので、食い込み 0.3m までは許す
   ROAD_BLDG_IN: 0.3,
+  SIDEWALK_IN: 1.5,         // 歩道の並木(桜)は道路区域の縁からこの深さ[m]まで入ってよい(幹の位置)
+  // 用途の区分(plateau_import.py の USAGE)。住宅(1〜3)と業務(4)・工場倉庫(7,8)は別の色の組であること
+  USE_GROUPS: [[1, 2, 3], [4], [7, 8]],
   XING_MIN: 3,              // 線路を横切る道路とみなす長さ[m](中心と桁の両端が道路の上に続く)
   XING_COL_CLEAR: 1.0,      // 横切る道路の縁から柱の中心までの最小[m](柱の半幅0.5+余裕)
   EXPY_CLEAR: 7.0,          // 自動車道の床版の下面とレール面の最小の差[m](架線の上)
@@ -232,11 +235,12 @@ ok('樹木の数', T.length >= REF.MIN_TREES, '≥' + REF.MIN_TREES + '本', T.l
 if (LAND) {
   let bad = null, worst = 1e9;
   for (const e of ALL) for (const q of pts(e.o)) {
-    const d = LAND.depth(q.x, q.z), lim = POLY(e.o) ? -REF.ROAD_BLDG_IN : q.r;
+    const side = !POLY(e.o) && e.o.kind === '桜';   // 歩道の並木:幹が道路の縁から SIDEWALK_IN 以内
+    const d = LAND.depth(side ? e.o.x : q.x, side ? e.o.z : q.z), lim = POLY(e.o) ? -REF.ROAD_BLDG_IN : (side ? -REF.SIDEWALK_IN : q.r);
     if (d - lim < worst) worst = d - lim;
     if (d < lim && !bad) bad = [e.kind, '(' + q.x.toFixed(0) + ',' + q.z.toFixed(0) + ')', '道路の面まで' + d.toFixed(2) + 'm'];
   }
-  ok('実際の道路の上に無い', bad === null, '建物は食い込み≤' + REF.ROAD_BLDG_IN + 'm・樹木は半径ぶん離れる',
+  ok('実際の道路の上に無い', bad === null, '建物は食い込み≤' + REF.ROAD_BLDG_IN + 'm・樹木は半径ぶん離れる(歩道の桜は幹が縁から' + REF.SIDEWALK_IN + 'm以内)',
     bad ? bad.join(' ') : ALL.length + '件すべて(余裕' + worst.toFixed(2) + 'm)');
 
   // 河川・池の水面の上に無い(建物も樹木も、水面に入らない)
@@ -352,6 +356,36 @@ if (LAND) {
       want.length + '棟(データ' + L2.length + ')・点' + tot + '・欠け' + miss + (ex ? ' 例' + ex : ''));
     ok('建物の面が裏返らない', tris > 0 && flip === 0, '巻き順の法線=頂点の法線の側',
       'まとまり' + made + '・三角形' + tris + '・裏返り' + flip);
+  }
+}
+
+/* ---- 4d. 建物の色は用途で ------------------------------------------------------
+   plateau_bldg.js の用途(use64)を検証側で読み、登録簿の建物(足跡の1点目で対応)の用途がデータと一致し、
+   住宅・業務・工場倉庫の色の組が互いに重ならない(用途で塗り分けている)ことを見る */
+{
+  const fs = require('fs'), pth = require('path');
+  const f = pth.join(pth.dirname(path), 'plateau_bldg.js');
+  const g = {};
+  if (fs.readFileSync(path, 'utf8').includes('<script src="plateau_bldg.js">') && fs.existsSync(f)) new Function('globalThis', fs.readFileSync(f, 'utf8'))(g);
+  const D = g.PLATEAU_BLDG;
+  if (D && D.use64) {
+    const b = Buffer.from(D.b64, 'base64'), u = Buffer.from(D.use64, 'base64'); const N = b.readUInt32LE(4); let o = 8; const use = new Map();
+    // 足跡の1点目と高さで対応を取る(1点目が同じ別の建物がある)
+    for (let n = 0; n < N; n++) { const nv = b.readUInt8(o), h = b.readUInt16LE(o + 1) / 10; o += 4; const kk = (b.readInt32LE(o) / 10).toFixed(1) + ',' + (b.readInt32LE(o + 4) / 10).toFixed(1) + ',' + h.toFixed(1); if (!use.has(kk)) use.set(kk, new Set()); use.get(kk).add(u[n]); o += 8 + 4 * (nv - 1); }
+    let mis = 0, n = 0, ex = null; const cols = new Map();
+    for (const e of B) {
+      if (!e.poly) continue;
+      const k = e.poly[0][0].toFixed(1) + ',' + e.poly[0][1].toFixed(1) + ',' + e.h.toFixed(1), want = use.get(k);
+      if (want === undefined) continue;
+      n++;
+      if (!want.has(e.use)) { mis++; if (!ex) ex = k + ' 用途' + e.use + '≠' + [...want].join('/'); }
+      let s = cols.get(e.use); if (!s) { s = new Set(); cols.set(e.use, s); } s.add(e.hex);
+    }
+    const grp = REF.USE_GROUPS.map((G) => { const s = new Set(); for (const k of G) for (const h of (cols.get(k) || [])) s.add(h); return s; });
+    let ov = null;
+    for (let i = 0; i < grp.length; i++) for (let j = i + 1; j < grp.length; j++) for (const h of grp[i]) if (grp[j].has(h) && !ov) ov = '組' + i + 'と組' + j + 'に同じ色 ' + h;
+    ok('建物の色は用途で', mis === 0 && ov === null && grp.every((s) => s.size > 0), '用途がデータと一致・住宅/業務/工場倉庫の色が別',
+      ex || ov || n + '棟・色の組 ' + grp.map((s) => s.size).join('/'));
   }
 }
 
