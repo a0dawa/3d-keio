@@ -10,7 +10,8 @@
 //   使い方: node tools/verify_car9.js [keio_elevated_3d.html]
 const path = process.argv[2] || 'keio_elevated_3d.html';
 const X = require('./stub_three')(path,
-  'K9GEO:K9GEO,K9_WIN:K9_WIN,K9_FORMATIONS:K9_FORMATIONS,trains:trains,WIRE_TRO:WIRE_TRO');
+  'K9GEO:K9GEO,K9_WIN:K9_WIN,K9_FORMATIONS:K9_FORMATIONS,trains:trains,WIRE_TRO:WIRE_TRO,' +
+  'makeCar:makeCar,M_PASS:M_PASS,M_PASS_OFF:M_PASS_OFF');
 
 const REF = {
   LEN: 19.5, HWB: 2.768 / 2,                 // 車体長・車体半幅(公表)
@@ -23,6 +24,7 @@ const REF = {
   LAMP_Z: [1.555, 1.715],
   SKIRT_OUT: 0.93 * 1.225,                   // スカートの外端 |y|(写真の実測0.93 の1.225倍。利用者指示)
   DEST_HALF: [0.21 * 1.15, 0.075 * 1.15],    // 行先表示板の半幅・半高(写真の実測を表示板ごと1.15倍。利用者指示)                    // 前照灯・尾灯は青帯の中(前面写真の実測 reference/keio9000/ftex9.png)
+  KIND_Z: [3.14, 3.34],                      // 種別表示器の高さ(写真の実測)。車号はこれと同じ高さ(中心)へ(利用者指示)
   TOL: 0.005,
 };
 
@@ -113,6 +115,26 @@ const G = X.K9GEO;
   ok('車号は向かって右の窓の上部', ny[0] > REF.FDOOR_W / 2 && nz[0] >= 3.0,
     'y>' + REF.FDOOR_W / 2 + '(向かって右=+y)・z≥3.0', 'y ' + ny[0].toFixed(2) + '〜' + ny[1].toFixed(2) + '・z ' + nz[0].toFixed(2));
   const kd = v4pts(F.kind), ky = range(kd, 1), kz = range(kd, 2);
+  { const kc = (REF.KIND_Z[0] + REF.KIND_Z[1]) / 2, nc = (nz[0] + nz[1]) / 2;
+    ok('車号は種別と同じ高さ', Math.abs(nc - kc) <= 0.01 && ny[0] >= 0.60,
+      '中心 z' + kc.toFixed(2) + '±0.01・写真(左端0.58)より右', '中心 z' + nc.toFixed(3) + '・左端' + ny[0].toFixed(3)); }
+  // 識別灯(利用者指示:白の縦長、種別の左と車号の右。各停以外の種別で点く)
+  { const P = v4pts(F.pass).filter((p) => p[0] > 9), L = P.filter((p) => p[1] < 0), R = P.filter((p) => p[1] > 0);
+    const bl = [range(L, 1), range(L, 2)], br = [range(R, 1), range(R, 2)];
+    const tall = (b) => (b[1][1] - b[1][0]) / Math.max(1e-6, b[0][1] - b[0][0]);
+    ok('識別灯:種別の左・車号の右', L.length > 0 && R.length > 0 && bl[0][1] < ky[0] && bl[0][1] > ky[0] - 0.08 && br[0][0] > ny[1] && br[0][0] < ny[1] + 0.08,
+      '左の灯の右端 < 種別の左端・右の灯の左端 > 車号の右端(8cm以内)',
+      L.length && R.length ? bl[0][1].toFixed(3) + '<' + ky[0].toFixed(3) + ' / ' + br[0][0].toFixed(3) + '>' + ny[1].toFixed(3) : '灯が無い');
+    ok('識別灯:縦長・種別と同じ段', L.length > 0 && R.length > 0 && tall(bl) > 2 && tall(br) > 2 &&
+       [bl, br].every((b) => b[1][0] >= REF.KIND_Z[0] - 0.01 && b[1][1] <= REF.KIND_Z[1] + 0.01),
+      '高さ/幅 > 2・z ' + REF.KIND_Z.join('〜'), L.length && R.length ? tall(bl).toFixed(1) + '/' + tall(br).toFixed(1) : '-');
+    const lamp = (c) => { let m = null; c.traverse((o) => { if (o.geometry === F.pass) m = o.material; }); return m; };
+    let bad = null;
+    for (const [kind, lights, want] of [['特急', 'head', true], ['快速', 'head', true], ['各停', 'head', false], ['特急', 'tail', false]]) {
+      const m = lamp(X.makeCar({ cabF: true, hachi: 1, num: '9731', series: '9000', lights: lights, sign: { kind: kind, dest: '新宿' }, crowd: null }));
+      if (m !== (want ? X.M_PASS : X.M_PASS_OFF) && !bad) bad = kind + '・' + lights + ' → ' + (m === X.M_PASS ? '点灯' : m === X.M_PASS_OFF ? '消灯' : '灯が無い');
+    }
+    ok('識別灯:各停以外で点く(先頭のみ)', !bad, '特急・快速=点灯/各停・最後尾=消灯', bad || '4通りとも'); }
   ok('種別表示器は向かって左の窓の上部', ky[1] < -REF.FDOOR_W / 2 && kz[0] >= 3.0,
     'y<−' + REF.FDOOR_W / 2 + '・z≥3.0', 'y ' + ky[0].toFixed(2) + '〜' + ky[1].toFixed(2) + '・z ' + kz[0].toFixed(2));
   const hl = v4pts(F.hl), tl = v4pts(F.tl), lz = REF.LAMP_Z;

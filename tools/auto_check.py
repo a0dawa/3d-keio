@@ -183,6 +183,14 @@ def main():
                                        ('×%s' % m2.group(1) if m2 else '無い') + ('/×%s' % m3.group(1) if m3 else '/無い') + ('・字間' if sp else '・字間なし'),
                                        '-', 'OK' if ok else 'NG'))
 
+    # 行先「新宿」は形式によらず「新  宿」(利用者指示)。表記の関数と、前面(8000系・9000系)・側面の3か所で通すこと
+    fd = "d==='新宿'?'新  宿':d" in src
+    uses = len(re.findall(r'k8DestTxt\((?:o\.sign\.)?dest\)', src))
+    ok = fd and uses == 3
+    ng += 0 if ok else 1
+    print('%-18s %14s %14s %8s  %s' % ('行先「新  宿」', '表記・3か所', ('表記' if fd else '表記なし') + '・%dか所' % uses,
+                                       '-', 'OK' if ok else 'NG'))
+
     # 旧「写真転写方式」の残骸が無いこと
     dead = [s for s in ('FTEX', 'FRONT_TEX', 'FACEMAT', 'buildCarGeo', 'carColor') if s in src]
     ok = not dead
