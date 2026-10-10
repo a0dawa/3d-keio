@@ -219,10 +219,16 @@ ok('樹木の数', T.length >= REF.MIN_TREES, '≥' + REF.MIN_TREES + '本', T.l
     if (Math.abs(p.off) < REF.RIVER_OFF &&
       Math.abs(p.s - X.BRIDGE.s) - p.r < REF.RIVER_HALF && !br)
       br = ['仙川', e.kind, 's=' + p.s.toFixed(0)];
-    for (const q of REF.POND) {
+    for (const q of (B.some((e) => e.plateau) ? [] : REF.POND)) {   // 実データの建物があるときは模式の池を描かない
       if (Math.hypot(p.s - (X.WADA_S + q[0]), p.off - (X.WADA_OFF + q[1])) - p.r < q[2] && !br)
         br = ['和田堀の池', e.kind, 's=' + p.s.toFixed(0)];
     }
+  }
+  /* 実データの建物があるときは、模式の施設(和田堀給水所 430m×230m)で実際の街を消さない。
+     模式の範囲にある実データの建物が消えずに残っていること(2026-10:模式の箱と占有域が203棟を隠していた) */
+  if (B.some((e) => e.plateau)) {
+    const nW = B.filter((e) => e.plateau && Math.abs(e.s - X.WADA_S) < 215 && Math.abs(e.off - X.WADA_OFF) < 115).length;
+    ok('和田堀給水所の範囲の実データ', nW >= 100, '100棟以上が残る', nW + '棟');
   }
   ok('河川・池の上に無い', br === null, '仙川+池2面', br ? br.join(' ') : ALL.length + '件すべて');
 }

@@ -25,7 +25,7 @@ const X = require('./stub_three')(path,
   'SKY:()=>SKY, SKY_TEX:SKY_TEX, skyDome:skyDome, env:()=>scene.environment,' +
   'sunFollow:sunFollow, SH_MAP:SH_MAP, DOM:DOM, srgb:srgb, zRunDown:zRunDown,' +
   'NIGHT:NIGHT, NIGHT_STAT:NIGHT_STAT, PLATS:PLATS, trains:trains, stopPosOf:stopPosOf, CAR_HALF:CAR_HALF,' +
-  'LU:(typeof LU!=="undefined"?LU:null),' +
+  'LU:(typeof LU!=="undefined"?LU:null), CARS_ALL:(typeof CARS_ALL!=="undefined"?CARS_ALL:[]), platRange:platRange,' +
   'setLookUI:(typeof setLookUI!=="undefined"?setLookUI:null), LOOK_UI:(typeof LOOK_UI!=="undefined"?LOOK_UI:null)');
 
 /* ---- 期待値(検証側が独立して持つ) ---------------------------------------- */
@@ -208,6 +208,35 @@ const TPROP = {};
   const ngtVis = N.group.visible, ngtEmi = lum(X.MAT.plat.emissive);
   ok('夜に灯りが点く', ngtVis === true && ngtEmi > 0, '表示ON・emissive>0',
     ngtVis + ' / ' + ngtEmi.toFixed(4));
+  /* 夜の駅に入る電車も照らされる(利用者指示:駅は明るいのに進入する電車が暗いまま)。
+     世界を進めて、ホームの範囲にいる車両の車体の発光(uLit)が 0.2 以上、ホームから 100m 以上離れた車両は 0、
+     昼は全車 0。発光は車体の色を掛ける(シェーダに diffuseColor×uLit が入る) */
+  {
+    const cars = X.CARS_ALL.filter((c) => c.userData && c.userData.bodyMat);
+    const lit = (c) => c.userData.bodyMat.userData.k8.uni.uLit ? c.userData.bodyMat.userData.k8.uni.uLit.value : -1;
+    const dPlat = (s) => Math.min(...X.STA.map((st) => { const r = X.platRange(st); return s < r[0] ? r[0] - s : (s > r[1] ? s - r[1] : 0); }));
+    C.setTime('night');
+    let inN = 0, inBad = null, outN = 0, outBad = null;
+    for (let k = 0; k < 240; k++) {
+      X.stepWorld(0.5);
+      for (const c of cars) {
+        const s = c.userData.s; if (s === undefined || !c.visible) continue;
+        const d = dPlat(s), v = lit(c);
+        if (d === 0) { inN++; if (!(v >= 0.2) && !inBad) inBad = 's=' + s.toFixed(0) + ' 発光' + v; }
+        if (d >= 100) { outN++; if (v !== 0 && !outBad) outBad = 's=' + s.toFixed(0) + ' 発光' + v; }
+      }
+    }
+    ok('夜の駅の電車は照らされる', inN > 0 && inBad === null && outN > 0 && outBad === null,
+      'ホーム内≥0.2・100m外=0', inBad || outBad || ('ホーム内' + inN + '・外' + outN + '標本'));
+    C.setTime('noon');
+    const dayLit = cars.filter((c) => lit(c) !== 0).length;
+    ok('昼は電車を照らさない', dayLit === 0, '全車0', dayLit + '両');
+    const sh = { fragmentShader: '#include <color_fragment>\n#include <specularmap_fragment>\n#include <emissivemap_fragment>', vertexShader: '#include <begin_vertex>', uniforms: {} };
+    cars[0].userData.bodyMat.onBeforeCompile(sh);
+    ok('電車の発光は車体の色を掛ける', /diffuseColor\.rgb\s*\*\s*uLit/.test(sh.fragmentShader) && sh.uniforms.uLit !== undefined,
+      'diffuseColor×uLit', /uLit/.test(sh.fragmentShader) ? 'あり' : 'なし');
+    C.setTime('night');
+  }
   /* 駅部は夜に強く照らされている(利用者指示:もっともっと明るい)。駅の結合ジオメトリの発光は
      高架橋の数倍で、面の色(頂点カラー)を掛けて光ること(一様に足すと暗い外装まで白く浮く)。
      ホームの床には灯具ごとに光だまりがあること */
