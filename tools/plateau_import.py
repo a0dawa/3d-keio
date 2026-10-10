@@ -140,6 +140,7 @@ def read_buildings(path, proj, margin, min_area, tol, band=0):
         if not foot:
             el.clear()
             continue
+        lod2 = read_lod2(el) if el.find('bldg:lod2Solid', NS) is not None else None
         h = el.find('bldg:measuredHeight', NS)
         height = float(h.text) if h is not None and h.text and float(h.text) > 0 else (max(zs) - min(zs) if zs else 0.0)
         st = el.find('bldg:storeysAboveGround', NS)
@@ -157,13 +158,46 @@ def read_buildings(path, proj, margin, min_area, tol, band=0):
         if len(p) < 3 or area2d(p) < min_area:
             continue
         p = simplify(p, tol)
-        out.append((p, height, storeys))
+        if lod2:
+            lod2 = [(t, [((q[1] - lon0) * mlon, -(q[0] - lat0) * mlat, q[2]) for q in r]) for t, r in lod2]
+        out.append((p, height, storeys, lod2))
     return out
+
+
+def read_lod2(el):
+    """LOD2 の屋根面・壁面(boundedBy の RoofSurface/WallSurface の lod2MultiSurface)を [(種別1=屋根/2=壁, 外周の点(緯度,経度,標高)…)]。
+    高さの基準は GroundSurface(無ければ全ての面)の最も低い標高。返す点の標高は基準からの高さ。"""
+    surf, zs, gz = [], [], []
+    for b in el.findall('bldg:boundedBy', NS):
+        for s in b:
+            k = s.tag.rsplit('}', 1)[-1]
+            t = {'RoofSurface': 1, 'WallSurface': 2, 'GroundSurface': 0}.get(k)
+            if t is None:
+                continue
+            for pg in s.iter('{%s}Polygon' % NS['gml']):
+                ext = pg.find('gml:exterior', NS)
+                if ext is None:
+                    continue
+                for pl in ext.iter('{%s}posList' % NS['gml']):
+                    r = poslist(pl)
+                    if len(r) > 1 and r[0] == r[-1]:
+                        r = r[:-1]
+                    if len(r) < 3:
+                        continue
+                    zs += [q[2] for q in r]
+                    if t == 0:
+                        gz += [q[2] for q in r]
+                    else:
+                        surf.append((t, r))
+    if not surf:
+        return None
+    base = min(gz) if gz else min(zs)
+    return [(t, [(q[0], q[1], q[2] - base) for q in r]) for t, r in surf]
 
 
 def encode(blds):
     b = bytearray(b'PLT1') + struct.pack('<I', len(blds))
-    for p, h, st in blds:
+    for p, h, st, _ in blds:
         q = [(round(x * 10), round(z * 10)) for x, z in p][:255]
         b += struct.pack('<BHB', len(q), min(65535, round(h * 10)), min(255, st))
         b += struct.pack('<ii', q[0][0], q[0][1])
@@ -171,6 +205,23 @@ def encode(blds):
             dx, dz = q[i][0] - q[i - 1][0], q[i][1] - q[i - 1][1]
             b += struct.pack('<hh', max(-32768, min(32767, dx)), max(-32768, min(32767, dz)))
     return bytes(b)
+
+
+def encode_lod2(blds):
+    """LOD2 の面:b'PL2A' + 件数(uint32) + 件数×{建物の番号(uint32・PLT1 の並び)・面の数(uint16)・
+    面ごとに {種別(uint8 1=屋根/2=壁)・点の数(uint8)・点ごとに (x,z は足跡の1点目からの差 int16 0.1m・高さ uint16 0.1m)}}"""
+    items = [(i, b[3]) for i, b in enumerate(blds) if b[3]]
+    out = bytearray(b'PL2A') + struct.pack('<I', len(items))
+    for i, surf in items:
+        x0, z0 = round(blds[i][0][0][0] * 10), round(blds[i][0][0][1] * 10)
+        surf = [(t, r[:255]) for t, r in surf][:65535]
+        out += struct.pack('<IH', i, len(surf))
+        for t, r in surf:
+            out += struct.pack('<BB', t, len(r))
+            for x, z, y in r:
+                out += struct.pack('<hhH', max(-32768, min(32767, round(x * 10) - x0)), max(-32768, min(32767, round(z * 10) - z0)),
+                                   max(0, min(65535, round(y * 10))))
+    return bytes(out), len(items)
 
 
 def decode(b):
@@ -185,7 +236,7 @@ def decode(b):
             dx, dz = struct.unpack_from('<hh', b, o); o += 4
             x += dx; z += dz
             p.append((x / 10, z / 10))
-        out.append((p, h / 10, st))
+        out.append((p, h / 10, st, None))
     return out
 
 
@@ -205,19 +256,21 @@ def main():
     for g in a.gml:
         blds += read_buildings(g, proj, a.margin, a.min_area, a.tol, a.band)
     data = encode(blds)
+    l2, n2 = encode_lod2(blds)
     if a.out.endswith('.js'):
         import base64, json, datetime
         meta = {'source': a.source, 'license': 'CC BY 4.0', 'files': [g.split('/')[-1] for g in a.gml],
-                'made': datetime.date.today().isoformat(), 'count': len(blds)}
+                'made': datetime.date.today().isoformat(), 'count': len(blds),
+                'lod2': n2, 'lod2b64': base64.b64encode(l2).decode('ascii')}
         with open(a.out, 'w', encoding='utf-8') as f:
             f.write('// 沿線の建物(足跡+高さ)。出典:%s(CC BY 4.0)。tools/plateau_import.py が作る。手で直さない\n' % a.source)
             f.write('globalThis.PLATEAU_BLDG=' + json.dumps(dict(meta, b64=base64.b64encode(data).decode('ascii')), ensure_ascii=False) + ';\n')
     else:
         open(a.out, 'wb').write(data)
-    nv = sum(len(p) for p, _, _ in blds)
-    hs = sorted(h for _, h, _ in blds) or [0]
-    print('建物 %d 棟 / 頂点 %d / %d バイト(base64 で約 %d)/ 高さ 中央 %.1fm 最大 %.1fm'
-          % (len(blds), nv, len(data), len(data) * 4 // 3, hs[len(hs) // 2], hs[-1]))
+    nv = sum(len(b[0]) for b in blds)
+    hs = sorted(b[1] for b in blds) or [0]
+    print('建物 %d 棟 / 頂点 %d / %d バイト(base64 で約 %d)/ 高さ 中央 %.1fm 最大 %.1fm / LOD2 %d 棟 %d バイト'
+          % (len(blds), nv, len(data), len(data) * 4 // 3, hs[len(hs) // 2], hs[-1], n2, len(l2)))
 
 
 if __name__ == '__main__':
