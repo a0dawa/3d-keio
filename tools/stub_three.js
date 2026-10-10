@@ -196,8 +196,9 @@ class Attr {
   constructor(a, is) { this.array = a; this.itemSize = is; this.count = a.length / is; return soft(this); }
 }
 class BufGeo {
-  constructor() { this.attributes = {}; this.index = null; return soft(this); }
+  constructor() { this.attributes = {}; this.index = null; this.drawRange = { start: 0, count: Infinity }; return soft(this); }
   setAttribute(n, a) { this.attributes[n] = a; return this; }
+  setDrawRange(s, c) { this.drawRange.start = s; this.drawRange.count = c; }
   setIndex(a) { this.index = soft({ array: a, count: a.length }); return this; }
   computeVertexNormals() {} dispose() {}
   translate() { return this; } rotateX() { return this; } rotateY() { return this; } scale() { return this; }
