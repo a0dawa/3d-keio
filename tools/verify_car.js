@@ -18,7 +18,8 @@ const X = require('./stub_three')(path,
   'setCarDoors:setCarDoors,k8nose:k8nose,trains:trains,parkedCars:parkedCars,' +
   'WIRE_TRO:WIRE_TRO,RAIL_OFF:RAIL_OFF,GAUGE:GAUGE,RAIL_W:RAIL_W,RAIL_TOP:RAIL_TOP,' +
   'seatCar:seatCar,frame:frame,railY:railY,zRunDown:zRunDown,M_HL:M_HL,M_TL:M_TL,' +
-  'M_HL_OFF:M_HL_OFF,M_TL_OFF:M_TL_OFF,K8M:K8M,M_PASS:M_PASS,M_PASS_OFF:M_PASS_OFF');
+  'M_HL_OFF:M_HL_OFF,M_TL_OFF:M_TL_OFF,K8M:K8M,M_PASS:M_PASS,M_PASS_OFF:M_PASS_OFF,' +
+  'lodCar:lodCar,camera:camera');
 
 /* ---- 基準値(ref/keio8000_measured_v4.md から。検証側が独立して持つ)---------- */
 const REF = {
@@ -182,12 +183,15 @@ const range = (pts, k) => { let lo = 1e9, hi = -1e9; for (const p of pts) { if (
   const bl = box(L), br = box(R);
   const tall = (b) => (b[1][1] - b[1][0]) / Math.max(1e-6, b[0][1] - b[0][0]);
   ok('識別灯:行先の左・種別の右', L.length > 0 && R.length > 0 && bl[0][1] < DEST[0] && bl[0][1] > DEST[0] - 0.08 &&
-     br[0][0] > KIND[1] && br[0][0] < KIND[1] + 0.08,
-    '左の灯の右端 < ' + DEST[0] + '・右の灯の左端 > ' + KIND[1] + '(離れ8cm以内)',
+     br[0][0] > KIND[1] && br[0][0] < KIND[1] + 0.25,
+    '左の灯の右端 < ' + DEST[0] + '(8cm以内)・右の灯の左端 > ' + KIND[1] + '(25cm以内)',
     L.length && R.length ? bl[0][1].toFixed(3) + ' / ' + br[0][0].toFixed(3) : '灯が無い');
   ok('識別灯:縦長・表示器と同じ段', L.length > 0 && R.length > 0 && tall(bl) > 2 && tall(br) > 2 &&
      [bl, br].every((b) => b[1][0] >= ROW[0] - 0.01 && b[1][1] <= ROW[1] + 0.01),
     '高さ/幅 > 2・z ' + ROW.join('〜'), L.length && R.length ? tall(bl).toFixed(1) + '/' + tall(br).toFixed(1) + '・z ' + bl[1].map((v) => v.toFixed(3)).join('〜') : '-');
+  // 左右の灯は車体の中心線(y=0)に対称(利用者指示):左右の端の |y| が一致
+  ok('識別灯:中心線に対称', L.length > 0 && R.length > 0 && Math.abs(bl[0][0] + br[0][1]) < 0.003 && Math.abs(bl[0][1] + br[0][0]) < 0.003,
+    '左 [−a,−b]・右 [b,a](3mm以内)', L.length && R.length ? '左 ' + bl[0].map((v) => v.toFixed(3)).join('〜') + '・右 ' + br[0].map((v) => v.toFixed(3)).join('〜') : '-');
   // 点灯条件:先頭(前照灯が点く車)で、種別が各停以外のときだけ点く。基準の判定はここで独立に持つ
   const lamp = (c) => { let m = null; c.traverse((o) => { if (o.geometry === X.K8GEO.front.pass) m = o.material; }); return m; };
   const cases = [['特急', 'head', true], ['急行', 'head', true], ['各停', 'head', false], ['特急', 'tail', false]];
@@ -265,6 +269,25 @@ const range = (pts, k) => { let lo = 1e9, hi = -1e9; for (const p of pts) { if (
   // 運転台は編成の外側を向く(最後尾のシェルは180°回す=v4 と同じ)
   const rotOK = X.trains.every((t) => t.cars[0].userData.tail === false && t.cars[9].userData.tail === true);
   ok('運転台が外を向く', rotOK, '先頭=+x/最後尾=180°', rotOK ? '3本とも' : '逆向きあり');
+}
+
+/* ---- 5b. 車両の遠景(LOD):遠くでは台車・パンタを描かず、近づけば戻る。車体はいつも描く ----
+   基準:1.5km 先の車両は数画素(全体俯瞰で50両ぶんの描画を減らすため。⑫が負荷を測る)。400m 以内は細部まで描く */
+{
+  const c = X.trains[0].cars[1];
+  // 車両の群までの親をたどって、どれかが非表示なら描かれない(スタブの親は車両の群で止める)
+  const isOn = (o) => { for (let q = o, k = 0; q && q !== c && k < 8; q = q.parent, k++) if (q.visible === false) return false; return true; };
+  const bog = []; c.traverse((o) => { if (o.geometry === X.K8GEO.bogieM || o.geometry === X.K8GEO.bogieT) bog.push(o); });
+  const pan = c.userData.panto, body = c.userData.body;
+  const at = (d) => { const p = c.position; X.camera.position.set(p.x + d, p.y + 30, p.z); X.lodCar(c);
+    return { bog: bog.length > 0 && bog.every(isOn), pan: !pan || isOn(pan), body: isOn(body) }; };
+  const save = X.camera.position.clone ? X.camera.position.clone() : { x: X.camera.position.x, y: X.camera.position.y, z: X.camera.position.z };
+  const far = at(3000), near = at(300), far2 = at(2000);
+  X.camera.position.set(save.x, save.y, save.z); X.lodCar(c);
+  ok('遠景で台車・パンタを省く', !far.bog && !far.pan && far.body && !far2.bog, '3km・2km先=台車なし・車体あり',
+    '台車' + (far.bog ? 'あり' : 'なし') + '・パンタ' + (far.pan ? 'あり' : 'なし') + '・車体' + (far.body ? 'あり' : 'なし'));
+  ok('近づけば台車・パンタが戻る', near.bog && near.pan && near.body, '300m=すべてあり',
+    '台車' + (near.bog ? 'あり' : 'なし') + '・パンタ' + (near.pan ? 'あり' : 'なし'));
 }
 
 /* ---- 6. 車両の置き方(レール面・連結面間) -------------------------------------- */
