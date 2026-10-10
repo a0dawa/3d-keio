@@ -52,6 +52,11 @@ const REF = {
   EXP_STOPS: ['笹塚', '明大前', '千歳烏山'],
   EXP_VMAX_KMH: 90,        // 特急の上限速度
   EXP_DWELL: 25,           // 特急の停車時間(待避しない)
+  // 下りの急行(利用者指示:各停を待避線で追い越す)。停車駅は京王の急行(2022年3月改正後)の区間内
+  KYU_STOPS: ['笹塚', '明大前', '桜上水', '千歳烏山'],
+  PASS_LOOP_STA: ['明大前', '桜上水', '八幡山', '千歳烏山'],   // 各停が待避線・停車線に入り、追い越される駅
+  SIM_T: 7200,             // いっしょに走らせる時間[秒]
+  CAR_L: 19.5, CAR_W: 2.8, // 車体の長さ・幅(重なりの判定)
 };
 
 const rows = [];
@@ -694,6 +699,105 @@ ok('上限速度を超えない', vmax <= REF.VMAX_KMH + 0.5, '≤' + REF.VMAX_K
   X.setRideState({ on: false, reset: true });
   for (let i = 0; i < T.length; i++) Object.assign(T[i], save[i]);
   for (const p of X.PSD) X.stepPSD(1);
+}
+
+/* ---- 10. 全列車をいっしょに走らせる(間隔・待避・追い越し・停車駅・行き詰まりなし) ----------------
+   基準は検証側で持つ:各停=全駅、急行=REF.KYU_STOPS、特急=REF.EXP_STOPS。追い越しは各停が待避駅(REF.PASS_LOOP_STA)に
+   停まっている間だけ。重なりは描いた車両の位置から独立に測る(線路の向きに沿って車体長・横に車体幅の内側に別の列車の車両)。 */
+{
+  const T = X.trains;
+  const save = T.map((t) => ({ x: t.x, v: t.v, st: t.st, dwell: t.dwell, target: t.target, atSt: t.atSt }));
+  const kinds = T.map((t) => t.kind + '/' + t.dir + '/' + t.cars[0].userData.k8.sign.dest).sort().join(' ');
+  ok('走行列車の種別と行先', kinds === ['各停/1/京王八王子', '各停/1/京王八王子', '急行/1/橋本', '特急/-1/新宿'].sort().join(' '),
+    '下り 各停2・急行(橋本)1/上り 特急(新宿)1', kinds);
+  const HF = (t) => t.x + t.dir * X.CAR_HALF;
+  const seq = T.map(() => []), wraps = T.map(() => 0), stopT = T.map(() => 0);
+  const prev = T.map((t) => ({ st: t.st, x: t.x }));
+  let overlap = null, nChk = 0, passes = [], badPass = null;
+  const rel = {};                                         // 列車の組 → 先頭の前後(符号)
+  const dirAt = (s) => { const a = X.frame(s - 1, 0), b = X.frame(s + 1, 0); const l = Math.hypot(b.x - a.x, b.z - a.z); return [(b.x - a.x) / l, (b.z - a.z) / l]; };
+  const dt = 0.1;
+  for (let k = 0; k * dt < REF.SIM_T; k++) {
+    for (const t of T) X.driveTrain(t, dt);
+    for (let i = 0; i < T.length; i++) {
+      const t = T[i], q = prev[i];
+      if (t.st === 'dwell' && q.st !== 'dwell' && t.atSt) seq[i].push(t.atSt.n);
+      if (Math.abs(t.x - q.x) > 100) wraps[i]++;          // 線路の端の先で入り直した
+      if (t.st !== 'dwell' && t.st !== 'wait' && t.v === 0 && Math.abs(t.x - t.x0) > 1) stopT[i] += dt;
+    }
+    // 追い越し:同じ向きの優等列車の先頭が各停の先頭を越えた瞬間に、各停が待避駅に停まっているか
+    for (const L of T) for (const E of T) {
+      if (L === E || L.dir !== E.dir || L.kind !== '各停' || E.kind === '各停') continue;
+      const key = T.indexOf(L) + '-' + T.indexOf(E), sgn = Math.sign((HF(E) - HF(L)) * L.dir);
+      const jumped = Math.abs(L.x - prev[T.indexOf(L)].x) > 100 || Math.abs(E.x - prev[T.indexOf(E)].x) > 100;
+      if (rel[key] !== undefined && rel[key] < 0 && sgn > 0 && !jumped) {
+        const at = L.st === 'dwell' && L.atSt ? L.atSt.n : null;
+        passes.push(at || '駅間');
+        if ((!at || REF.PASS_LOOP_STA.indexOf(at) < 0) && !badPass) badPass = (at || '駅間') + ' s=' + HF(L).toFixed(0);
+      }
+      if (sgn !== 0) rel[key] = sgn;
+    }
+    for (let i = 0; i < T.length; i++) prev[i] = { st: T[i].st, x: T[i].x };
+    // 重なり(1秒ごと):描いた車両の中心どうし
+    if (k % 10 === 0) {
+      for (const t of T) X.placeTrain(t);
+      nChk++;
+      for (let a = 0; a < T.length; a++) for (let b = a + 1; b < T.length; b++)
+        for (const ca of T[a].cars) { if (!ca.visible) continue;
+          const d = dirAt(ca.userData.s);
+          for (const cb of T[b].cars) { if (!cb.visible) continue;
+            const dx = cb.position.x - ca.position.x, dz = cb.position.z - ca.position.z;
+            const al = Math.abs(dx * d[0] + dz * d[1]), lat = Math.abs(dx * d[1] - dz * d[0]);
+            if (al < REF.CAR_L - 0.5 && lat < REF.CAR_W && !overlap) overlap = [k * dt, T[a].kind + T[a].dir, T[b].kind + T[b].dir, ca.userData.s.toFixed(0), al.toFixed(1), lat.toFixed(2)];
+          } }
+    }
+  }
+  ok('全列車:車両が重ならない', overlap === null, REF.SIM_T + '秒・' + T.length + '本', overlap ? overlap.join(' ') : nChk + '回の測定で0');
+  // 停車駅の並び:隣り合う2回の停車が、種別の停車駅の表で隣り合う(端では折り返して最初の駅へ)
+  const order = (dir, names) => X.STA.filter((s) => names === null || names.indexOf(s.n) >= 0).sort((a, b) => (a.x - b.x) * dir).map((s) => s.n);
+  let badSeq = null;
+  for (let i = 0; i < T.length; i++) {
+    const t = T[i], L = order(t.dir, t.kind === '各停' ? null : t.kind === '急行' ? REF.KYU_STOPS : REF.EXP_STOPS);
+    for (let j = 1; j < seq[i].length; j++) {
+      const a = L.indexOf(seq[i][j - 1]), b = L.indexOf(seq[i][j]);
+      if ((a < 0 || b < 0 || (b !== a + 1 && !(a === L.length - 1 && b === 0))) && !badSeq) badSeq = t.kind + ': ' + seq[i][j - 1] + '→' + seq[i][j];
+    }
+  }
+  ok('全列車:停車駅の並び', badSeq === null, '各停=全駅・急行=' + REF.KYU_STOPS.join('/') + '・特急=' + REF.EXP_STOPS.join('/'), badSeq || seq.map((q) => q.length).join('/') + '回');
+  ok('追い越しは待避駅で', passes.length >= 2 && badPass === null, '各停が ' + REF.PASS_LOOP_STA.join('・') + ' に停まっている間・2回以上',
+    badPass || (passes.length + '回(' + [...new Set(passes)].join('・') + ')'));
+  ok('全列車が回り続ける(行き詰まらない)', wraps.every((w) => w >= 3), '2時間で各3回以上入り直す', wraps.join('/') + '回');
+  const lim = T.map((t) => t.kind === '各停' ? 900 : 120);
+  ok('駅以外で止まる時間', stopT.every((v, i) => v <= lim[i]), '各停≤900秒・優等≤120秒(2時間)', stopT.map((v) => v.toFixed(0)).join('/') + '秒');
+  /* 待避:発車間際の各停(待避線・停車線)は、すぐ後ろ(1.8km 以内)の急行が先頭を越えて先へ出るまで発車しない。
+     八幡山=急行は通過(停車線の各停を追い越す)・明大前=急行も停まる(緩急接続:急行の発車を待つ) */
+  for (const n of ['八幡山', '明大前']) {
+    const L = T.find((t) => t.kind === '各停' && t.dir === 1), E = T.find((t) => t.kind === '急行');
+    for (const t of T) { if (t !== L && t !== E) { t.x = X.DOM.x1 + 3000; t.st = 'wait'; } }
+    const st = X.STA.find((s) => s.n === n);
+    L.x = X.stopPosOf(st, 1) - X.CAR_HALF; L.v = 0; L.st = 'dwell'; L.dwell = 4; L.atSt = st; L.target = null;
+    E.x = L.x - 1000; E.v = 25; E.st = 'run'; E.target = null; E.atSt = null; E.dwell = 0;
+    let dep = null, tt = 0;
+    for (let k = 0; k < 6000 && dep === null; k++) {
+      X.driveTrain(E, 0.05); X.driveTrain(L, 0.05); tt += 0.05;
+      if (L.st !== 'dwell') dep = { t: tt, rel: (HF(E) - HF(L)) };
+    }
+    ok('待避:' + n + 'の各停は急行に追い越されてから発車', dep !== null && dep.rel > 0 && dep.t > 4.5,
+      '急行の先頭が前に出てから(発車まで' + '4秒より長く待つ)', dep ? '発車 ' + dep.t.toFixed(0) + '秒後・急行は ' + dep.rel.toFixed(0) + 'm 前' : '発車しない');
+  }
+  // 運転モードの自列車(下りの本線)の後ろで、自動運転の各停は手前で止まる
+  {
+    const L = T[0], RS = 2400, LEN = 9 * X.K8.PITCH + X.K8.LEN;
+    for (const t of T) { if (t !== L) { t.x = X.DOM.x1 + 3000; t.st = 'wait'; } }
+    L.x = 1900; L.v = 0; L.st = 'run'; L.target = null; L.atSt = null; L.dwell = 0;
+    X.setRideState({ on: true, s: RS, v: 0 });
+    for (let k = 0; k < 2400; k++) X.driveTrain(L, 0.05);
+    const head = HF(L), gap = (RS - LEN) - head;
+    X.setRideState({ on: false });
+    ok('運転モードの自列車の後ろで止まる', gap >= 20 && L.v === 0, '自列車の最後尾の手前20m以上で停止', '手前' + gap.toFixed(1) + 'm・' + (L.v * 3.6).toFixed(0) + 'km/h');
+  }
+  T.forEach((t, i) => Object.assign(t, save[i]));
+  for (const t of T) if (t.st === 'wait') t.st = 'run';
 }
 
 /* ---- 出力 ---- */

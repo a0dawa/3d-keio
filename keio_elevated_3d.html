@@ -4250,7 +4250,7 @@ const K8_FORMATIONS={
            panto:[2,4,5,8,9], motor:[2,3,4,5,8,9]},   // v4 で推定(8714Fにならう)
 };
 // 種別表示の文字色(sRGB)。特急は v4 の値、各停(白)は v4 でも推定
-const K8_KIND_COLORS={'特急':'#ff2e14','各停':'#fff8ee'};
+const K8_KIND_COLORS={'特急':'#ff2e14','急行':'#2fd36a','各停':'#fff8ee'};
 
 /* ---- 9-2. 断面と前面の平面形(prof_rows / nose_x を移植) ------------------- */
 // 断面:すその丸み → 垂直な側面 → 肩(超楕円) → 屋根頂部。帯・窓・扉の境目に頂点を置く
@@ -5196,6 +5196,9 @@ const K9_FORMATIONS={
   // 笹塚の西側の留置線に置く編成(利用者指示)。30番台の車番は下2桁が編成番号(9731F と同じ並び)
   '9732F':{cars:['9732','9032','9082','9532','9132','9582','9682','9232','9282','9782'],
            panto:[2,3,5,8,9], motor:[2,3,5,8,9]},
+  // 下りの急行(各停を待避線で追い越す。利用者指示)
+  '9733F':{cars:['9733','9033','9083','9533','9133','9583','9683','9233','9283','9783'],
+           panto:[2,3,5,8,9], motor:[2,3,5,8,9]},
 };
 // 断面:8000系と同じ作り。帯・窓・扉の境目に頂点を置く
 const K9_ROWS=(function(){
@@ -5635,27 +5638,30 @@ const DRIVE={ACC:3.3, DEC:3.0, VMAX_KMH:60, DWELL:25};   // 自動運転パラ�
 const DWELL_OF={'八幡山':60,'明大前':60,'桜上水':60,'千歳烏山':60};
 /* 列車の種別(利用者指示:各停以外は識別灯が点く。点く列車を走らせる)。
    各停 …… 全駅に停まり、待避駅(DIVERT)では待避線・停車線へ入る。上限60km/h
-   特急 …… 停車駅は発車標と同じ表(DEP_STOP。笹塚・明大前・千歳烏山)。待避線には入らず本線
-            (八幡山は外側の通過線)を通り、2面4線の駅では本線側(内側)のホームに停まる。上限90km/h・停車25秒 */
-const TRAIN_KIND={'各停':{vmax:60},'特急':{vmax:90}};
+   特急・急行 …… 停車駅は発車標と同じ表(DEP_STOP。特急=笹塚・明大前・千歳烏山/急行=それと桜上水)。待避線には
+            入らず本線(八幡山は外側の通過線)を通り、2面4線の駅では本線側(内側)のホームに停まる。上限90km/h・停車25秒 */
+const TRAIN_KIND={'各停':{vmax:60},'急行':{vmax:90},'特急':{vmax:90}};
 function isLocal(t){ return !t.kind||t.kind==='各停'; }
 function stopsAt(t,st){ return isLocal(t)||(DEP_STOP[t.kind]||[]).indexOf(st.n)>=0; }
 function trainOff(t,x){ return isLocal(t)?runOff(x):mainOff(x); }          // その列車が走る線(北が+)
 function trainZf(t){ return t.dir>0?(isLocal(t)?zRunDown:zDown):(isLocal(t)?zRunUp:zUp); }
 function trainVmax(t){ return ((TRAIN_KIND[t.kind]||{}).vmax||DRIVE.VMAX_KMH)/3.6; }
 const trains=[];
-const K8_TRAIN_FORMS=['8714F','9731F','8713F'];   // 2本目は 9000系(利用者指示)
-[[1, 300,'各停'],[1, 3000,'各停'],[-1, 5600,'特急']].forEach(function(a){
-  const dir=a[0], xs=a[1], kind=a[2], cars=[];
-  /* 編成は v4 の 8714F/8713F。車番・パンタ・電動車は「新宿方から何両目」で決まる。
+/* 走行列車(4本):[向き, 初めの位置 s, 種別, 編成, 行先]。下りは各停2本と急行1本(急行が各停を待避駅で追い越す。
+   利用者指示)、上りは特急1本。急行は 8714F の各停の後ろから出る(明大前で緩急接続、その先で追い越す)。
+   trains[0] は下りの各停(検証が使う) */
+const TRAIN_DEF=[[1,300,'各停','8714F','京王八王子'],[1,3000,'各停','9731F','京王八王子'],
+                 [1,-380,'急行','9733F','橋本'],[-1,5600,'特急','8713F','新宿']];
+TRAIN_DEF.forEach(function(a){
+  const dir=a[0], xs=a[1], kind=a[2], form=a[3], dest=a[4], cars=[];
+  /* 編成は v4 の 8714F/8713F と 9000系。車番・パンタ・電動車は「新宿方から何両目」で決まる。
      下り(dir>0・西へ)は先頭 j=0 が京王八王子方=新宿方から10両目。上りは逆。
      車体ローカル+x は進行方向なので、京王八王子方(西)の向き hachi は dir と同じ符号。 */
-  const form=K8_TRAIN_FORMS[trains.length%K8_TRAIN_FORMS.length];
   for(let j=0;j<10;j++){
     const n=dir>0?10-j:j+1, sp=k8CarSpec(form,n);
     cars.push(makeCar({cabF:j===0, cabR:j===9, panto:sp.panto, motor:sp.motor, num:sp.num, series:sp.series,
       hachi:dir>0?1:-1, lights:j===0?'head':(j===9?'tail':'off'),
-      sign:{kind:kind, dest:dir>0?'京王八王子':'新宿'}, crowd:j%3}));
+      sign:{kind:kind, dest:dest}, crowd:j%3}));
   }
   const reset=(dir>0)?(DOM.x0-210):(DOM.x1+210);
   // st=状態, v=速度[m/s], dwell=停車残り時間, target=次の停止位置s
@@ -5675,28 +5681,88 @@ function nextStopFor(t){
   return best;
 }
 function dwellOf(st,t){ return (t&&!isLocal(t))?DRIVE.DWELL:((st&&DWELL_OF[st.n])||DRIVE.DWELL); }   // 待避で長く停まるのは各停だけ
+/* ---- 列車どうしの間隔(閉塞)と待避(利用者指示:下りの急行が各停を待避線で追い越す) ----
+   ・前の列車の最後尾の HEAD.MARGIN 手前を「止まるべき所」とし、停止位置と同じ減速(B5)の曲線で近づく。
+     前の列車が動けば止まるべき所も進む(ATS の速度照査に近い)。
+   ・待避線・停車線に全体が入った各停は、本線を走る優等列車を塞がない(追い越される)。各停どうしは同じ線に入るので塞ぐ。
+   ・待避線の各停は、すぐ後ろ(先頭どうしで HEAD.HOLD 以内)が優等列車なら、それが先へ出るまで扉を開けたまま待つ
+     (急行が同じ駅に停まるときは緩急接続:急行の発車を待つ)。追い越された後は間隔を保って本線へ出る。
+   ・線路の端の先で入り直すときは、入り直す所が空いてから(見えない所で待つ=st 'wait')。
+   ・運転モードの自列車(下りの本線)も前の列車として扱う(後ろから来る自動運転の列車が突っ込まない)。
+   検証の単独の列車(trains に無い)は間隔も待避も見ない(ほかの列車に止められずに全線を走る)。 */
+const HEAD={MARGIN:40, HOLD:1800, LANE:3.0, START:60};
+const trainLen=t=>((t.cars?t.cars.length:10)-1)*K8.PITCH+K8.LEN;     // 編成長(前の連結面から後ろの連結面まで)
+const headFront=t=>t.x+t.dir*CAR_HALF;                                 // 先頭の前端(t.x は先頭車の中心)
+const tailRear=t=>headFront(t)-t.dir*trainLen(t);                     // 最後尾の後端
+function inLoop(t){                       // 待避線・停車線に全体が入っているか(本線から LANE 以上離れた線)
+  if(!isLocal(t)) return false;
+  const a=headFront(t), b=tailRear(t);
+  return Math.abs(runOff(a)-mainOff(a))>HEAD.LANE&&Math.abs(runOff(b)-mainOff(b))>HEAD.LANE;
+}
+function gapAhead(t){                     // 前の列車(この列車の線を塞ぐもの)の最後尾までの距離[m]
+  if(trains.indexOf(t)<0) return Infinity;
+  const f=headFront(t); let g=Infinity;
+  for(const q of trains){
+    if(q===t||q.dir!==t.dir||q.st==='wait') continue;
+    if((headFront(q)-f)*t.dir<=0) continue;                        // 後ろか並んでいる列車
+    if(!isLocal(t)&&inLoop(q)) continue;                           // 待避線の各停は優等列車を塞がない
+    g=Math.min(g,(tailRear(q)-f)*t.dir);
+  }
+  if(t.dir>0&&rideOn&&trainsOn&&rideS>f) g=Math.min(g,rideS-trainLen(t)-f);   // 運転モードの自列車(rideS=先頭)
+  return g;
+}
+function expressBehind(t){                // すぐ後ろ(または並び)の同じ向きの列車が HEAD.HOLD 以内の優等列車か
+  const f=headFront(t); let best=null, bd=Infinity;
+  for(const q of trains){
+    if(q===t||q.dir!==t.dir||q.st==='wait') continue;
+    const d=(f-headFront(q))*t.dir;
+    if(d>=0&&d<bd){bd=d;best=q;}
+  }
+  return !!best&&bd<=HEAD.HOLD&&!isLocal(best);
+}
+function startClear(t){                   // 入り直す所(線路の端の外)の先が空いているか
+  if(trains.indexOf(t)<0) return true;
+  const h0=t.x0+t.dir*CAR_HALF;
+  for(const q of trains){
+    if(q===t||q.dir!==t.dir||q.st==='wait') continue;
+    if((tailRear(q)-h0)*t.dir<HEAD.MARGIN+HEAD.START) return false;
+  }
+  return true;
+}
 // 1列車の自動運転を1フレーム進める
 function driveTrain(t,dt){
-  const VMAX=trainVmax(t);
+  const VMAX=trainVmax(t), DEC=DRIVE.DEC/3.6;
+  if(t.st==='wait'){                        // 線路の端の先:入り直す所が空くまで待つ(見えない)
+    if(startClear(t)){ t.x=t.x0; t.v=0; t.st='run'; t.target=null; }
+    return;
+  }
   if(t.st==='dwell'){                       // 停車中:残り時間を減らす
     t.dwell-=dt;
+    // 待避:待避線の各停は、すぐ後ろの優等列車が追い越すまで扉を開けたまま待つ(扉は発車の3秒前に閉まり始める)
+    if(t.dwell<=3.2&&trains.indexOf(t)>=0&&inLoop(t)&&expressBehind(t)){ t.dwell=6; t.holdT=(t.holdT||0)+dt; }
     if(t.dwell<=0){ t.st='run'; t.target=nextStopFor(t); }
     return;
   }
   if(t.target===null) t.target=nextStopFor(t);
-  if(t.target===null){                      // 前方に駅なし=端へ。折返して入り直す
-    t.x+=t.dir*t.v*dt; t.v=Math.min(VMAX,t.v+DRIVE.ACC/3.6*dt);
-    if((t.dir>0&&t.x>DOM.x1-CAR_HALF)||(t.dir<0&&t.x<DOM.x0+CAR_HALF)){ t.x=t.x0; t.v=0; t.st='run'; t.target=null; }
+  const room=gapAhead(t)-HEAD.MARGIN;      // 前の列車の手前で止まれる余裕(無ければ Infinity)
+  const brakeDist=(t.v*t.v)/(2*DEC);        // 現速度から止まるのに要る距離
+  if(t.target===null){                      // 前方に駅なし=線路の端の先まで走り抜け、入り直す
+    if(room<=brakeDist+0.2) t.v=Math.max(0,t.v-DEC*dt); else t.v=Math.min(VMAX,t.v+DRIVE.ACC/3.6*dt);
+    t.x+=t.dir*Math.min(t.v*dt,Math.max(0,room));
+    if((tailRear(t)-(t.dir>0?DOM.x1:DOM.x0))*t.dir>5){       // 最後尾まで線路の端の外へ出た
+      t.v=0; t.target=null; t.atSt=null;
+      if(startClear(t)){ t.x=t.x0; t.st='run'; } else t.st='wait';
+    }
     return;
   }
   const dist=(t.target.s-t.x)*t.dir;       // 停止位置までの残距離[m](進行方向正)
-  const brakeDist=(t.v*t.v)/(2*DRIVE.DEC/3.6);   // 現速度から止まるのに要る距離
-  if(dist<=brakeDist+0.2){                   // 減速フェーズ
+  const lim=Math.min(dist,room);            // 先に止まるべき所(駅の停止位置か、前の列車の手前)
+  if(lim<=brakeDist+0.2){                   // 減速フェーズ
     t.st='brake';
-    t.v=Math.max(0, t.v-DRIVE.DEC/3.6*dt);
-    if(t.v<0.15 && dist<1.0){ t.x=t.target.s; t.v=0; t.st='dwell';
+    t.v=Math.max(0, t.v-DEC*dt);
+    if(dist<=room && t.v<0.15 && dist<1.0){ t.x=t.target.s; t.v=0; t.st='dwell';
       t.dwell=dwellOf(t.target.st,t); t.atSt=t.target.st; }   // 停車時間は駅別(八幡山60秒)
-    else t.x+=t.dir*t.v*dt;
+    else t.x+=t.dir*Math.min(t.v*dt,Math.max(0,lim));         // 止まるべき所を越えない
   }else{                                     // 力行/惰行フェーズ(種別の上限。各停60・特急90km/h)
     t.st='run';
     t.v=Math.min(VMAX, t.v+DRIVE.ACC/3.6*dt);
@@ -6776,8 +6842,14 @@ const CINE=(function(){
       for(const c of t.cars) setCarDoors(c,0,1);
       t.dr=0; t.dside=1; placeTrain(t); return t;
     }
-    for(const q of trains) if(q!==t&&q.dir===dir&&Math.abs(q.x-stop)<STAGE.CLEAR){
-      q.x=stop-dir*STAGE.BACK; q.v=0; q.st='run'; q.target=null; q.atSt=null; q.dwell=0;
+    // 近くの同じ向きの列車は後ろへ退ける。退け先は 450m ずつずらし、ほかの列車と 300m 以内にならない所を選ぶ
+    const mv=trains.filter(q=>q!==t&&q.dir===dir&&Math.abs(q.x-stop)<STAGE.CLEAR);
+    let slot=0;
+    for(const q of mv){
+      let x;
+      do{ x=stop-dir*(STAGE.BACK+450*slot); slot++; }
+      while(trains.some(r=>r!==q&&r!==t&&r.dir===dir&&mv.indexOf(r)<0&&Math.abs(r.x-x)<300)&&slot<8);
+      q.x=x; q.v=0; q.st='run'; q.target=null; q.atSt=null; q.dwell=0;
       placeTrain(q);
     }
     if(mode==='arrive'){
