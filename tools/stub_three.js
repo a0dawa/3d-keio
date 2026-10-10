@@ -195,9 +195,13 @@ class Inst extends Mesh {
 }
 class Attr {
   constructor(a, is) { this.array = a; this.itemSize = is; this.count = a.length / is; return soft(this); }
+  setXYZ(i, x, y, z) { const k = i * this.itemSize; this.array[k] = x; this.array[k + 1] = y; this.array[k + 2] = z; return this; }
+  getX(i) { return this.array[i * this.itemSize]; }
+  getY(i) { return this.array[i * this.itemSize + 1]; }
+  getZ(i) { return this.array[i * this.itemSize + 2]; }
 }
 class BufGeo {
-  constructor() { this.attributes = {}; this.index = null; this.drawRange = { start: 0, count: Infinity }; return soft(this); }
+  constructor() { this.attributes = {}; this.index = null; this.drawRange = { start: 0, count: Infinity }; this.userData = {}; return soft(this); }
   setAttribute(n, a) { this.attributes[n] = a; return this; }
   setDrawRange(s, c) { this.drawRange.start = s; this.drawRange.count = c; }
   setIndex(a) { this.index = soft({ array: a, count: a.length }); return this; }

@@ -1085,7 +1085,7 @@ const groundMesh=(function(){
      レール面+9.0m(架線の上)より高くする。橋脚は京王線の高架下・側道には立てない
    ・建物・樹木は道路の面に掛からない(cityFree が roadHit を見る)。登録簿 ROADS_PL */
 const PLL=(typeof globalThis!=='undefined'&&globalThis.PLATEAU_LAND&&globalThis.PLATEAU_LAND.road64)?globalThis.PLATEAU_LAND:null;
-const ROADS_PL=[], ROAD_XING=[], PLR_GRID=new Map(), PLR_CELL=30, ROAD_LAMPS=[], EXPY={deck:[],piers:[]};
+const ROADS_PL=[], LANDS_PL=[], LU={tint:null,col:null,geos:[],water:[]}, ROAD_XING=[], PLR_GRID=new Map(), PLR_CELL=30, ROAD_LAMPS=[], EXPY={deck:[],piers:[]};
 const ROAD_Y=[0.10,0.12,0.12], EXPY_TOP=11.5, EXPY_DEPTH=1.8;
 function roadHit(px,pz,r){                 // 点(半径 r)が道路の面に掛かるか
   const l=PLR_GRID.get(Math.floor(px/PLR_CELL)+','+Math.floor(pz/PLR_CELL));
@@ -1096,10 +1096,14 @@ function expyHit(px,pz,r){                 // 点(半径 r)が自動車道の橋
   for(const p of EXPY.piers) if(Math.abs(px-p[0])<1.0+r&&Math.abs(pz-p[1])<1.0+r) return true;
   return false;
 }
-function plrDecode(b64){                   // 2進 → [{k,sec,P}](plateau_land.py の enc_polys の逆)
+function waterHit(px,pz,r){                // 点(半径 r)が水面(河川・池)に掛かるか
+  for(const W of LU.water) if(px>W.bb[0]-r&&px<W.bb[1]+r&&pz>W.bb[2]-r&&pz<W.bb[3]+r&&polyDist(W.P,px,pz)<r) return true;
+  return false;
+}
+function plrDecode(b64,magic){             // 2進 → [{k,sec,P}](plateau_land.py の enc_polys の逆)
   const s=atob(b64), u8=new Uint8Array(s.length);
   for(let i=0;i<s.length;i++) u8[i]=s.charCodeAt(i);
-  if(s.slice(0,4)!=='PLR1') throw new Error('PLATEAU の道路データの形式が違う');
+  if(s.slice(0,4)!==(magic||'PLR1')) throw new Error('PLATEAU の地表のデータの形式が違う');
   const dv=new DataView(u8.buffer), N=dv.getUint32(4,true), out=[];
   let o=8;
   for(let n=0;n<N;n++){
@@ -1149,9 +1153,52 @@ if(PLL){
       if(up>=0) c.I.push(o+t[0],o+t[1],o+t[2]); else c.I.push(o+t[0],o+t[2],o+t[1]);
     }
   }
-  for(const c of CH.values()){
-    const m=new THREE.Mesh(facesGeo(c.P,c.N,c.I,c.C),MAT_RD); m.userData.flat=true; scene.add(m);
+  /* 土地利用の緑(公園・農地・山林)と平面駐車場、水部の水面(plateau_land.js の land64)。地表 0.05〜0.07m(道路の下)。
+     緑と駐車場は**道路と同じまとまり・同じ材質**に積む(まとまりごとに描画1回)。緑の色は頂点カラーで、
+     季節と夜は applyLook → LU.tint() が緑の頂点の色だけを書き換える(公園=濃い芝・農地=黄土・山林=深い緑 × 季節の地表の色)。
+     水面は MAT.water(物理ベース)で、全部を1つの Mesh に */
+  if(PLL.land64){
+    const LC=[[0.74,0.92,0.62],[1.02,0.90,0.62],[0.48,0.64,0.44]];   // 公園(濃い芝)・農地(黄土)・山林(深い緑)
+    const PK=setSrgb(new THREE.Color(),0xa9abaa);
+    const W={P:[],N:[],I:[]};
+    for(const R of plrDecode(PLL.land64,'PLU1')){
+      let inDom=false;
+      for(const p of R.P){const q=prjXY(p[0],p[1]); if(q.s>DOM.x0-150&&q.s<DOM.x1+150&&Math.abs(q.off)<DOM.z+60){inDom=true;break;}}
+      if(!inDom) continue;
+      let x0=1e9,x1=-1e9,z0=1e9,z1=-1e9;
+      for(const p of R.P){x0=Math.min(x0,p[0]);x1=Math.max(x1,p[0]);z0=Math.min(z0,p[1]);z1=Math.max(z1,p[1]);}
+      R.bb=[x0,x1,z0,z1]; LANDS_PL.push(R);
+      let c;
+      if(R.k===3){ LU.water.push(R); c=W; }
+      else{
+        const key=Math.floor((x0+x1)/2/CHS)+','+Math.floor((z0+z1)/2/CHS);
+        c=CH.get(key); if(!c){c={P:[],N:[],I:[],C:[]}; CH.set(key,c);}
+      }
+      const o=c.P.length/3, y=R.k===3?0.07:(R.k===4?0.06:0.05);
+      if(R.k<3){ if(!c.G) c.G=[]; c.G.push([o,R.P.length,R.k]); }
+      for(const p of R.P){c.P.push(p[0],y,p[1]); c.N.push(0,1,0); if(c.C) c.C.push(PK.r,PK.g,PK.b);}
+      for(const t of earTri(R.P)){
+        const A=R.P[t[0]],B=R.P[t[1]],C=R.P[t[2]], up=(B[1]-A[1])*(C[0]-A[0])-(B[0]-A[0])*(C[1]-A[1]);
+        if(up>=0) c.I.push(o+t[0],o+t[1],o+t[2]); else c.I.push(o+t[0],o+t[2],o+t[1]);
+      }
+    }
+    if(W.I.length){const m=new THREE.Mesh(facesGeo(W.P,W.N,W.I),MAT.water); m.userData.flat=true; scene.add(m);}
+    LU.col=new THREE.Color(1,1,1);
+    LU.tint=function(col){                 // 緑の頂点の色 = 種別の係数 × col(リニア)
+      LU.col.copy(col);
+      for(const g of LU.geos){
+        const a=g.attributes.color;
+        for(const r of g.userData.G){const f=LC[r[2]]; for(let i=r[0];i<r[0]+r[1];i++) a.setXYZ(i,f[0]*col.r,f[1]*col.g,f[2]*col.b);}
+        a.needsUpdate=true;
+      }
+    };
   }
+  LU.geos=[];
+  for(const c of CH.values()){
+    const g=facesGeo(c.P,c.N,c.I,c.C), m=new THREE.Mesh(g,MAT_RD); m.userData.flat=true; scene.add(m);
+    if(c.G){g.userData.G=c.G; LU.geos.push(g);}
+  }
+  if(LU.tint) LU.tint(srgb(0xa6c893));
   /* 自動車専用の橋梁:床版(上面・下面・側面)と高欄、内側の格子点に橋脚 */
   {
     const P=[],N=[],I=[], PB=[],NB=[],IB=[], piers=[];
@@ -1285,7 +1332,7 @@ box(26,5.5,18,M(0x9aa5ad),SUBK.s,2.75,SUBK.off); // 上北沢変電所(実測)
 box(28,6,20,M(0x9aa5ad),SUBC.s,3,SUBC.off);      // 烏山変電所(実測)
 cyl(24,.32,MAT.roadMajor,PLAZA_S,.16,PLAZA_OFF,30); // 千歳烏山駅前広場(計画・実測)
 cyl(9,.6,MAT.green,PLAZA_S,.3,PLAZA_OFF,22);
-box(9,.25,150,MAT.water,BRIDGE.s,.12,0);             // 仙川(河川)=仙川橋梁架替位置
+if(!LU.water.length) box(9,.25,150,MAT.water,BRIDGE.s,.12,0);   // 仙川(河川)=仙川橋梁架替位置。水部の実データがあれば描かない
 
 /* ============ 5. 高架橋・橋脚・架線(工区グループ別) ============ */
 const yTop=x=>railY(x)-DECK_DROP, yBot=x=>railY(x)-GIRDER;
@@ -3406,6 +3453,7 @@ function cityFree(s,off,rad,px,pz,roadIn){       // roadIn:道路の面への食
   if(Math.abs(off)<deckHalf(s)+5.2+rad) return false;          // 高架下+側道
   if(PLL&&px!==undefined&&roadHit(px,pz,rad-(roadIn||0))) return false;   // 実データの道路の面
   if(PLL&&px!==undefined&&expyHit(px,pz,rad)) return false;     // 自動車道の橋脚
+  if(PLL&&px!==undefined&&waterHit(px,pz,rad)) return false;    // 河川・池の水面
   for(const q of KEEP){
     if(q.k==='b'){ if(Math.abs(s-q.c)<q.hw+rad && Math.abs(off)<q.oh) return false; }
     else if(q.k==='s'){ if(Math.abs(off-q.o)<q.hw+rad && s>q.s0 && s<q.s1) return false; }
@@ -6314,10 +6362,16 @@ const CINE=(function(){
   })();
 
   const GROUND_NIGHT=0.40;
+  const URBAN_GROUND=0xc3c0b3, URBAN_MIX=0.3;     // 実データの緑があるときの既定の地表(住宅地など)
   function applyLook(){
     const s=SEASON[curSeason]||SEASON.summer;
     const dark=(TIME[curTime]&&TIME[curTime].lights)?GROUND_NIGHT:1;
     MAT.ground.color.copy(srgb(s.ground)).multiplyScalar(dark);
+    if(LU.tint){
+      LU.tint(srgb(s.ground).multiplyScalar(dark));
+      // 実データの緑(公園・農地・山林)があるときは、既定の地表(住宅地・商業地…)を灰褐色へ寄せる。全面が芝生に見えない
+      MAT.ground.color.lerp(srgb(URBAN_GROUND).multiplyScalar(dark),URBAN_MIX);
+    }
     // 樹木は登録簿の順=インスタンスの順。種別(桜/一般)で色を選ぶ
     const col=new THREE.Color();
     for(let i=0;i<CITY.trees.length;i++){

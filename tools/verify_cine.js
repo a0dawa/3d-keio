@@ -25,6 +25,7 @@ const X = require('./stub_three')(path,
   'SKY:()=>SKY, SKY_TEX:SKY_TEX, skyDome:skyDome, env:()=>scene.environment,' +
   'sunFollow:sunFollow, SH_MAP:SH_MAP, DOM:DOM, srgb:srgb, zRunDown:zRunDown,' +
   'NIGHT:NIGHT, NIGHT_STAT:NIGHT_STAT, PLATS:PLATS, trains:trains, stopPosOf:stopPosOf, CAR_HALF:CAR_HALF,' +
+  'LU:(typeof LU!=="undefined"?LU:null),' +
   'setLookUI:(typeof setLookUI!=="undefined"?setLookUI:null), LOOK_UI:(typeof LOOK_UI!=="undefined"?LOOK_UI:null)');
 
 /* ---- 期待値(検証側が独立して持つ) ---------------------------------------- */
@@ -248,6 +249,22 @@ const TPROP = {};
     let dark = 0;
     for (let i = 0; i < dayT.length; i++) if ((ngtT[i] & 255) < (dayT[i] & 255)) dark++;
     ok('夜は樹木が暗い', dark === dayT.length, dayT.length + '本すべて', dark + '本');
+    /* 実データの緑地(公園・農地・山林。LU.mat)も季節で塗り替わり、夜は暗くなること(地表と同じ扱い。
+       片方だけ塗ると、冬の地表に夏の芝生の公園が残る) */
+    if (X.LU && X.LU.tint) {
+      let bad = null;
+      for (const se of C.seasons) {
+        // 描かれた緑の頂点の色そのもの(LU.col ではなく、ジオメトリの color 属性)で見る
+        const vc = () => { const g = X.LU.geos[0], r = g.userData.G[0], a = g.attributes.color; return { r: a.getX(r[0]), g: a.getY(r[0]), b: a.getZ(r[0]), clone() { return this; }, getHexString() { return [this.r, this.g, this.b].map((v) => v.toFixed(4)).join(','); } }; };
+        C.setTime('noon'); C.setSeason(se); const d = vc();
+        C.setTime('night'); const n = vc();
+        if (!(lum(n) < lum(d) * 0.6)) bad = bad || se + ' 夜 ' + lum(n).toFixed(3) + ' / 昼 ' + lum(d).toFixed(3);
+        d.__k = se; X.LU['__' + se] = d;
+      }
+      const seen = new Set(C.seasons.map((se) => X.LU['__' + se].getHexString()));
+      ok('緑地は季節と夜に追従', bad === null && seen.size === C.seasons.length, '季節ごとに別の色・夜は6割未満',
+        bad || seen.size + '色');
+    }
   }
   /* 灯りの強さ(利用者指示:2.5倍)。発光色は1を超えるリニア値になっているはず。
      灯具(街灯・ホーム照明)の色と、窓明かりの最も明るい建物で見る */
