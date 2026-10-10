@@ -128,7 +128,21 @@ const LAND = (() => {
       if (x > R.bb[0] - 5 && x < R.bb[1] + 5 && z > R.bb[2] - 5 && z < R.bb[3] + 5) d = Math.min(d, polyDist(R.P, x, z));
     return d;
   };
-  return { roads: out, depth: depth, elev: out.filter((R) => R.k === 2 && R.sec === 2) };
+  // 水面(河川・池):land64 の種別3
+  const water = [];
+  if (g.PLATEAU_LAND.land64) {
+    const w = Buffer.from(g.PLATEAU_LAND.land64, 'base64');
+    if (w.toString('latin1', 0, 4) !== 'PLU1') throw new Error('地表データの形式');
+    const M = w.readUInt32LE(4); let q = 8;
+    for (let n = 0; n < M; n++) {
+      const k = w.readUInt8(q), nv = w.readUInt16LE(q + 2); q += 4;
+      let x = w.readInt32LE(q), z = w.readInt32LE(q + 4); q += 8;
+      const P = [[x / 10, z / 10]];
+      for (let i = 1; i < nv; i++) { x += w.readInt16LE(q); z += w.readInt16LE(q + 2); q += 4; P.push([x / 10, z / 10]); }
+      if (k === 3) water.push(P);
+    }
+  }
+  return { roads: out, depth: depth, elev: out.filter((R) => R.k === 2 && R.sec === 2), water: water };
 })();
 const ALL = B.map((o) => ({ o: o, kind: '建物' })).concat(T.map((o) => ({ o: o, kind: '樹木' })));
 
@@ -224,6 +238,21 @@ if (LAND) {
   }
   ok('実際の道路の上に無い', bad === null, '建物は食い込み≤' + REF.ROAD_BLDG_IN + 'm・樹木は半径ぶん離れる',
     bad ? bad.join(' ') : ALL.length + '件すべて(余裕' + worst.toFixed(2) + 'm)');
+
+  // 河川・池の水面の上に無い(建物も樹木も、水面に入らない)
+  let bw = null;
+  if (LAND.water.length) {
+    const WB = LAND.water.map((P) => { let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9; for (const v of P) { x0 = Math.min(x0, v[0]); x1 = Math.max(x1, v[0]); z0 = Math.min(z0, v[1]); z1 = Math.max(z1, v[1]); } return { P: P, bb: [x0, x1, z0, z1] }; });
+    for (const e of ALL) for (const q of pts(e.o)) {
+      for (const W of WB) {
+        if (q.x < W.bb[0] - 10 || q.x > W.bb[1] + 10 || q.z < W.bb[2] - 10 || q.z > W.bb[3] + 10) continue;
+        const d = polyDist(W.P, q.x, q.z), lim = POLY(e.o) ? -REF.ROAD_BLDG_IN : q.r;
+        if (d < lim && !bw) bw = [e.kind, '(' + q.x.toFixed(0) + ',' + q.z.toFixed(0) + ')', '水面まで' + d.toFixed(2) + 'm'];
+      }
+    }
+  }
+  ok('水面(河川・池)の上に無い', bw === null && LAND.water.length > 0, '水面' + '>0面・建物は食い込み≤' + REF.ROAD_BLDG_IN + 'm',
+    bw ? bw.join(' ') : '水面' + LAND.water.length + '面・' + ALL.length + '件すべて');
 
   // 京王線を横切る道路を検証側で見つける
   const xing = []; let a = null;
