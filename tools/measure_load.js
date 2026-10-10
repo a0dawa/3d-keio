@@ -37,8 +37,10 @@ const PAGE = path.join(OUT, 'page.html');
   fs.writeFileSync(PAGE, src);
   fs.copyFileSync(THREEJS, path.join(OUT, 'three.min.js'));
   // 沿線の建物データ(別ファイル)。HTML の隣にあれば一緒に写す(無ければ模式の街で測る)
-  const pl = path.join(path.dirname(HTML), 'plateau_bldg.js');
-  if (fs.existsSync(pl)) fs.copyFileSync(pl, path.join(OUT, 'plateau_bldg.js'));
+  for (const nm of ['plateau_bldg.js', 'plateau_land.js']) {   // 沿線の建物・道路(PLATEAU。あれば)
+    const pl = path.join(path.dirname(HTML), nm);
+    if (fs.existsSync(pl)) fs.copyFileSync(pl, path.join(OUT, nm));
+  }
 }
 function findChromium() {
   if (opt('chromium')) return opt('chromium');

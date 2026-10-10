@@ -290,8 +290,10 @@ module.exports = function runHtml(htmlPath, exportExpr) {
   if (!m) { console.error('NO_SCRIPT'); process.exit(1); }
   install();
   // 別ファイルの沿線の建物データ(<script src="plateau_bldg.js">)。HTML と同じ場所にあれば先に読む
-  const pl = nodePath.join(nodePath.dirname(htmlPath), 'plateau_bldg.js');
-  if (/<script src="plateau_bldg\.js">/.test(html) && fs.existsSync(pl)) (0, eval)(fs.readFileSync(pl, 'utf8'));
+  for (const nm of ['plateau_bldg.js', 'plateau_land.js']) {
+    const pl = nodePath.join(nodePath.dirname(htmlPath), nm);
+    if (html.includes('<script src="' + nm + '">') && fs.existsSync(pl)) (0, eval)(fs.readFileSync(pl, 'utf8'));
+  }
   try {
     // eval に export 文を継ぎ足す:同一スコープなので const/let で宣言された値も取り出せる
     eval(m[1] + '\n;globalThis.__X={' + exportExpr + '};');

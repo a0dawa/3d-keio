@@ -180,6 +180,7 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="plateau_bldg.js"></script><!-- 沿線の建物(PLATEAU)。無ければ模式の街で描く -->
+<script src="plateau_land.js"></script><!-- 沿線の道路(PLATEAU)。無ければ模式の道路で描く -->
 <script>
 'use strict';
 if(!window.THREE){document.body.insertAdjacentHTML('beforeend','<div class="panel" style="top:50%;left:50%;transform:translate(-50%,-50%);padding:20px">3Dライブラリを読み込めませんでした。通信環境をご確認ください。</div>');throw new Error('three missing');}
@@ -269,7 +270,8 @@ const RAW={
  reuse:{e:[35.66951161782118,139.61858105926729], w:[35.67048396507704,139.6119789211542]},
  yards:[{a:[35.66728205265037,139.63476576685238], b:[35.66757677968672,139.6326007886939]},   // 上り方(東)
         {a:[35.667947087684944,139.6303980486085], b:[35.66833090608635,139.6280396201935]}],  // 下り方(西)
- roads:{kan7:[35.67493984097744,139.6709809185286], kyuIno:[35.6696446271404,139.6549350925075],
+ roads:{kan7:[35.671659,139.661038], nakano:[35.674998,139.670961],   // 環七・中野通り:線路の中心線と PLATEAU の道路(都道318号・都道420号)の交点
+        kyuIno:[35.6696446271404,139.6549350925075],
         h23:[35.669349191483654,139.65393270941158], h154:[35.66813316289952,139.65014168064042],
         h128:[35.66611852261594,139.64296286397814], h133:[35.667406090559375,139.63295141458974],
         h215:[35.668966236088494,139.62233161039873], kan8:[35.67027345154302,139.61334488850062],
@@ -411,7 +413,7 @@ function X(km){                                    // 営業キロ→s(駅アン
   return STA[9].x+(km-KMA[9])*1000;
 }
 const XINGS=RAW.xings.map(g=>[g[0],prj(g[1],g[2]).s]);
-const KAN7_X=prj(...RAW.roads.kan7).s, KYU_INOKA_X=prj(...RAW.roads.kyuIno).s,
+const KAN7_X=prj(...RAW.roads.kan7).s, NAKANO_X=prj(...RAW.roads.nakano).s, KYU_INOKA_X=prj(...RAW.roads.kyuIno).s,
       HOSHA23_X=prj(...RAW.roads.h23).s, H154_X=prj(...RAW.roads.h154).s,
       H128_X=prj(...RAW.roads.h128).s, H133_X=prj(...RAW.roads.h133).s,
       H215_X=prj(...RAW.roads.h215).s, KANPACHI_X=prj(...RAW.roads.kan8).s,
@@ -511,7 +513,7 @@ const WIRE_SAG=0.32;   // 50m の柱間の中央での垂れ(柱間の2乗に比
 const POLE_TOP=7.40;   // 架線柱の頂部(門型ビームの上弦)
 const BEAM_LOW=POLE_TOP-0.70;   // ビームの下弦。可動ブラケットはここから吊りパイプで下げる
 // 橋脚を省略する横断部(道路・鉄道・河川の直上に柱を立てない)
-const ROAD_SKIP=[[INOKASHIRA_X,12],[SETAGAYA_X,8],[BRIDGE.s,12],[KAN7_X,16],[KYU_INOKA_X,9],
+const ROAD_SKIP=[[INOKASHIRA_X,12],[SETAGAYA_X,8],[BRIDGE.s,12],[KAN7_X,16],[NAKANO_X,12],[KYU_INOKA_X,9],
   [HOSHA23_X,11],[H154_X,10],[H128_X,9],[H133_X,9],[H215_X,9],[KANPACHI_X,18],[H216_X,9],[H217_X,10]];
 for(const gq of XINGS)ROAD_SKIP.push([gq[1],7]);
 const PIERS=[];   // 建てた橋脚のs座標(検証用の登録簿)
@@ -1074,7 +1076,158 @@ function lodStruct(){
 const groundMesh=(function(){
  const g=new THREE.Mesh(new THREE.BoxGeometry(11000,1,5200),MAT.ground);
  g.position.set(-3600,-.5,650);scene.add(g);return g;})();
-// 幹線(線路と並走:甲州街道・旧甲州街道・首都高4号)
+/* ---- 道路:PLATEAU の実データ(別ファイル plateau_land.js があるとき) -----------------------
+   国土交通省 3D都市モデル(Project PLATEAU)2025年度の道路(tran:Road の lod1MultiSurface=道路区域の平面形)。
+   tools/plateau_land.py が作る。ファイルが無ければ下の模式の道路(甲州街道・交差道路の帯)で描く。
+   ・種別 k:0=一般(区市町村道)/1=幹線(国道・都道)/2=自動車専用。区間 sec:1=道路・2=橋梁・3=トンネル・4=交差部
+   ・地表の道路は平らな面を地表の 0.10m(幹線 0.12m)上に敷く。400m 角のまとまり×材質ごとに1つの Mesh
+   ・自動車専用の橋梁(首都高4号・中央道)は高架の床版にして、内側に橋脚を立てる。京王線の上を渡る所は
+     レール面+9.0m(架線の上)より高くする。橋脚は京王線の高架下・側道には立てない
+   ・建物・樹木は道路の面に掛からない(cityFree が roadHit を見る)。登録簿 ROADS_PL */
+const PLL=(typeof globalThis!=='undefined'&&globalThis.PLATEAU_LAND&&globalThis.PLATEAU_LAND.road64)?globalThis.PLATEAU_LAND:null;
+const ROADS_PL=[], ROAD_XING=[], PLR_GRID=new Map(), PLR_CELL=30, ROAD_LAMPS=[], EXPY={deck:[],piers:[]};
+const ROAD_Y=[0.10,0.12,0.12], EXPY_TOP=11.5, EXPY_DEPTH=1.8;
+function roadHit(px,pz,r){                 // 点(半径 r)が道路の面に掛かるか
+  const l=PLR_GRID.get(Math.floor(px/PLR_CELL)+','+Math.floor(pz/PLR_CELL));
+  if(l) for(const R of l) if(px>R.bb[0]-r&&px<R.bb[1]+r&&pz>R.bb[2]-r&&pz<R.bb[3]+r&&polyDist(R.P,px,pz)<r) return true;
+  return false;
+}
+function expyHit(px,pz,r){                 // 点(半径 r)が自動車道の橋脚(2m角)に掛かるか
+  for(const p of EXPY.piers) if(Math.abs(px-p[0])<1.0+r&&Math.abs(pz-p[1])<1.0+r) return true;
+  return false;
+}
+function plrDecode(b64){                   // 2進 → [{k,sec,P}](plateau_land.py の enc_polys の逆)
+  const s=atob(b64), u8=new Uint8Array(s.length);
+  for(let i=0;i<s.length;i++) u8[i]=s.charCodeAt(i);
+  if(s.slice(0,4)!=='PLR1') throw new Error('PLATEAU の道路データの形式が違う');
+  const dv=new DataView(u8.buffer), N=dv.getUint32(4,true), out=[];
+  let o=8;
+  for(let n=0;n<N;n++){
+    const k=dv.getUint8(o), sec=dv.getUint8(o+1), nv=dv.getUint16(o+2,true); o+=4;
+    let x=dv.getInt32(o,true), z=dv.getInt32(o+4,true); o+=8;
+    const P=[[x/10,z/10]];
+    for(let i=1;i<nv;i++){ x+=dv.getInt16(o,true); z+=dv.getInt16(o+2,true); o+=4; P.push([x/10,z/10]); }
+    out.push({k:k,sec:sec,P:P});
+  }
+  return out;
+}
+if(PLL){
+  const CH=new Map(), CHS=600;
+  // 一般と幹線の色は頂点カラーで塗り分け、1つの材質にする(まとまりごとに描画1回)
+  const MAT_RD=mkMat('MeshLambertMaterial',{color:0xffffff,vertexColors:true}), RD_COL=[0x8f949a,0x7c8187,0x7c8187].map(h=>setSrgb(new THREE.Color(),h));
+  const elev=R=>R.k===2&&R.sec===2;
+  for(const R of plrDecode(PLL.road64)){
+    const P=R.P; let inDom=false;
+    for(const p of P){const q=prjXY(p[0],p[1]); if(q.s>DOM.x0-150&&q.s<DOM.x1+150&&Math.abs(q.off)<DOM.z+60){inDom=true;break;}}
+    if(!inDom) continue;
+    let x0=1e9,x1=-1e9,z0=1e9,z1=-1e9;
+    for(const p of P){x0=Math.min(x0,p[0]);x1=Math.max(x1,p[0]);z0=Math.min(z0,p[1]);z1=Math.max(z1,p[1]);}
+    R.bb=[x0,x1,z0,z1]; ROADS_PL.push(R);
+    if(!elev(R))                                  // 高架の自動車道の下は地表の道路が別にある
+      for(let gx=Math.floor(x0/PLR_CELL);gx<=Math.floor(x1/PLR_CELL);gx++)
+        for(let gz=Math.floor(z0/PLR_CELL);gz<=Math.floor(z1/PLR_CELL);gz++){
+          const kk=gx+','+gz; let l=PLR_GRID.get(kk); if(!l){l=[];PLR_GRID.set(kk,l);} l.push(R);
+        }
+  }
+  /* 線路を横切る実際の道路(中心と桁の両端の3点が道路の上に3m以上続く所):高架の柱を立てない所に足す。
+     道路の縁から柱の中心まで4m。模式の位置(RAW.roads・XINGS)とずれていても実際の道路に柱が立たない */
+  {let a=null;
+   for(let s=Math.floor(DOM.x0);s<=DECK_END+1;s++){
+     const dh=deckHalf(s), on=[0,-dh,dh].every(o=>{const f=frame(s,o);return roadHit(f.x,f.z,0);});
+     if(on){ if(a===null) a=s; }
+     else if(a!==null){ if(s-a>=3){ROAD_SKIP.push([(a+s-1)/2,(s-a)/2+4]); ROAD_XING.push([a,s-1]);} a=null; }
+   }}
+  // 地表の道路:まとまり×材質ごとに上面だけの面
+  for(const R of ROADS_PL){
+    if(elev(R)) continue;
+    const key=Math.floor((R.bb[0]+R.bb[1])/2/CHS)+','+Math.floor((R.bb[2]+R.bb[3])/2/CHS);
+    let c=CH.get(key); if(!c){c={P:[],N:[],I:[],C:[]}; CH.set(key,c);}
+    const o=c.P.length/3, y=ROAD_Y[R.k], cl=RD_COL[R.k];
+    for(const p of R.P){c.P.push(p[0],y,p[1]); c.N.push(0,1,0); c.C.push(cl.r,cl.g,cl.b);}
+    for(const t of earTri(R.P)){
+      const A=R.P[t[0]],B=R.P[t[1]],C=R.P[t[2]], up=(B[1]-A[1])*(C[0]-A[0])-(B[0]-A[0])*(C[1]-A[1]);
+      if(up>=0) c.I.push(o+t[0],o+t[1],o+t[2]); else c.I.push(o+t[0],o+t[2],o+t[1]);
+    }
+  }
+  for(const c of CH.values()){
+    const m=new THREE.Mesh(facesGeo(c.P,c.N,c.I,c.C),MAT_RD); m.userData.flat=true; scene.add(m);
+  }
+  /* 自動車専用の橋梁:床版(上面・下面・側面)と高欄、内側の格子点に橋脚 */
+  {
+    const P=[],N=[],I=[], PB=[],NB=[],IB=[], piers=[];
+    const quad=(Pa,Na,Ia,a,b,c,d,n)=>{const o=Pa.length/3; for(const p of [a,b,c,d]){Pa.push(p[0],p[1],p[2]);Na.push(n[0],n[1],n[2]);}
+      const ux=b[0]-a[0],uy=b[1]-a[1],uz=b[2]-a[2],vx=c[0]-a[0],vy=c[1]-a[1],vz=c[2]-a[2];
+      if((uy*vz-uz*vy)*n[0]+(uz*vx-ux*vz)*n[1]+(ux*vy-uy*vx)*n[2]>=0) Ia.push(o,o+1,o+2,o,o+2,o+3); else Ia.push(o,o+2,o+1,o,o+3,o+2);};
+    for(const R of ROADS_PL){
+      if(!elev(R)) continue;
+      const Q=R.P, cx=Q.reduce((a,p)=>a+p[0],0)/Q.length, cz=Q.reduce((a,p)=>a+p[1],0)/Q.length;
+      // 京王線の上を渡るなら、渡る所のレール面+9.0m より高く。内側の 6m 格子で調べ、橋脚の候補も同じ格子から
+      let top=EXPY_TOP; const cand=[];
+      for(let x=Math.ceil(R.bb[0]/6)*6;x<R.bb[1];x+=6)for(let z=Math.ceil(R.bb[2]/6)*6;z<R.bb[3];z+=6){
+        const d=polyDist(Q,x,z); if(d>=0) continue;
+        const q=prjXY(x,z), dh=deckHalf(q.s);
+        if(Math.abs(q.off)<dh+3&&q.s>DOM.x0-50&&q.s<DOM.x1+50) top=Math.max(top,railY(q.s)+9.0);
+        if(d<-1.2&&Math.abs(q.off)>dh+5.4) cand.push([x,z]);
+      }
+      const bot=top-EXPY_DEPTH;
+      EXPY.deck.push({P:Q,top:top,bot:bot,bb:R.bb});
+      const o=P.length/3;
+      for(const p of Q){P.push(p[0],top,p[1]);N.push(0,1,0);}
+      const o2=P.length/3;
+      for(const p of Q){P.push(p[0],bot,p[1]);N.push(0,-1,0);}
+      for(const t of earTri(Q)){
+        const A=Q[t[0]],B=Q[t[1]],C=Q[t[2]], up=(B[1]-A[1])*(C[0]-A[0])-(B[0]-A[0])*(C[1]-A[1]);
+        if(up>=0){I.push(o+t[0],o+t[1],o+t[2]); I.push(o2+t[0],o2+t[2],o2+t[1]);}
+        else     {I.push(o+t[0],o+t[2],o+t[1]); I.push(o2+t[0],o2+t[1],o2+t[2]);}
+      }
+      for(let i=0;i<Q.length;i++){
+        const a=Q[i], d=Q[(i+1)%Q.length], mx=(a[0]+d[0])/2-cx, mz=(a[1]+d[1])/2-cz;
+        let nx=d[1]-a[1], nz=-(d[0]-a[0]); const l=Math.hypot(nx,nz)||1; nx/=l; nz/=l;
+        if(polyDist(Q,(a[0]+d[0])/2+nx*0.3,(a[1]+d[1])/2+nz*0.3)<0){nx=-nx;nz=-nz;}   // 外向き
+        quad(P,N,I,[a[0],bot,a[1]],[d[0],bot,d[1]],[d[0],top,d[1]],[a[0],top,a[1]],[nx,0,nz]);
+        quad(PB,NB,IB,[a[0],top,a[1]],[d[0],top,d[1]],[d[0],top+1.0,d[1]],[a[0],top+1.0,a[1]],[nx,0,nz]);
+      }
+      // 橋脚:候補を 30m 以上離して間引く
+      for(const c of cand){
+        if(piers.some(p=>Math.hypot(p[0]-c[0],p[1]-c[1])<30)) continue;
+        piers.push([c[0],c[1],bot]);
+      }
+    }
+    if(I.length){
+      const m=new THREE.Mesh(facesGeo(P,N,I),MAT.deckOld); scene.add(m);
+      const b=new THREE.Mesh(facesGeo(PB,NB,IB),MAT.barrier); scene.add(b);
+    }
+    if(piers.length){
+      const inst=new THREE.InstancedMesh(new THREE.BoxGeometry(1,1,1),MAT.pier,piers.length);
+      const m4=new THREE.Matrix4(),q=new THREE.Quaternion(),v=new THREE.Vector3(),sc=new THREE.Vector3();
+      piers.forEach((p,i)=>{m4.compose(v.set(p[0],p[2]/2,p[1]),q,sc.set(2.0,p[2],2.0)); inst.setMatrixAt(i,m4);});
+      inst.instanceMatrix.needsUpdate=true; scene.add(inst);
+    }
+    EXPY.piers=piers;
+  }
+  /* 幹線の歩道際の街灯(夜の灯り 8b章が使う):縁を 34m ごとに。内側 0.8m が道路で、外側 1.5m が
+     どの道路でもない所(交差部の区切りの線ではなく、本当の縁) */
+  for(const R of ROADS_PL){
+    if(R.k!==1||R.sec===2) continue;
+    const Q=R.P;
+    let acc=17;
+    for(let i=0;i<Q.length;i++){
+      const a=Q[i], d=Q[(i+1)%Q.length], L=Math.hypot(d[0]-a[0],d[1]-a[1]); if(L<1e-6) continue;
+      let nx=(d[1]-a[1])/L, nz=-(d[0]-a[0])/L;
+      for(;acc<L;acc+=34){
+        const x=a[0]+(d[0]-a[0])*acc/L, z=a[1]+(d[1]-a[1])*acc/L;
+        let ix=x+nx*0.8, iz=z+nz*0.8;
+        if(polyDist(Q,ix,iz)>=0){ix=x-nx*0.8; iz=z-nz*0.8; if(polyDist(Q,ix,iz)>=0) continue;}
+        const ox=x+(x-ix)/0.8*1.5, oz=z+(z-iz)/0.8*1.5;
+        if(roadHit(ox,oz,0)) continue;
+        ROAD_LAMPS.push([ix,iz]);
+      }
+      acc-=L;
+    }
+  }
+}
+// 幹線(線路と並走:甲州街道・旧甲州街道・首都高4号)。実データがあるときは描かない
+if(!PLL){
 strip(DOM.x0-300,DOM.x1+300,60,x=>[x,.12,145],x=>[x,.12,171],MAT.roadMajor);      // 甲州街道
 strip(4200,DOM.x1+200,60,x=>[x,.12,88],x=>[x,.12,98],MAT.road);                   // 旧甲州街道
 strip(2000,6100,60,x=>[x,12,292],x=>[x,12,308],MAT.roadMajor);                    // 首都高4号新宿線(高架)
@@ -1087,9 +1240,12 @@ strip(2000,6100,60,x=>[x,12,307.4],x=>[x,13,307.4],MAT.barrier);
  for(const x of xs){const p=frame(x,300);
    m4.compose(new THREE.Vector3(p.x,6,p.z),q,new THREE.Vector3(1.6,12,1.6));inst.setMatrixAt(i++,m4);}
  scene.add(inst);}
-// 交差道路(平面図の位置)
+}
+box(18,.16,440,MAT.roadPlan,HOSHA23_X,.08,0);     // 放射23号線(井ノ頭通り・計画。実データに無いので常に描く)
+// 交差道路(平面図の位置)。実データがあるときは描かない
+if(!PLL){
 box(30,.26,560,MAT.roadMajor,KAN7_X,.13,0);       // 環七通り(既存こ道橋)
-box(18,.16,440,MAT.roadPlan,HOSHA23_X,.08,0);     // 放射23号線(井ノ頭通り・計画)
+box(20,.26,480,MAT.roadMajor,NAKANO_X,.13,0);     // 中野通り(既設高架の下)
 box(14,.24,420,MAT.road,KYU_INOKA_X,.12,0);       // (旧)井の頭通り
 box(16,.26,480,MAT.roadMajor,H154_X,.13,0);       // 補助154号線(立体化)
 box(15,.26,480,MAT.roadMajor,H128_X,.13,0);       // 補助128号線(立体化)
@@ -1100,12 +1256,26 @@ box(15,.26,480,MAT.roadMajor,H216_X,.13,0);       // 補助216号線(立体化)
 box(16,.26,500,MAT.roadMajor,H217_X,.13,0);       // 補助217号線(立体化)
 // 旧25踏切位置の一般道(高架下通り抜け)
 for(const gq of XINGS)box(6.5,.2,240,MAT.road,gq[1],.1,0);   // 高架下±120mのスタブ表現
+}
 // 生活道路グリッド(踏切以外は線路部で分断=模式)
 const NSx=[];{let x=DOM.x0+70;while(x<DOM.x1-40){NSx.push(x);x+=92+Math.random()*66;}}
 // 細街路グリッドの描画は廃止(格子状スジの解消)。街区割りNSxは建物配置にのみ使用。
 // 整備側道(付属街路)
-strip(DOM.x0+10,DECK_END,40,x=>[x,.16,-(deckHalf(x)+4.6)],x=>[x,.16,-(deckHalf(x)+1.1)],MAT.sidewalk);
-strip(DOM.x0+10,DECK_END,40,x=>[x,.16, deckHalf(x)+1.1],x=>[x,.16, deckHalf(x)+4.6],MAT.sidewalk);
+// 線路を横切る実際の道路(ROAD_XING)の所では切る(歩道の帯が交差道路の車道を横切らない)
+// 区間ごとの帯は1つのジオメトリに積む(区間ごとに Mesh にすると描画の呼び出しが区間の数だけ増える)
+{let a=DOM.x0+10; const cuts=ROAD_XING.slice().sort((p,q)=>p[0]-q[0]).concat([[DECK_END,DECK_END]]);
+ const P=[],N=[],I=[];
+ const band=(x0,x1,o0,o1)=>{const xs=[];for(let x=x0;x<x1;x+=40)xs.push(x);xs.push(x1);
+   xs.forEach((x,i)=>{const pa=frame(x,o0(x)),pb=frame(x,o1(x)),k=P.length/3;
+     P.push(pa.x,.16,pa.z,pb.x,.16,pb.z);N.push(0,1,0,0,1,0);
+     if(i<xs.length-1)I.push(k,k+1,k+2,k+1,k+3,k+2);});};
+ for(const c of cuts){ const b=Math.min(c[0],DECK_END);
+   if(b-a>2){
+     band(a,b,x=>-(deckHalf(x)+4.6),x=>-(deckHalf(x)+1.1));
+     band(a,b,x=> deckHalf(x)+1.1,x=> deckHalf(x)+4.6);
+   }
+   a=Math.max(a,c[1]+1); }
+ scene.add(new THREE.Mesh(facesGeo(P,N,I),MAT.sidewalk));}
 // 水緑・施設
 box(15,.3,460,MAT.green,JOSUI_X,.15,0,.2);        // 玉川上水(暗渠緑道)
 box(430,.6,230,M(0xb9cabf),WADA_S,.3,WADA_OFF);   // 和田堀給水所(実測中心)
@@ -1195,10 +1365,19 @@ function parSect(s,sg){
   }
   // 柱と横梁:10m間隔。高架下に道路・鉄道・河川・駅舎がある位置には立てない(ROAD_SKIP)
   const s0=Math.ceil((DOM.x0+3-5)/VIA.SPAN)*VIA.SPAN+5;
-  for(let s=s0;s<DECK_END-3;s+=VIA.SPAN){
-    if(railY(s)<=VIA.LOW) continue;                                   // 取付部は擁壁
-    if(ROAD_SKIP.some(rr=>Math.abs(s-rr[0])<rr[1])) continue;
-    const C=VIA_CH.find(q=>s>=q.s0&&s<q.s1); if(!C) continue;
+  const colOK=s=>railY(s)>VIA.LOW&&!ROAD_SKIP.some(rr=>Math.abs(s-rr[0])<rr[1]-1e-6)&&!!VIA_CH.find(q=>s>=q.s0&&s<q.s1);
+  const SL=[];
+  for(let s=s0;s<DECK_END-3;s+=VIA.SPAN) if(colOK(s)) SL.push(s);    // 取付部は擁壁・跨ぐ物の上には立てない
+  /* 広い道路(環八など)を跨いで支間が 40m を超える所は、跨ぐ物の縁(ROAD_SKIP の端)にも柱の列を立てる。
+     10m の格子のままだと、格子の位置しだいで支間が道路の幅+20m 近くまで延びる */
+  {const add=[];
+   for(let i=1;i<SL.length;i++){const a=SL[i-1],b=SL[i]; if(b-a<=40) continue;
+     for(const rr of ROAD_SKIP) for(const e of [rr[0]-rr[1],rr[0]+rr[1]])
+       if(e>a+4&&e<b-4&&colOK(e)&&!add.some(q=>Math.abs(q-e)<4)) add.push(e);}
+   for(const e of add){ for(let k=SL.length-1;k>=0;k--) if(Math.abs(SL[k]-e)<4) SL.splice(k,1); SL.push(e); }
+   SL.sort((p,q)=>p-q);}
+  for(const s of SL){
+    const C=VIA_CH.find(q=>s>=q.s0&&s<q.s1);
     const E=deckHalf(s), Ob=E-VIA.BEAM_IN, y=railY(s), yT=y-DECK_DROP, bt=viaBot(s);
     const n=Math.max(2,Math.ceil(2*Ob/9.0)+1), offs=[];   // 横梁の支間を9m以下に
     for(let k=0;k<n;k++) offs.push(-Ob+2*Ob*k/(n-1));
@@ -3153,10 +3332,18 @@ for(const gq of XINGS){
   const p=frame(gq[1],-(deckHalf(gq[1])+26));sp.position.set(p.x,14,p.z);
   sp.visible=false;xingLabels.push(sp);
 }
-tag('甲州街道(国道20号)',2300,22,158,1);
-tag('旧甲州街道',5200,18,93,1);
-tag('首都高速4号新宿線',4000,26,300,1);
+/* 実データの道路があるときは、ラベルを模式の off から最も近い実際の道路(幹線/自動車道の床版)の上へ移す */
+const realOff=(s,o0,hit)=>{ if(!PLL) return o0;
+  for(let d=0;d<=260;d+=2) for(const sg of [1,-1]){const o=o0+sg*d, f=frame(s,o); if(hit(f.x,f.z)) return o;}
+  return o0; };
+const onMajor=(x,z)=>{const l=PLR_GRID.get(Math.floor(x/PLR_CELL)+','+Math.floor(z/PLR_CELL));
+  return !!l&&l.some(R=>R.k===1&&polyDist(R.P,x,z)<0);};
+const onExpy=(x,z)=>EXPY.deck.some(D=>polyDist(D.P,x,z)<0);
+tag('甲州街道(国道20号)',2300,22,realOff(2300,158,onMajor),1);
+tag('旧甲州街道',5200,18,realOff(5200,93,onMajor),1);
+tag('首都高速4号新宿線',4000,26,realOff(4000,300,onExpy),1);
 tag('環七通り(既存こ道橋)',KAN7_X,26,300,1);
+tag('中野通り',NAKANO_X,20,260,1);
 tag('放射23号線〈井ノ頭通り〉(計画)',HOSHA23_X,30,-230,1);
 tag('(旧)井の頭通り',KYU_INOKA_X,20,-240,1);
 tag('補助154号線(立体化)',H154_X,25,250,1);
@@ -3192,16 +3379,20 @@ const keepRect =(c,hs,o,ho)=>KEEP.push({k:'r',c:c,hs:hs,o:o,ho:ho});            
 const keepDisc =(c,o,r)=>KEEP.push({k:'d',c:c,o:o,r:r});                          // 池・広場
 const keepLine =(A,hw,u0,u1)=>KEEP.push({k:'l',A:A,hw:hw,u0:u0,u1:u1});           // 交差鉄道(世界座標)
 // 交差道路(4章 box(w,...) の w/2 に路肩ぶんを足す)
-for(const r of [[KAN7_X,17],[HOSHA23_X,11],[KYU_INOKA_X,9],[H154_X,10],[H128_X,9.5],
+// 実データの道路(plateau_land.js)があるときは、模式の道路の帯ではなく道路の面そのもの(roadHit)で見る
+keepBand(HOSHA23_X,11);                         // 放射23号線(計画。実データに無い)
+if(!PLL) for(const r of [[KAN7_X,17],[NAKANO_X,11],[KYU_INOKA_X,9],[H154_X,10],[H128_X,9.5],
                 [H133_X,9.5],[H215_X,9.5],[KANPACHI_X,19],[H216_X,10],[H217_X,10]])
   keepBand(r[0],r[1]);
 keepBand(JOSUI_X,10,230);                       // 玉川上水(暗渠緑道)
 keepBand(BRIDGE.s,7,75);                        // 仙川(河川)
+if(!PLL){
 for(const gq of XINGS) keepBand(gq[1],5.5,120); // 旧踏切位置の高架下通り抜け道路
 // 並行道路(4章 strip のoff範囲)
 keepStrip(158,15,DOM.x0-300,DOM.x1+300);        // 甲州街道
 keepStrip(93,7,4200,DOM.x1+200);                // 旧甲州街道
 keepStrip(300,12,2000,6100);                    // 首都高4号新宿線(高架・橋脚)
+}
 // 施設・水面
 keepRect(WADA_S,220,WADA_OFF,120);              // 和田堀給水所
 keepDisc(WADA_S-105,WADA_OFF+22,22);keepDisc(WADA_S+115,WADA_OFF-24,24);
@@ -3211,8 +3402,10 @@ keepDisc(PLAZA_S,PLAZA_OFF,26);                 // 千歳烏山駅前広場
 keepLine(INO,15,XR.U0-10,XR.U1+10);
 keepLine(SETA,12,XR.SETA_U0-10,XR.SETA_U1+10);
 /* (s,off)に半径radの物を置けるか。高架下・側道は桁半幅から求める(桁幅を変えれば追従)。 */
-function cityFree(s,off,rad,px,pz){
+function cityFree(s,off,rad,px,pz,roadIn){       // roadIn:道路の面への食い込みを許す量[m](実データの建物)
   if(Math.abs(off)<deckHalf(s)+5.2+rad) return false;          // 高架下+側道
+  if(PLL&&px!==undefined&&roadHit(px,pz,rad-(roadIn||0))) return false;   // 実データの道路の面
+  if(PLL&&px!==undefined&&expyHit(px,pz,rad)) return false;     // 自動車道の橋脚
   for(const q of KEEP){
     if(q.k==='b'){ if(Math.abs(s-q.c)<q.hw+rad && Math.abs(off)<q.oh) return false; }
     else if(q.k==='s'){ if(Math.abs(off-q.o)<q.hw+rad && s>q.s0 && s<q.s1) return false; }
@@ -3342,7 +3535,7 @@ if(PLB){
       const a=P[i], c=P[(i+1)%P.length], m=Math.max(1,Math.ceil(Math.hypot(c[0]-a[0],c[1]-a[1])/2));
       for(let k=0;k<m&&ok;k++){
         const x=a[0]+(c[0]-a[0])*k/m, z=a[1]+(c[1]-a[1])*k/m;
-        if(!cityFree(s+(x-cx)*tx+(z-cz)*tz, off+(x-cx)*nx+(z-cz)*nz, 0.3, x, z)) ok=false;
+        if(!cityFree(s+(x-cx)*tx+(z-cz)*tz, off+(x-cx)*nx+(z-cz)*nz, 0.3, x, z, 0.6)) ok=false;   // 道路の縁に接して建つ実際の建物は残す(食い込み0.3mまで)
       }
     }
     if(!ok) continue;
@@ -3424,7 +3617,7 @@ if(PLB){
   // 出典の表示(CC BY 4.0)
   try{
     const d=document.createElement('div');
-    d.textContent='建物:'+PLB.source+'(CC BY 4.0)を加工';
+    d.textContent=(PLL?'建物・道路:':'建物:')+PLB.source+'(CC BY 4.0)を加工';
     d.style.cssText='position:fixed;right:6px;bottom:4px;font:11px sans-serif;color:#334;background:rgba(255,255,255,.7);padding:1px 6px;border-radius:4px;z-index:5;pointer-events:none';
     document.body.appendChild(d);
   }catch(e){}
@@ -3626,7 +3819,8 @@ const NIGHT=(function(){
     const pts=[];
     for(let x=DOM.x0+30;x<DECK_END-20;x+=34)
       for(const sg of[-1,1]) pts.push([x,sg*(deckHalf(x)+5.4)]);
-    for(let x=DOM.x0-200;x<DOM.x1+200;x+=46) pts.push([x,143],[x,173]);
+    if(!PLL) for(let x=DOM.x0-200;x<DOM.x1+200;x+=46) pts.push([x,143],[x,173]);   // 模式の甲州街道
+    else for(const q of ROAD_LAMPS){const r=prjXY(q[0],q[1]); pts.push([r.s,r.off]);}  // 実データの幹線の歩道際
     // 高架の上(架線柱の灯り。6b章が柱に腕を付けた位置)。前面展望で奥へ伸びる灯りの列になる
     for(const L of POLE_LAMPS) if(L.s<=DECK_END) pts.push([L.s,L.o,L.y]);
     const m4=new THREE.Matrix4(),q=new THREE.Quaternion(),sc=new THREE.Vector3(1,1,1);
@@ -5875,7 +6069,7 @@ function applyShadows(){
     o.receiveShadow=true;SHADOW_STAT.recv++;
     // 空ドームは裏面の巨大な球。影の対象に入れると世界中が影になる
     if(o===skyDome){o.castShadow=false;o.receiveShadow=false;SHADOW_STAT.recv--;return;}
-    if(o===groundMesh){o.castShadow=false;return;}
+    if(o===groundMesh||o.userData.flat){o.castShadow=false;return;}   // 地表と、地表に敷いた平らな面(道路)は受けるだけ
     // 夜の灯りは「光っている面」なので影を落とさない(落とすと灯りが黒い塊になる)
     if(o.userData.night){o.castShadow=false;o.receiveShadow=false;SHADOW_STAT.recv--;return;}
     o.castShadow=true;SHADOW_STAT.cast++;
