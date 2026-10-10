@@ -172,6 +172,17 @@ def main():
                                        ('×%s/×%s' % (m.group(1), m.group(2)) if m else '無い') + ('' if side else ' 側面×'),
                                        '-', 'OK' if ok else 'NG'))
 
+    # 8000系の前面の文字はさらに1.10倍、種別の2文字は間を空ける、スカートの切り欠きは v4 の1.2倍(利用者指示)
+    m2 = re.search(r'const K8_FRONT_TXT=([\d.]+);', src)
+    m3 = re.search(r'const K8_SKIRT_NOTCH=\[0\.36\*([\d.]+),0\.60\*([\d.]+)\]', src)
+    sp = "k[0]+'  '+k[1]" in src
+    ok = (m2 is not None and abs(float(m2.group(1)) - 1.10) < 1e-9 and m3 is not None
+          and abs(float(m3.group(1)) - 1.2) < 1e-9 and abs(float(m3.group(2)) - 1.2) < 1e-9 and sp)
+    ng += 0 if ok else 1
+    print('%-18s %14s %14s %8s  %s' % ('前面の文字・切り欠き', '×1.10・×1.2・字間',
+                                       ('×%s' % m2.group(1) if m2 else '無い') + ('/×%s' % m3.group(1) if m3 else '/無い') + ('・字間' if sp else '・字間なし'),
+                                       '-', 'OK' if ok else 'NG'))
+
     # 旧「写真転写方式」の残骸が無いこと
     dead = [s for s in ('FTEX', 'FRONT_TEX', 'FACEMAT', 'buildCarGeo', 'carColor') if s in src]
     ok = not dead

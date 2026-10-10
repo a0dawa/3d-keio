@@ -20,7 +20,9 @@ const REF = {
   FDOOR_W: 0.610,                            // 中央の非常扉の幅(公表)
   DOORX: [-7.05, -2.35, 2.35, 7.05], DOOR_W: 1.30,   // 客用扉の中心と幅(ホームドアの開口と揃う)
   WIN_PER_GAP: 2,                            // 扉間の窓の数(公表の説明:扉間に窓2枚)
-  LAMP_Z: [1.555, 1.715],                    // 前照灯・尾灯は青帯の中(前面写真の実測 reference/keio9000/ftex9.png)
+  LAMP_Z: [1.555, 1.715],
+  SKIRT_OUT: 0.93 * 1.225,                   // スカートの外端 |y|(写真の実測0.93 の1.225倍。利用者指示)
+  DEST_HALF: [0.21 * 1.15, 0.075 * 1.15],    // 行先表示板の半幅・半高(写真の実測を表示板ごと1.15倍。利用者指示)                    // 前照灯・尾灯は青帯の中(前面写真の実測 reference/keio9000/ftex9.png)
   TOL: 0.005,
 };
 
@@ -87,6 +89,14 @@ const G = X.K9GEO;
 /* ---- 3. 前頭部:中央の非常扉・表示器・車号・灯火 ---- */
 {
   const F = G.front;
+  // 明るい(アイボリーの)頂点だけを v4 座標で(スカートの板。連結器・床下の暗い箱を除く)
+  const bright = (geo) => { const P = geo.attributes.position.array, C = geo.attributes.color.array, o = [];
+    for (let i = 0; i < P.length; i += 3) if (C[i] > 0.5 && C[i + 1] > 0.5) o.push([P[i], -P[i + 2], P[i + 1]]); return o; };
+  const sk = bright(F.vc).filter((p) => p[0] > 9 && p[2] < 1.07), so = Math.max(...sk.map((p) => Math.abs(p[1])));
+  ok('スカートの幅', near(so, REF.SKIRT_OUT, 0.003), '外端|y| ' + REF.SKIRT_OUT.toFixed(3) + 'm', so.toFixed(3) + 'm');
+  { const d = v4pts(F.dest), y = range(d, 1), z = range(d, 2);
+    ok('行先表示板の大きさ', near((y[1] - y[0]) / 2, REF.DEST_HALF[0], 0.002) && near((z[1] - z[0]) / 2, REF.DEST_HALF[1], 0.002),
+      '半幅' + REF.DEST_HALF[0].toFixed(3) + '・半高' + REF.DEST_HALF[1].toFixed(4), '半幅' + ((y[1] - y[0]) / 2).toFixed(3) + '・半高' + ((z[1] - z[0]) / 2).toFixed(4)); }
   // 非常扉の縁(ガラス域の中の縦の枠):前面の部品のうち高さ1m を超える細長い三角形が縦の枠
   const all = v4pts(F.vc), vc = [];
   for (let i = 0; i + 2 < all.length; i += 3) {

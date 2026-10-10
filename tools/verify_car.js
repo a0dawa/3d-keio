@@ -157,6 +157,21 @@ const range = (pts, k) => { let lo = 1e9, hi = -1e9; for (const p of pts) { if (
   }
 }
 
+/* ---- 3b. 前面のスカートの切り欠き(利用者指示:スカートの大きさは v4 のまま、切り欠きを v4 の1.2倍) ----
+   v4:スカートは上端1.09・下端0.24、切り欠きは |y|<0.36・上から6割。→ 半幅0.432・深さ0.612(下端 z=0.478) */
+{
+  // 明るい(アイボリーの)頂点だけを v4 座標で(スカートの板。連結器・床下の暗い箱を除く)
+  const bright = (geo) => { const P = geo.attributes.position.array, C = geo.attributes.color.array, o = [];
+    for (let i = 0; i < P.length; i += 3) if (C[i] > 0.5 && C[i + 1] > 0.5) o.push([P[i], -P[i + 2], P[i + 1]]); return o; };
+  const sk = bright(X.K8GEO.front.vc).filter((p) => p[0] > 9 && p[2] < 1.1);
+  const topRow = sk.filter((p) => Math.abs(p[2] - 1.09) < 1e-4), hwN = Math.min(...topRow.map((p) => Math.abs(p[1])));
+  const inN = sk.filter((p) => Math.abs(p[1]) < hwN - 1e-4), zN = inN.length ? Math.max(...inN.map((p) => p[2])) : 0;
+  const outer = Math.max(...sk.map((p) => Math.abs(p[1]))), zb = Math.min(...sk.map((p) => p[2]));
+  ok('スカートの切り欠き', near(hwN, 0.36 * 1.2, 0.002) && near(zN, 1.09 - 0.6 * 1.2 * 0.85, 0.01),
+    '半幅0.432・下端z0.478(v4×1.2)', '半幅' + hwN.toFixed(3) + '・下端z' + zN.toFixed(3));
+  ok('スカートの大きさ(v4 のまま)', near(zb, 0.24, 0.002) && outer > 1.15 && outer < 1.30, '下端0.24・外端1.2前後', '下端' + zb.toFixed(3) + '・外端' + outer.toFixed(3));
+}
+
 /* ---- 4. 冷房装置・パンタグラフ ----------------------------------------------- */
 {
   const ac = v4pts(X.K8GEO.ac);

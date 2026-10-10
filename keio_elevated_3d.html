@@ -4714,10 +4714,23 @@ function k8NumPlate(num){
 /* LED表示器(黒地に発光の文字)。文字の枠は表示器の幅・高さに対する割合 K8_LED_TXT(利用者指示で v4 の 0.86・0.70 から
    15%大きく)。画像の縦横比は貼る面と同じにすること(違うと文字が縦長・横長に伸びる。9000系の種別で起きた) */
 const K8_LED_TXT=[0.86*1.15,0.70*1.15];
-function k8Led(txt,color,w,h,kind){
-  return k8Tex('led'+txt+color+w+'x'+h,w,h,function(cx){
+const K8_SKIRT_NOTCH=[0.36*1.2,0.60*1.2];  // 8000系のスカートの切り欠き:半幅・上端からの深さの割合(v4 の1.2倍。利用者指示)
+const K8_FRONT_TXT=1.10;                   // 8000系の前面の行先・種別はさらに10%大きく(利用者指示)
+// 種別の表記:2文字は間を空ける(「特  急」「各  停」。利用者指示)。色は元の種別名で引く
+function k8KindTxt(k){ return (k&&k.length===2)?k[0]+'  '+k[1]:k; }
+/* s>1 は文字の高さを s 倍に(幅が表示器に収まらないときは、高さを保ったまま横を詰める) */
+function k8Led(txt,color,w,h,s){
+  s=s||1;
+  return k8Tex('led'+txt+color+w+'x'+h+'s'+s,w,h,function(cx){
     cx.fillStyle='#030304';cx.fillRect(0,0,w,h);
-    cx.fillStyle=color;k8fitText(cx,txt,w/2,h/2,w*Math.min(.99,K8_LED_TXT[0]),h*K8_LED_TXT[1],'bold '+h+'px '+K8_FONT);
+    cx.fillStyle=color;
+    const W=w*Math.min(.99,K8_LED_TXT[0]), H=h*K8_LED_TXT[1], font='bold '+h+'px '+K8_FONT;
+    if(s===1){ k8fitText(cx,txt,w/2,h/2,W,H,font); return; }
+    cx.save(); cx.font=font;
+    const m=cx.measureText(txt), l=m.actualBoundingBoxLeft||0, r=m.actualBoundingBoxRight||m.width||1;
+    const a=m.actualBoundingBoxAscent||h*0.75, d=m.actualBoundingBoxDescent||0, bw=(r+l)||1, bh=(a+d)||1;
+    const k=Math.min(W/bw,H/bh), sy=Math.min(k*s,h*0.96/bh), sx=Math.min(sy,w*.99/bw);
+    cx.translate(w/2,h/2); cx.scale(sx,sy); cx.fillText(txt,-(r-l)/2,(a-d)/2); cx.restore();
   });
 }
 // 側面の表示器:外から見て左に種別、右に行先(v4 side_fittings)。文字の枠は v4 の値から15%大きく、行先を少し右へ
@@ -4726,14 +4739,15 @@ function k8SideLed(kind,dest,w,h){
   return k8Tex('sled'+kind+dest+w+'x'+h,w,h,function(cx,w,h){
     cx.fillStyle='#030304';cx.fillRect(0,0,w,h);
     cx.fillStyle=K8_KIND_COLORS[kind]||'#ff2e14';
-    k8fitText(cx,kind,w*0.155,h/2,w*0.22*1.15,h*0.70*1.15,'bold 64px '+K8_FONT);
+    k8fitText(cx,k8KindTxt(kind),w*0.155,h/2,w*0.22*1.15,h*0.70*1.15,'bold 64px '+K8_FONT);
     cx.fillStyle='#ff8c14';
     k8fitText(cx,dest,w*0.645,h/2,w*0.62*1.15,h*0.62*1.15,'bold 64px '+K8_FONT);
   });
 }
-function k8FrontNum(num,w,h){
+function k8FrontNum(num,w,h,keep){          // keep=字形の縦横比を保つ(枠いっぱいに引き伸ばさない)
   w=w||128; h=h||32;
-  return k8Tex('fnum'+num+w+'x'+h,w,h,function(cx,w,h){
+  return k8Tex('fnum'+num+w+'x'+h+(keep?'k':''),w,h,function(cx,w,h){
+    if(keep){ cx.fillStyle='#f2f2ef'; k8fitText(cx,num,w/2,h/2,w*.98,h*.92,'bold 32px Arial,sans-serif',0,false); return; }
     cx.fillStyle='#f2f2ef';k8fitText(cx,num,w/2,h/2,w,h,'bold 32px Arial,sans-serif',0,true);
   });
 }
@@ -4844,16 +4858,18 @@ function k8FrontGeos(){
       B.cyl(P(sg*.87,1.75,.025),P(sg*.70,1.94,.025),.012,6,K8C.black);
       B.cyl(P(sg*.70,1.93,.03),P(sg*.12,1.90,.03),.008,5,K8C.black);
     }
-    // スカート(アイボリー):上端1.09、下ほど前へ。中央に連結器の切り欠き(|y|<0.36)
-    const Cn=28, top=[], bot=[];
-    for(let c=0;c<=Cn;c++){
-      const s=-1+2*c/Cn, y=s*(hw-.12), xt=k8nose(1.0,y/hw,hw)-.02;
-      top.push([xt,y,1.09]); bot.push([xt+.06,y*.96,.24]);
-    }
+    /* スカート(アイボリー):上端1.09、下ほど前へ。中央に連結器の切り欠き。切り欠きは v4(|y|<0.36・上から6割)を
+       幅・高さとも1.2倍(利用者指示:スカートの大きさはそのまま)。切り欠きの縁にも列を置いて寸法どおりに切る */
+    const NOTCH=K8_SKIRT_NOTCH, ys=[];
+    for(let c=0;c<=28;c++) ys.push((-1+2*c/28)*(hw-.12));
+    ys.push(-NOTCH[0],NOTCH[0]); ys.sort((a,b)=>a-b);
+    const top=[], bot=[];
+    for(const y of ys){ const xt=k8nose(1.0,y/hw,hw)-.02; top.push([xt,y,1.09]); bot.push([xt+.06,y*.96,.24]); }
+    const Cn=ys.length-1;
     const lerp=(a,b,t)=>[a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t,a[2]+(b[2]-a[2])*t];
     for(let c=0;c<Cn;c++){
-      const yc=Math.abs((-1+2*(c+.5)/Cn)*(hw-.12));
-      if(yc<.36) B.quad(lerp(top[c],bot[c],.6),bot[c],bot[c+1],lerp(top[c+1],bot[c+1],.6),K8C.ivory);
+      const yc=Math.abs((ys[c]+ys[c+1])/2);
+      if(yc<NOTCH[0]) B.quad(lerp(top[c],bot[c],NOTCH[1]),bot[c],bot[c+1],lerp(top[c+1],bot[c+1],NOTCH[1]),K8C.ivory);
       else B.quad(top[c],bot[c],bot[c+1],top[c+1],K8C.ivory);
     }
     for(const sg of[-1,1]){                                // スカートの側板
@@ -5124,13 +5140,13 @@ const K9={
   FDWIN:[0.19,2.13,2.913],               // 中央扉の窓 半幅 / z 下端・上端
   FDOOR:[0.26,0.35,1.29,3.06],           // 扉の戸の半幅・枠の外縁(枠のアイボリーで帯が切れる) / z 下端・上端
   FLAMP:[0.57,1.00,1.565,1.71],          // 灯火のケース(青帯の中)。内=前照灯 0.61〜0.78・外=尾灯 0.83〜0.99
-  FDEST:[-0.21,0.21,3.205,3.355],        // 行先表示器(扉の上)
+  FDEST:[-0.21*1.15,0.21*1.15,3.28-0.075*1.15,3.28+0.075*1.15],   // 行先表示器(扉の上)。写真の実測(|y|≤0.21・z3.205〜3.355)を表示板ごと1.15倍(利用者指示)
   FKIND:[-0.89,-0.51,3.14,3.34],         // 種別表示器(向かって左の窓の上部、ガラスの内)
   FNUM:[0.58,0.92,3.10,3.23],            // 車号(向かって右の窓の上部、ガラスの内に白い数字)
   FLOGO:[0.71,1.00,1.80,1.93],           // KEIO ロゴ(向かって右の赤帯の上に白)
   FANTI:[0.43,1.00,1.105,1.19],          // アンチクライマーの板
   FBOT:1.10, FCPL:0.29,                  // 前面の下端 / 連結器まわりの開口の半幅(扉の下〜)
-  SKIRT:[0.55,0.93,0.37,1.06,0.55],      // スカート:脇の板 |y| 0.55〜0.93・z 0.37〜1.06、中央の前掛け z 0.37〜0.55
+  SKIRT:[0.55*1.225,0.93*1.225,0.37,1.06,0.55],   // スカート:脇の板 |y|・z 0.37〜1.06、中央の前掛け z 0.37〜0.55。幅は写真の実測(0.55〜0.93)の1.225倍(利用者指示)
   NOSE_R:10.0, FDOOR_HW:0.305,           // 前面の平面の半径(公表10,000mm)/中央の非常扉の半幅(公表610mm)
   BOGIE_X:6.88, WHEEL:0.43,              // 台車中心(8000系と同じとする)・車輪半径
   AC_L:4.20, AC_TOP:4.017,               // 冷房装置の長さ(推定)・上端(公表)
@@ -5504,8 +5520,8 @@ function makeCar(opt){
     // 画像の縦横比は貼る面(K9.FDEST・FKIND・FNUM)と同じに(1m=640px)
     const px=(R)=>[Math.round((R[1]-R[0])*640),Math.round((R[3]-R[2])*640)];
     addFine(F.dest,lit?k8Led(o.sign.dest,'#ff8c14',...px(K9.FDEST)):K8M.ledOff,sh);
-    addFine(F.kind,lit?k8Led(o.sign.kind,K8_KIND_COLORS[o.sign.kind]||'#ff2e14',...px(K9.FKIND)):K8M.ledOff,sh);
-    addFine(F.num,k8FrontNum(o.num,...px(K9.FNUM)),sh);
+    addFine(F.kind,lit?k8Led(k8KindTxt(o.sign.kind),K8_KIND_COLORS[o.sign.kind]||'#ff2e14',...px(K9.FKIND)):K8M.ledOff,sh);
+    addFine(F.num,k8FrontNum(o.num,...px(K9.FNUM),true),sh);   // 字形のまま(引き伸ばさない)
     addFine(F.logo,k9LogoW(256,96),sh);
   }
   if(cab&&!S9){
@@ -5517,8 +5533,8 @@ function makeCar(opt){
     if(o.lights==='head') addFine(F.hlGlow,K8M.hlGlow,sh);
     if(o.lights==='tail') addFine(F.tlGlow,K8M.tlGlow,sh);
     const lit=o.sign&&o.lights==='head';                       // 表示は先頭車だけ点く
-    addFine(F.dest,lit?k8Led(o.sign.dest,'#ff8c14',256,68):K8M.ledOff,sh);
-    addFine(F.kind,lit?k8Led(o.sign.kind,K8_KIND_COLORS[o.sign.kind]||'#ff2e14',192,68):K8M.ledOff,sh);
+    addFine(F.dest,lit?k8Led(o.sign.dest,'#ff8c14',256,68,K8_FRONT_TXT):K8M.ledOff,sh);
+    addFine(F.kind,lit?k8Led(k8KindTxt(o.sign.kind),K8_KIND_COLORS[o.sign.kind]||'#ff2e14',192,68,K8_FRONT_TXT):K8M.ledOff,sh);
     addFine(F.num,k8FrontNum(o.num),sh);
     addFine(F.logo,k8Logo(256,40),sh);
   }

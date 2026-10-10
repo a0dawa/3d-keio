@@ -166,12 +166,18 @@ function findChromium() {
     // 種別は黒地に明るい文字(各停は白)。黒地が半分以上で、明るい文字が30画素以上
     const nk = count(REF.KIND, (c) => Math.max(...c) > 150), nkD = count(REF.KIND, (c) => c[0] + c[1] + c[2] < 40);
     ok('前面:種別表示器は向かって左の窓の上部', nk > 30 && nkD > nk, '黒地に明るい文字>30画素', nk + '画素(黒地' + nkD + ')');
-    // 種別「各停」(2文字)の文字の外接矩形の幅/高さ ≈ 2(画像と面の縦横比が違うと縦長になる。以前は約1.1)
-    { let y0 = 1e9, y1 = -1e9, z0 = 1e9, z1 = -1e9;
-      for (let y = REF.KIND[0]; y <= REF.KIND[1]; y += 1 / 150) for (let z = REF.KIND[2]; z <= REF.KIND[3]; z += 1 / 150)
-        if (Math.max(...F(y, z)) > 150) { y0 = Math.min(y0, y); y1 = Math.max(y1, y); z0 = Math.min(z0, z); z1 = Math.max(z1, z); }
-      const ar = (y1 - y0) / Math.max(1e-6, z1 - z0);
-      ok('前面:種別の文字の縦横比', ar >= 1.6 && ar <= 2.6, '幅/高さ 1.6〜2.6(2文字)', ar.toFixed(2) + '(高さ' + (z1 - z0).toFixed(3) + 'm)'); }
+    // 種別「各  停」(2文字の間を空ける。利用者指示):外接矩形の幅/高さ 2.2〜3.4、中央の2割に文字が無い(字間)。
+    // 画像と面の縦横比が違うと縦長になる(以前は約1.1)
+    { const bb = (R, th) => { let y0 = 1e9, y1 = -1e9, z0 = 1e9, z1 = -1e9;
+        for (let y = R[0]; y <= R[1]; y += 1 / 150) for (let z = R[2]; z <= R[3]; z += 1 / 150)
+          if (th(F(y, z))) { y0 = Math.min(y0, y); y1 = Math.max(y1, y); z0 = Math.min(z0, z); z1 = Math.max(z1, z); }
+        return [y0, y1, z0, z1]; };
+      const k = bb(REF.KIND, (c) => Math.max(...c) > 150), ar = (k[1] - k[0]) / Math.max(1e-6, k[3] - k[2]);
+      const cm = (k[0] + k[1]) / 2, gap = count([cm - 0.1 * (k[1] - k[0]), cm + 0.1 * (k[1] - k[0]), k[2], k[3]], (c) => Math.max(...c) > 150);
+      ok('前面:種別の文字の縦横比と字間', ar >= 2.2 && ar <= 3.4 && gap === 0, '幅/高さ 2.2〜3.4・中央の2割は空き', ar.toFixed(2) + '・中央' + gap + '画素(高さ' + (k[3] - k[2]).toFixed(3) + 'm)');
+      // 車号「9781」:字形のまま(Arial 太字の4桁で 幅/高さ ≈3)。枠いっぱいに引き伸ばすと約2.6 の縦長になる
+      const n = bb(REF.NUM, (c) => c[0] > 200 && c[1] > 200 && c[2] > 200), an = (n[1] - n[0]) / Math.max(1e-6, n[3] - n[2]);
+      ok('前面:車号の縦横比', an >= 2.8 && an <= 3.6, '幅/高さ 2.8〜3.6', an.toFixed(2)); }
     const lgW = count(REF.LOGO, (c) => c[0] > 200 && c[1] > 200 && c[2] > 190), lgL = count([-REF.LOGO[1], -REF.LOGO[0], REF.LOGO[2], REF.LOGO[3]], (c) => c[0] > 200 && c[1] > 200 && c[2] > 190);
     ok('前面:KEIO ロゴは向かって右の赤帯', lgW > 20 && lgL < 3, '右に白>20画素・左に無し', lgW + '/' + lgL + '画素');
     const nn = count(REF.NUM, (c) => c[0] > 200 && c[1] > 200 && c[2] > 200);
