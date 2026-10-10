@@ -11,14 +11,15 @@
 const path = process.argv[2] || 'keio_elevated_3d.html';
 const X = require('./stub_three')(path,
   'CITY:CITY,deckHalf:deckHalf,DOM:DOM,INO:INO,SETA:SETA,XR:XR,K8:K8,' +
-  'KAN7_X:KAN7_X,HOSHA23_X:HOSHA23_X,KYU_INOKA_X:KYU_INOKA_X,H154_X:H154_X,H128_X:H128_X,' +
+  'KAN7_X:KAN7_X,NAKANO_X:NAKANO_X,HOSHA23_X:HOSHA23_X,KYU_INOKA_X:KYU_INOKA_X,H154_X:H154_X,H128_X:H128_X,' +
   'H133_X:H133_X,H215_X:H215_X,KANPACHI_X:KANPACHI_X,H216_X:H216_X,H217_X:H217_X,' +
   'JOSUI_X:JOSUI_X,BRIDGE:BRIDGE,XINGS:XINGS,WADA_S:WADA_S,WADA_OFF:WADA_OFF,' +
   'PLAZA_S:PLAZA_S,PLAZA_OFF:PLAZA_OFF,SUBK:SUBK,SUBC:SUBC,' +
   'stepXRail:stepXRail,inoTrains:inoTrains,setaCars:setaCars,LAT0:LAT0,MLAT:MLAT,' +
   'SETA_LO:SETA_LO,SETA_HI:SETA_HI,SETA_CARS:SETA_CARS,SETA_PITCH:SETA_PITCH,' +
   'XCAR:XCAR,K8GEO:K8GEO,XM_WHL:XM_WHL,' +
-  'GAUGE_INO:GAUGE_INO,GAUGE_SETA:GAUGE_SETA,RAIL_W:RAIL_W,prjXY:prjXY,frame:frame');
+  'GAUGE_INO:GAUGE_INO,GAUGE_SETA:GAUGE_SETA,RAIL_W:RAIL_W,prjXY:prjXY,frame:frame,' +
+  'VIA_COLS:VIA_COLS,EXPY:EXPY,railY:railY,DECK_END:DECK_END,ROADS_PL:ROADS_PL');
 
 /* ---- 期待値(検証側が独立して持つ) ----------------------------------------
    道路の幅は4章の描画寸法(box の第1引数)。ここでは"路面の半幅"だけを持ち、
@@ -31,10 +32,15 @@ const REF = {
   XRAIL_HALF: { 井の頭線: 11.0, 世田谷線: 7.5 },
   GAP: 0.0,                 // 物同士は外接円が重ならなければよい(接触=NG)
   // [s位置, 路面の半幅[m], offの半長([m]。省略=全幅)]
-  CROSS: [['環七', 'KAN7_X', 15], ['放射23', 'HOSHA23_X', 9], ['旧井の頭', 'KYU_INOKA_X', 7],
-  ['補助154', 'H154_X', 8], ['補助128', 'H128_X', 7.5], ['補助133', 'H133_X', 7.5],
-  ['補助215', 'H215_X', 7.5], ['環八', 'KANPACHI_X', 17], ['補助216', 'H216_X', 8],
-  ['補助217', 'H217_X', 8], ['玉川上水', 'JOSUI_X', 7.5, 230]],
+  CROSS: [['環七', 'KAN7_X', 15], ['中野通り', 'NAKANO_X', 10], ['放射23', 'HOSHA23_X', 9], ['旧井の頭', 'KYU_INOKA_X', 7],
+  ['補助154', 'H154_X', 8, undefined, '計画'], ['補助128', 'H128_X', 7.5, undefined, '計画'], ['補助133', 'H133_X', 7.5, undefined, '計画'],
+  ['補助215', 'H215_X', 7.5, undefined, '計画'], ['環八', 'KANPACHI_X', 17], ['補助216', 'H216_X', 8, undefined, '計画'],
+  ['補助217', 'H217_X', 8, undefined, '計画'], ['玉川上水', 'JOSUI_X', 7.5, 230]],
+  // 実データの道路(plateau_land.js)があるときの基準。建物は道路の縁に接して建つので、食い込み 0.3m までは許す
+  ROAD_BLDG_IN: 0.3,
+  XING_MIN: 3,              // 線路を横切る道路とみなす長さ[m](中心と桁の両端が道路の上に続く)
+  XING_COL_CLEAR: 1.0,      // 横切る道路の縁から柱の中心までの最小[m](柱の半幅0.5+余裕)
+  EXPY_CLEAR: 7.0,          // 自動車道の床版の下面とレール面の最小の差[m](架線の上)
   RIVER_HALF: 4.5,          // 仙川(河川)の半幅[m]
   RIVER_OFF: 75,
   POND: [[-105, 22, 19], [115, -24, 21]],   // 和田堀給水所の池 [WADA_Sからのs, off, 半径]
@@ -88,6 +94,42 @@ function polyDist(P, x, z) {
   }
   return inside ? -d : d;
 }
+/* 実データの道路(plateau_land.js)。検証側で独自に読む(モデルの登録簿ではなくファイルそのもの) */
+const LAND = (() => {
+  const fs = require('fs'), pth = require('path');
+  const f = pth.join(pth.dirname(path), 'plateau_land.js');
+  const html = fs.readFileSync(path, 'utf8');
+  if (!html.includes('<script src="plateau_land.js">') || !fs.existsSync(f)) return null;
+  const g = {}; new Function('globalThis', fs.readFileSync(f, 'utf8'))(g);
+  const b = Buffer.from(g.PLATEAU_LAND.road64, 'base64');
+  if (b.toString('latin1', 0, 4) !== 'PLR1') throw new Error('道路データの形式');
+  const N = b.readUInt32LE(4), out = []; let o = 8;
+  for (let n = 0; n < N; n++) {
+    const k = b.readUInt8(o), sec = b.readUInt8(o + 1), nv = b.readUInt16LE(o + 2); o += 4;
+    let x = b.readInt32LE(o), z = b.readInt32LE(o + 4); o += 8;
+    const P = [[x / 10, z / 10]];
+    for (let i = 1; i < nv; i++) { x += b.readInt16LE(o); z += b.readInt16LE(o + 2); o += 4; P.push([x / 10, z / 10]); }
+    let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9;
+    for (const v of P) { x0 = Math.min(x0, v[0]); x1 = Math.max(x1, v[0]); z0 = Math.min(z0, v[1]); z1 = Math.max(z1, v[1]); }
+    out.push({ k: k, sec: sec, P: P, bb: [x0, x1, z0, z1] });
+  }
+  const C = 30, grid = new Map();
+  for (const R of out) {
+    if (R.k === 2 && R.sec === 2) continue;          // 高架の自動車道は地表の道路ではない
+    for (let a = Math.floor(R.bb[0] / C); a <= Math.floor(R.bb[1] / C); a++)
+      for (let c = Math.floor(R.bb[2] / C); c <= Math.floor(R.bb[3] / C); c++) {
+        const kk = a + ',' + c; let l = grid.get(kk); if (!l) { l = []; grid.set(kk, l); } l.push(R);
+      }
+  }
+  // 点の、最も深く入っている道路の面までの距離(内側なら負)
+  const depth = (x, z) => {
+    let d = 1e9;
+    for (const R of grid.get(Math.floor(x / C) + ',' + Math.floor(z / C)) || [])
+      if (x > R.bb[0] - 5 && x < R.bb[1] + 5 && z > R.bb[2] - 5 && z < R.bb[3] + 5) d = Math.min(d, polyDist(R.P, x, z));
+    return d;
+  };
+  return { roads: out, depth: depth, elev: out.filter((R) => R.k === 2 && R.sec === 2) };
+})();
 const ALL = B.map((o) => ({ o: o, kind: '建物' })).concat(T.map((o) => ({ o: o, kind: '樹木' })));
 
 /* ---- 1. 数 ---------------------------------------------------------------- */
@@ -132,6 +174,8 @@ ok('樹木の数', T.length >= REF.MIN_TREES, '≥' + REF.MIN_TREES + '本', T.l
 {
   let bad = null;
   for (const c of REF.CROSS) {
+    // 実データの道路があるときは、道路は「実際の道路の上に無い」で見る。ここは模式のまま描く物(計画の放射23・玉川上水)だけ
+    if (LAND && !['放射23', '玉川上水'].includes(c[0])) continue;
     const cs = X[c[1]], hw = c[2], oh = c[3] === undefined ? 1e9 : c[3];
     for (const e of ALL) for (const q of pts(e.o)) {
       if (Math.abs(q.off) > oh) continue;
@@ -139,18 +183,18 @@ ok('樹木の数', T.length >= REF.MIN_TREES, '≥' + REF.MIN_TREES + '本', T.l
         bad = [c[0], e.kind, 's=' + q.s.toFixed(0), 'off=' + q.off.toFixed(0)];
     }
   }
-  ok('交差道路の上に無い', bad === null, REF.CROSS.length + '路線すべて',
+  ok('交差道路の上に無い', bad === null, LAND ? '放射23・玉川上水(他は実データ)' : REF.CROSS.length + '路線すべて',
     bad ? bad.join(' ') : ALL.length + '件すべて');
 
   let bp = null;
-  for (const c of REF.PARA) {
+  for (const c of (LAND ? [] : REF.PARA)) {         // 実データがあるときは下の「実際の道路の上に無い」で見る
     for (const e of ALL) for (const q of pts(e.o)) {
       if (q.s < c[3] || q.s > c[4]) continue;
       if (Math.abs(q.off - c[1]) - q.r < c[2] && !bp)
         bp = [c[0], e.kind, 's=' + q.s.toFixed(0), 'off=' + q.off.toFixed(1)];
     }
   }
-  ok('並行道路の上に無い', bp === null, REF.PARA.length + '路線すべて',
+  ok('並行道路の上に無い', bp === null, LAND ? '実データの道路で見る' : REF.PARA.length + '路線すべて',
     bp ? bp.join(' ') : ALL.length + '件すべて');
 
   let br = null;
@@ -164,6 +208,66 @@ ok('樹木の数', T.length >= REF.MIN_TREES, '≥' + REF.MIN_TREES + '本', T.l
     }
   }
   ok('河川・池の上に無い', br === null, '仙川+池2面', br ? br.join(' ') : ALL.length + '件すべて');
+}
+
+/* ---- 4b. 実データの道路(plateau_land.js があるとき) ------------------------
+   ・建物・樹木が道路の上に無い(建物は道路の縁に接して建つので 0.3m の食い込みまで)
+   ・京王線を横切る道路(中心と桁の両端が道路の上に続く所)に高架の柱が立っていない
+     (模式の道路の位置 RAW.roads・XINGS と実際がずれていても、実際の道路の上には立てない)
+   ・自動車道の高架(首都高・中央道)の床版の下面が、京王線の上ではレール面+7.0m 以上。橋脚は高架下・側道に無い */
+if (LAND) {
+  let bad = null, worst = 1e9;
+  for (const e of ALL) for (const q of pts(e.o)) {
+    const d = LAND.depth(q.x, q.z), lim = POLY(e.o) ? -REF.ROAD_BLDG_IN : q.r;
+    if (d - lim < worst) worst = d - lim;
+    if (d < lim && !bad) bad = [e.kind, '(' + q.x.toFixed(0) + ',' + q.z.toFixed(0) + ')', '道路の面まで' + d.toFixed(2) + 'm'];
+  }
+  ok('実際の道路の上に無い', bad === null, '建物は食い込み≤' + REF.ROAD_BLDG_IN + 'm・樹木は半径ぶん離れる',
+    bad ? bad.join(' ') : ALL.length + '件すべて(余裕' + worst.toFixed(2) + 'm)');
+
+  // 京王線を横切る道路を検証側で見つける
+  const xing = []; let a = null;
+  for (let s = Math.floor(X.DOM.x0); s <= X.DECK_END + 1; s++) {
+    const dh = X.deckHalf(s);
+    const on = [0, -dh, dh].every((o) => { const f = X.frame(s, o); return LAND.depth(f.x, f.z) < 0; });
+    if (on) { if (a === null) a = s; } else if (a !== null) { if (s - a >= REF.XING_MIN) xing.push([a, s - 1]); a = null; }
+  }
+  let bc = null, nc = 0;
+  for (const c of X.VIA_COLS) {
+    if (!xing.some((r) => c.s > r[0] - 10 && c.s < r[1] + 10)) continue;
+    for (const o of c.offs) {
+      const f = X.frame(c.s, o), d = LAND.depth(f.x, f.z);
+      nc++;
+      if (d < REF.XING_COL_CLEAR && xing.some((r) => c.s > r[0] - REF.XING_COL_CLEAR && c.s < r[1] + REF.XING_COL_CLEAR) && !bc)
+        bc = ['s=' + c.s.toFixed(0), 'off=' + o.toFixed(1), '道路の縁まで' + d.toFixed(2) + 'm'];
+    }
+  }
+  ok('横切る道路に柱が無い', bc === null && xing.length >= 20, '横切る道路≥20か所・柱は縁から' + REF.XING_COL_CLEAR + 'm',
+    bc ? bc.join(' ') : xing.length + 'か所・近くの柱' + nc + '本');
+
+  // 自動車道の高架
+  let be = null, ne = 0;
+  for (let s = Math.floor(X.DOM.x0); s <= X.DECK_END; s += 2) {
+    const dh = X.deckHalf(s);
+    for (const o of [0, -dh, dh]) {
+      const f = X.frame(s, o);
+      if (!LAND.elev.some((R) => polyDist(R.P, f.x, f.z) < 0)) continue;
+      ne++;
+      // 描かれた床版(登録簿)のうち、この点の上にある物の下面
+      let bot = 1e9;
+      for (const D of X.EXPY.deck) if (polyDist(D.P, f.x, f.z) < 0) bot = Math.min(bot, D.bot);
+      if (!(bot - X.railY(s) >= REF.EXPY_CLEAR) && !be)
+        be = ['s=' + s, '下面' + (bot > 1e8 ? 'なし' : bot.toFixed(1)), 'レール面' + X.railY(s).toFixed(1)];
+    }
+  }
+  for (const pr of X.EXPY.piers) {
+    const q = X.prjXY(pr[0], pr[1]);
+    if (q.s > X.DOM.x0 - 50 && q.s < X.DECK_END + 50 && Math.abs(q.off) < X.deckHalf(q.s) + REF.DECK_CLEAR + 1.0 && !be)
+      be = ['橋脚が高架下・側道に', 's=' + q.s.toFixed(0), 'off=' + q.off.toFixed(1)];
+  }
+  ok('自動車道の高架が京王線と当たらない', be === null && X.EXPY.deck.length === LAND.elev.filter((R) => R.P.some((v) => { const q = X.prjXY(v[0], v[1]); return q.s > X.DOM.x0 - 150 && q.s < X.DOM.x1 + 150 && Math.abs(q.off) < X.DOM.z + 60; })).length,
+    '下面≥レール面+' + REF.EXPY_CLEAR + 'm・橋脚は側道の外',
+    be ? be.join(' ') : '床版' + X.EXPY.deck.length + '面・重なる点' + ne + '・橋脚' + X.EXPY.piers.length + '基');
 }
 
 /* ---- 5. 建物・樹木どうしが重ならない ------------------------------------- */
