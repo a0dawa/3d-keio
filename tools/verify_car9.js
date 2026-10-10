@@ -148,6 +148,16 @@ const G = X.K9GEO;
     '前照灯の外端≤尾灯の内端', range(hl.map((p) => [Math.abs(p[1])]), 0)[1].toFixed(2) + ' ≤ ' + range(tl.map((p) => [Math.abs(p[1])]), 0)[0].toFixed(2));
 }
 
+/* ---- 3b. 乗務員扉の手すりは埋め込み式(利用者指示:正面から見えない)。運転台の細部に車体幅の外へ出る頂点が無く、
+   扉の前後(u 9.069・8.46)にくぼみがあること ---- */
+{
+  const D = v4pts(G.detailCab).filter((p) => p[0] > 8.2 && p[0] < 9.4 && p[2] > 1.0 && p[2] < 2.75);
+  const out = D.filter((p) => Math.abs(p[1]) > REF.HWB + 0.008);
+  const near = (u) => D.some((p) => Math.abs(p[0] - u) < 0.05 && Math.abs(Math.abs(p[1]) - REF.HWB) < 0.006);
+  ok('乗務員扉の手すりは埋め込み', out.length === 0 && near(9.069) && near(8.46), '車体幅+8mm の外に出ない・扉の前後にくぼみ',
+    out.length ? '外へ ' + (Math.max(...out.map((p) => Math.abs(p[1]))) - REF.HWB).toFixed(3) + 'm 出る' : (near(9.069) && near(8.46) ? '張り出しなし' : 'くぼみが無い'));
+}
+
 /* ---- 4. パンタグラフ(PT-7110):屋根の上に載り、すり板がトロリ線に接する ---- */
 {
   const base = v4pts(G.panto.base), shoe = v4pts(G.panto.shoe);

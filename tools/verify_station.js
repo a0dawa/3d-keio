@@ -213,6 +213,29 @@ const STA_TAGS = new Set(['ホーム', '点字ブロック', 'ホーム端の柵
       q.o0 <= w.o0 && q.o1 >= w.o1) && !badUp) badUp = [w.st.n, '上った先に橋上駅舎が無い'];
   }
   ok('地上駅の階段は橋上駅舎へ上がる', badUp === null && nUp > 0, '地上駅=上り・高架駅=下り', badUp ? badUp.join(' ') : '上り' + nUp + 'か所');
+  /* 高架駅の階段は高架下の駅舎へ降りる:井戸の奥(降りた先=桁の下へ続く端)と、エレベーターが駅舎(登録簿 '駅舎')の
+     s の範囲に入ること。駅舎が駅の中心に無い駅(下高井戸=西端部)で、階段だけ中ほどに残る誤りを見る */
+  let badIn = null, nIn = 0;
+  // 登録簿は掃引を6m 以下の区間に分けて残すので、つながった区間を1つの範囲にまとめてから見る
+  const spans = (L) => { const S = L.map((q) => [q.s0, q.s1]).sort((u, v) => u[0] - v[0]), out = [];
+    for (const q of S) { if (out.length && q[0] <= out[out.length - 1][1] + 0.5) out[out.length - 1][1] = Math.max(out[out.length - 1][1], q[1]); else out.push(q.slice()); }
+    return out.map((q) => ({ s0: q[0], s1: q[1] })); };
+  for (const w of X.STAIRS) {
+    if (w.up || X.railY((w.s0 + w.s1) / 2) < 3) continue;
+    const B = spans(X.STRUCT.filter((q) => q.tag === '駅舎' && q.s0 <= w.s1 + 60 && q.s1 >= w.s0 - 60));
+    if (!B.length) continue;                                   // 高架下駅舎を持たない駅(笹塚・八幡山)
+    const inner = w.kind === '階段' ? (w.dir > 0 ? w.s1 : w.s0) : (w.s0 + w.s1) / 2;
+    nIn++;
+    if (!B.some((q) => inner >= q.s0 + 0.5 && inner <= q.s1 - 0.5) && !badIn)
+      badIn = [w.st.n, w.kind, 's=' + (inner - w.st.x).toFixed(0) + '(駅舎 ' + B.map((q) => (q.s0 - w.st.x).toFixed(0) + '〜' + (q.s1 - w.st.x).toFixed(0)).join(',') + ')'];
+  }
+  ok('高架駅の階段・EVは駅舎へ降りる', badIn === null && nIn > 0, '降りた先が駅舎の範囲', badIn ? badIn.join(' ') : nIn + 'か所');
+  /* 下高井戸の駅舎は駅の西端部の一階(利用者指示)。基準:駅の中心を含まず、西端(ホームの西端 +105m)まで届く */
+  { const sh = X.STA.find((s) => s.n === '下高井戸');
+    const B = X.STRUCT.filter((q) => q.tag === '駅舎' && q.s1 > sh.x - 120 && q.s0 < sh.x + 140);
+    const s0 = Math.min(...B.map((q) => q.s0)) - sh.x, s1 = Math.max(...B.map((q) => q.s1)) - sh.x;
+    ok('下高井戸の駅舎は駅の西端部', B.length > 0 && s0 > 20 && s1 >= 100, '中心を含まず西端(+105m)まで',
+      B.length ? (s0.toFixed(0) + '〜' + s1.toFixed(0) + 'm') : '無い'); }
 }
 // 2b. ホームの柱・ベンチ・自動販売機は井戸・EVの中に立たない(階段を増やしたので位置がぶつかりうる)
 {

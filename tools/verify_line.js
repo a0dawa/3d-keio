@@ -159,23 +159,24 @@ if (X.TRACKS && X.WIRES) {
      柱は駅舎の壁より内側に収まること(壁を貫いて見えない)。駅舎の壁の位置は登録簿 STRUCT の
      '駅舎' から、柱の太さは検証側の値で測る。期待値(横断部の幅)は検証側が独立に持つ。 */
   {
-    const BLDG_HALF = 23;          // 高架下駅舎のs方向の半長[m]
+    // 駅舎の範囲は登録簿 STRUCT の '駅舎' から読む(駅の中心とは限らない。下高井戸は駅の西端部)
     // 高架下を横切るもの [名称, s, 柱を立てない半幅[m]]
     const CROSS = [['井の頭線', X.INOKASHIRA_X, 12], ['世田谷線', X.SETAGAYA_X, 8],
     ['仙川', X.BRIDGE.s, 12], ['環七', X.KAN7_X, 16], ['環八', X.KANPACHI_X, 18]];
     for (const g of X.XINGS) CROSS.push(['踏切道 ' + g[0], g[1], 6]);
     let bad = null;
     const COL_HALF = 0.48;                                   // 柱の半幅(面取りした角柱の外接)
+    const BLDGS = X.STRUCT.filter((q) => q.tag === '駅舎');
+    const nB = X.STA.filter((st) => st.t !== 'ctx' && st.t !== 'gnd').length;
+    if (BLDGS.length < nB && !bad) bad = ['駅舎の登録', BLDGS.length + '件(' + nB + '駅)'];
     for (const x of X.PIERS) {
-      for (const st of X.STA) {
-        if (st.t === 'ctx' || st.t === 'gnd') continue;      // 高架下駅舎を持たない駅
-        if (Math.abs(x - st.x) >= BLDG_HALF + 1) continue;
-        const b = X.STRUCT.find((q) => q.tag === '駅舎' && x >= q.s0 - 1 && x <= q.s1 + 1);
+      for (const b of BLDGS) {
+        if (x < b.s0 - 1 || x > b.s1 + 1) continue;
         const c = X.VIA_COLS.find((q) => Math.abs(q.s - x) < 0.01);
-        if (!b || !c) { if (!bad) bad = [st.n + 'の駅舎', b ? '柱の登録なし' : '駅舎の登録なし']; continue; }
+        if (!c) { if (!bad) bad = ['駅舎の範囲の柱', '柱の登録なし s=' + x.toFixed(0)]; continue; }
         for (const o of c.offs)
           if ((o - COL_HALF < b.o0 || o + COL_HALF > b.o1) && !bad)
-            bad = [st.n + 'の駅舎の壁を柱が貫く', 's=' + x.toFixed(0), 'off=' + o.toFixed(2)];
+            bad = ['駅舎の壁を柱が貫く', 's=' + x.toFixed(0), 'off=' + o.toFixed(2)];
       }
       for (const c of CROSS)
         if (Math.abs(x - c[1]) < c[2] && !bad) bad = [c[0] + 'の直上', 's=' + x.toFixed(0)];

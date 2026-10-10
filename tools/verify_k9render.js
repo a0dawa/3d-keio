@@ -24,6 +24,7 @@ const REF = {
   GAPS: [-4.70, 0, 4.70], WIN_OFF: 0.505,       // 扉間の中心と、2枚の窓の中心の離れ(推定)
   MAKU_Z: 3.20,                                 // 幕板(窓の上)。8000系の赤帯は無い(公表の説明)
   IVORY_X: 8.39,                                // 先頭車の前頭部(乗務員扉まで)はアイボリー(公表の説明)
+  IVORY_PROBE: 0.21,                            // 塗りを見る点は IVORY_X からこれだけ前(u8.60=乗務員扉の下部。後ろの手すり u8.46 を避ける)
   FDOOR_HW: 0.305,                              // 中央の非常扉の半幅(公表610mm)
   // 以下は前面写真の実測(ftex9.png。扉の枠の中心 ±0.305 と屋根の頂部 3.62 で目盛りを決めた)
   WIN_IN: 0.35, WIN_BOTTOM: [2.08, 2.16],       // 左右の前面窓の内縁 |y|・下端(実測 2.12)
@@ -34,6 +35,7 @@ const REF = {
   NUM: [0.58, 0.958, 3.15, 3.33],               // 車号(向かって右の窓の上部。種別と同じ高さへ上げた=利用者指示。右の識別灯 0.97〜 は含めない)
   PASS: [[-1.03, -0.97], [0.97, 1.03], 3.16, 3.32],   // 識別灯(種別の左・車号の右。白の縦長。写真の灰の縦長の灯。中心線に対称)
   LOGO: [0.72, 0.99, 1.81, 1.92],               // KEIO ロゴ(向かって右の赤帯の上に白)
+  BODY_W: 2.768,                                // 車体幅(公表 2,768mm。8000系は 2,770mm)
 };
 
 fs.mkdirSync(OUT, { recursive: true });
@@ -135,9 +137,10 @@ function findChromium() {
       const c = S(g + sg * REF.WIN_OFF, zr(REF.WIN)); if (isSteel(c) && !badW) badW = [g + sg * REF.WIN_OFF, fmt(c)];
     }
     ok('側面:扉間の窓が透ける', !badW, '6枚(ステンレスでない)', badW ? badW.join(' ') : '6枚');
-    const iv = S(REF.IVORY_X + 0.06, 2.5), mid = S(-20 + REF.IVORY_X + 0.06, 2.5);
+    // 先頭車と中間車の同じ u・幕板の高さ(窓・手すりの無い所)で比べる
+    const iv = S(REF.IVORY_X + REF.IVORY_PROBE, 3.1), mid = S(-20 + REF.IVORY_X + REF.IVORY_PROBE, 3.1);
     ok('側面:前頭部はアイボリー', isIvory(iv) && isSteel(mid), '先頭車=アイボリー/中間車=ステンレス', fmt(iv) + ' / ' + fmt(mid));
-    ok('側面:帯はアイボリーの上も通る', isRed(S(REF.IVORY_X + 0.06, zr(REF.RED))), '京王レッド', fmt(S(REF.IVORY_X + 0.06, zr(REF.RED))));
+    ok('側面:帯はアイボリーの上も通る', isRed(S(REF.IVORY_X + REF.IVORY_PROBE, zr(REF.RED))), '京王レッド', fmt(S(REF.IVORY_X + REF.IVORY_PROBE, zr(REF.RED))));
   }
   // ---- 前面 ----
   {
@@ -203,6 +206,16 @@ function findChromium() {
     // 向かって左の窓の上部には種別表示器があるので、その下(表示器の外)に白い数字が無いこと
     const nl = count([-REF.NUM[1], -REF.NUM[0], 3.00, REF.KIND[2] - 0.02], (c) => c[0] > 200 && c[1] > 200 && c[2] > 200);
     ok('前面:向かって左には車号が無い', nl < 3, '0画素', nl + '画素');
+  }
+  // ---- 正面から見た車体の幅(利用者の確認:8000系 2,770mm と 9000系 2,768mm)と、手すりが張り出さないこと ----
+  {
+    const bg = (c) => Math.min(...c) > 245;
+    const span = (z) => { const r = Math.round((4.2 - z) * 150); let a = -1, b = -1;
+      for (let i = 0; i < 480; i++) if (!bg(px(res.front, 480, i, r))) { if (a < 0) a = i; b = i; } return a < 0 ? 0 : (b - a + 1) / 150; };
+    const w28 = span(2.8);
+    ok('正面:車体の幅(窓の高さ)', Math.abs(w28 - REF.BODY_W) <= 2.01 / 150, REF.BODY_W + 'm ±2画素', w28.toFixed(3) + 'm');
+    const wide = [1.4, 1.8, 2.2, 2.45].map(span), mx = Math.max(...wide);
+    ok('正面:手すりが張り出さない', mx <= REF.BODY_W + 2.01 / 150, '腰〜窓の高さで車体の幅 ≤' + REF.BODY_W + 'm+2画素', wide.map((v) => v.toFixed(3)).join('/') + 'm');
   }
   // ---- 識別灯と行先の表記(各停=front・特急 新宿行=front2) ----
   {

@@ -521,6 +521,14 @@ const PIERS=[];   // 建てた橋脚のs座標(検証用の登録簿)
    なので駅舎の中に収まり、壁を貫かない(旧来の橋脚は桁端から1.2mで壁を貫いたので省いていた)。 */
 const STA_BLDG=st=>(st.t!=='ctx'&&st.t!=='gnd');   // 高架下駅舎を持つ駅
 const STA_BLDG_HALF=23;                            // 駅舎のs方向の半長[m](7章と同じ値)
+/* 高架下駅舎の範囲(駅の中心 st.x からの s [m])。既定は中心の ±23m。
+   下高井戸は**駅の西端部の一階**(利用者指示):ホームの西端(+105)を越えて、桁の幅が保たれる +112m まで
+   (その先 +116m から下高井戸1号踏切の道路)。東は +44m(西端から東へ降りる階段の下まで入る長さ) */
+const BLDG_AT={'下高井戸':[44,112]};
+const bldgSpan=st=>{const r=BLDG_AT[st.n]||[-STA_BLDG_HALF,STA_BLDG_HALF];return [st.x+r[0],st.x+r[1]];};
+/* 階段とエレベーターの位置(ホームの中ほど pm からの s [m])。既定は「両側の入口から中ほどの駅舎へ降りる」2か所。
+   駅舎が中心に無い駅は、階段の下が駅舎の中に入るように置き直す:[入口側の端, 下の端, 向き(+1=s の増す向きへ降りる)] */
+const STAIR_AT={'下高井戸':{wells:[[34,50,1],[86,102,-1]], ev:68}};
 /* 公表デザイン(2019.5.30)の7駅は大屋根+側面の外装(7章)。既存駅(笹塚・八幡山・仙川)は片持ちの上屋。
    大屋根の下には架線柱を建てず、架線は屋根の梁から可動ブラケットで吊る(6b章 buildCatenary)。
    架線の吊り点(POLE_S)は変えない(柱の真下=梁の真下)。 */
@@ -2977,7 +2985,7 @@ const BLDG_FAC={
       for(let h=2.62;h<3.3;h+=0.14) fRail(mg,0xb58b5e,s0,s1,sg,-1.0+0.05,0.04,h,h+0.07);
       fBand(mg,MAT_STONE,0xa9a8a3,s0,s1,sg,-1.0+0.05,0.05,3.3,hb-0.3,{uv:uvW(2.4,1.2)});
     }
-    const a=st.x-STA_BLDG_HALF-4, b=st.x+STA_BLDG_HALF+4;
+    const a=bldgSpan(st)[0]-4, b=bldgSpan(st)[1]+4;
     mg.col(0x50565d).loft(SV,a,b,s=>{const i=sg*(deckHalf(s)-1.0),q=sg*(deckHalf(s)+1.4);
       return [[i,3.55],[q,3.2],[q,3.3],[i,3.65]];},{closed:true,caps:true,tag:'駅舎:低い庇'});
     return {noCanopy:true};
@@ -3000,8 +3008,9 @@ const BLDG_FAC={
   },
 };
 function bldg(S,st,y){
-  const mg=S.mg, md=S.md, c0=st.x, H=STA_BLDG_HALF, hb=y-GIRDER-0.05, E=deckHalf(c0)-1.0;
-  const a=c0-H, b=c0+H, F=BLDG_FAC[st.n];
+  // c0=駅舎の中ほど(入口・看板・庇の位置)。範囲は bldgSpan(下高井戸は駅の西端部)
+  const SP=bldgSpan(st), a=SP[0], b=SP[1], c0=(a+b)/2;
+  const mg=S.mg, md=S.md, H=(b-a)/2, hb=y-GIRDER-0.05, E=deckHalf(c0)-1.0, F=BLDG_FAC[st.n];
   mg.col(0xe9e7e2).cbox(SV,a,b,0,E,0,hb,{tag:'駅舎'});
   // 妻側(線路方向の端):窓の帯と通用口
   for(const [s,f] of[[a,-1],[b,1]]){
@@ -3024,11 +3033,12 @@ function bldg(S,st,y){
   }
   /* 下高井戸:温かな色彩の大庇を街へ広げる(公表パース:木の下面・白い薄い縁)。白い丸柱(帯付き)で受ける。
      パースは南から北を望む画で、大庇は左=**西の端で反り上がる**。置くのは**駅の西南**(利用者指示):南側だけ、
-     入口(c0±6)の少し東から西へ駅舎の外まで(s が西へ増えるので e1 が西端)。以前は両側・新宿方の端で反っていた */
+     駅舎(駅の西端部)の入口の東から西の端まで(s が西へ増えるので e1 が西端。その先は下高井戸1号踏切の道路)。
+     以前は両側・新宿方の端で反っていた */
   if(st.n==='下高井戸'){
     /* 形はパースの人物(約1.7m)との比で読んだ:縁の高さは低い所で約4.0m、西の先端で約6.3m(反り約2.3m)。
        張出しは先端へ行くほど外へ広がる(桁の縁から4.6m → 先端で8.0m) */
-    const e0=c0-8, e1=c0+44;
+    const e0=a+12, e1=b;
     const uW=s=>(e1-s)/(e1-e0);                                 // u=0 が西端(反り上がる側)
     const hE=s=>{const u=uW(s);
       return 4.0+2.3*Math.pow(Math.max(0,1-u/0.38),2)+0.35*Math.pow(Math.max(0,(u-0.75)/0.25),2);};
@@ -3055,7 +3065,7 @@ function bldg(S,st,y){
   // 千歳烏山:駅の範囲の高架下の柱を木で包む(駅舎の外の柱)
   if(st.n==='千歳烏山')
     for(const c of VIA_COLS){
-      if(Math.abs(c.s-c0)>STD.RL||Math.abs(c.s-c0)<H+1) continue;
+      if(Math.abs(c.s-st.x)>STD.RL||(c.s>a-1&&c.s<b+1)) continue;      // 駅の範囲で、駅舎の外の柱
       for(const o of c.offs) mg.col(0xb88d62).box(SV,c.s,o,0,Math.min(3.6,c.top),1.15,1.15,{skip:'-y',tag:'駅舎:木の柱'});
     }
 }
@@ -3080,7 +3090,9 @@ for(const s of STA){
     const ww=hw>=3.4?2.8:hw>=2.9?2.4:hw>=2.4?2.2:1.9, wc=pc+back*(hw-ww/2-0.35);
     // 階段は1面に2か所(利用者指示)。両側の入口から中ほど(駅舎)へ向かう。
     // 高架駅は高架下の駅舎へ降り、地上駅(仙川)は線路の上の橋上駅舎へ上がる(利用者指示)
+    const SA=STAIR_AT[s.n];                                   // 駅舎が中心に無い駅(下高井戸=西端部)は置き直す
     const wells=narrow?(up?[{s0:pm-34,s1:pm-18,o0:wc-ww/2,o1:wc+ww/2,dir:1}]:[]):
+                SA?SA.wells.map(q=>({s0:pm+Math.min(q[0],q[1]),s1:pm+Math.max(q[0],q[1]),o0:wc-ww/2,o1:wc+ww/2,dir:q[2]})):
                        [{s0:pm-34,s1:pm-18,o0:wc-ww/2,o1:wc+ww/2,dir:1},{s0:pm+18,s1:pm+34,o0:wc-ww/2,o1:wc+ww/2,dir:-1}];
     for(const w of wells) Object.assign(w,{st:s,pc:pc,hw:hw,trk:TRK_ST.filter(q=>q.plats.indexOf(pi)>=0),
       yTop:big?y+STD.CEIL:y+STD.CAN0});
@@ -3088,7 +3100,7 @@ for(const s of STA){
     platDetail(S,x0,x1,pc,hw,y,{lampY:lampY});
     for(const w of wells){(up?stairUp(S,w,y,yF):stairWell(S,w,y));lifts.push(w);STAIRS.push({st:s,kind:'階段',up:up,dir:w.dir,s0:w.s0,s1:w.s1,o0:w.o0,o1:w.o1});}
     if(!narrow){                                     // エレベーターは2つの階段の間(柱と柱の間)
-      const es=pm+STD.COLP/2;
+      const es=SA?pm+SA.ev:pm+STD.COLP/2;
       elevator(S,es,wc,y,s.c,up?yF-(y+STD.PLAT):0);
       lifts.push({s0:es-1,s1:es+1});
       STAIRS.push({st:s,kind:'エレベーター',s0:es-1,s1:es+1,o0:wc-1,o1:wc+1});
@@ -5375,10 +5387,14 @@ function k9DetailGeo(cab){
   const B=new K8B(), hw=K9.HWB;
   if(cab){
     for(const s of [-1,1]){
-      const y=s*(hw+.045);
+      /* 乗務員扉の前後の手すりは**埋め込み式**(利用者指示:正面から見えない)。車体の面に縦長のくぼみ(暗い灰)を描き、
+         その中に握り棒(明るい灰)を通す。どちらも車体の面から 3mm 以内で、外へ張り出さない(8000系 v4 の手すりは
+         4.5cm 外に出る)。⑭が車体幅の外に出る頂点が無いこと、⑮が正面の輪郭を見る */
+      const yy=d=>[Math.min(s*hw,s*(hw+d)),Math.max(s*hw,s*(hw+d))];
       for(const xh of [9.069,8.46]){
-        B.cyl([xh,y,K9.Z_FLR+.005],[xh,y,2.57],.013,8,K8C.trim);
-        for(const zz of [K9.Z_FLR+.005,2.57]) B.cyl([xh,s*hw,zz],[xh,y,zz],.01,6,K8C.trim);
+        const g=yy(.0015), r=yy(.003), z0=K9.Z_FLR+.04, z1=2.57;
+        B.box(xh-.025,xh+.025,g[0],g[1],z0,z1,K8C.groove);              // くぼみ(幅5cm)
+        B.box(xh-.008,xh+.008,r[0],r[1],z0+.06,z1-.06,K8C.trim);       // 握り棒(くぼみの中)
       }
     }
     B.box(8.67,8.82,-.08,.08,K9.Z_CROWN-.01,K9.Z_CROWN+.03,K8C.under);
