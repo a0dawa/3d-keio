@@ -1713,6 +1713,10 @@ function xKit(g){
 const XR={U0:-440,U1:440, TRK:[-3,3], RAILY:.83, RAILH:.12, SETA_U0:-370, SETA_U1:-10};
 XR.RAILTOP=XR.RAILY+XR.RAILH/2;                          // レール頭頂面(車両の原点を置く高さ)
 const XT=XR.RAILTOP-0.153-0.012;                         // 交差鉄道のまくらぎの上面(レールの底の下)
+/* 井の頭線 明大前のホーム(実測緯度から。u の範囲・off)。上り(渋谷方へ=-u)は東側、下り(吉祥寺方へ=+u)は西側。
+   線路の敷設と列車の停車位置が同じ値を見る */
+const INO_UOF=la=>((-(la-LAT0)*MLAT)-INO.z)/INO.az;
+const INO_PLAT={up:[INO_UOF(35.6674073382136),INO_UOF(35.6674073382136)+110], dn:[INO_UOF(35.66801642659758),INO_UOF(35.66801642659758)+110], off:7.2};
 { // 京王井の頭線(複線・掘割擁壁・渋谷寄り=南側へ移設したホーム)。ローカルu+=a点側(北)
   const g=xGroup(INO), k=xKit(g);
   const oI=(GAUGE_INO+RAIL_W)/2;                                        // 井の頭線は1067mm軌間
@@ -1724,8 +1728,7 @@ const XT=XR.RAILTOP-0.153-0.012;                         // 交差鉄道のま�
   for(let u=-430;u<430;u+=45)                              // 架線柱(門型)
     k.box(u,u+.4,-6.2,.34,MAT.pole,3.0,6.0).box(u,u+.4,6.2,.34,MAT.pole,3.0,6.0).box(u,u+.35,0,12.4,MAT.pole,6.05,.26);
   // ホームは上下で段違い(実測緯度・各110m):上り=東側(+7.2)が南寄り/下り=西側(-7.2)が北寄り
-  const uOfLat=la=>((-(la-LAT0)*MLAT)-INO.z)/INO.az;
-  const uU=uOfLat(35.6674073382136), uD=uOfLat(35.66801642659758);
+  const uU=INO_PLAT.up[0], uD=INO_PLAT.dn[0];
   k.box(uU,uU+110, 7.2,3.4,MAT.plat,.55,1.1).box(uU-1,uU+111, 7.2,4.2,MAT.canopy,4.4,.4)
    .box(uD,uD+110,-7.2,3.4,MAT.plat,.55,1.1).box(uD-1,uD+111,-7.2,4.2,MAT.canopy,4.4,.4).flush();
 }
@@ -1918,6 +1921,237 @@ function signQuad(Sx,k,s,off,y0,y1,w,face){
   const P=(h,y)=>[c[0]+h[0],y,c[2]+h[2]];
   Sx.face(MAT.sign,[P(L,y0),P(R,y0),P(R,y1),P(L,y1)],out,signUV(k));
 }
+/* ---- 案内の画像(階段口の出口・番線案内、発車標、自動販売機の前面)。1枚のキャンバスにまとめる -------
+   こま 512×128 を 4列×16行(2048×2048)。2こま幅(1024×128)も使う(島式の階段口の出口)。同じ絵は使い回す。
+   どれも自ら光る面(内照の看板・LED・自販機の照明)なので、照明を受けない材質で描く(夜も同じ明るさ)。
+   発車標は時刻(画面のメニュー・撮影の時刻)で書き直す。配色(調べた範囲。2026-10):
+     出口 … 黄地に黒字(鉄道駅の案内の共通の約束)
+     番線案内 … 白地に黒字、番線は黒地に白抜きの数字、方面は京王の駅の案内と同じ書き方
+       (下り=京王八王子・高尾山口・橋本方面/上り=新宿・本八幡方面。笹塚は3番線=新宿・4番線=新線新宿・本八幡)
+     発車標 … 黒地の LED。種別の色は京王の路線図の配色(特急=赤・急行=緑・区間急行=黄緑・各停=白) */
+const PIDS_CW=512, PIDS_CH=128, PIDS_COLS=4, PIDS_ROWS=16;
+const PIDS_CV=document.createElement('canvas');
+PIDS_CV.width=PIDS_CW*PIDS_COLS; PIDS_CV.height=PIDS_CH*PIDS_ROWS;
+const PIDS={used:0, memo:new Map(), deps:[]};
+const PIDS_F='"Hiragino Sans","Yu Gothic UI","Noto Sans JP",IPAGothic,sans-serif';
+const PIDS_TEX=canvasTex(PIDS_CV);
+MAT.pids=mkMat('MeshBasicMaterial',{map:PIDS_TEX});
+const GUIDES=[];                     // 案内の登録簿(検証が向き・番線の左右・発車標の位置を確かめる)
+function pidsXY(r){return [(r.k%PIDS_COLS)*PIDS_CW, Math.floor(r.k/PIDS_COLS)*PIDS_CH];}
+function pidsPaint(r,draw){
+  const c=PIDS_CV.getContext('2d'), q=pidsXY(r);
+  c.save(); c.beginPath(); c.rect(q[0],q[1],PIDS_CW*r.w,PIDS_CH); c.clip();
+  draw(c,q[0],q[1],PIDS_CW*r.w,PIDS_CH); c.restore();
+  PIDS_TEX.needsUpdate=true;
+}
+function pidsCell(key,w,draw){           // key が同じ絵は1回だけ描く。w=1/2(こま幅)
+  if(PIDS.memo.has(key)) return PIDS.memo.get(key);
+  if(w===2&&PIDS.used%2) PIDS.used++;
+  const r={k:PIDS.used, w:w}; PIDS.used+=w;
+  if(PIDS.used>PIDS_COLS*PIDS_ROWS) throw new Error('案内の画像のこまが足りない');
+  pidsPaint(r,draw); PIDS.memo.set(key,r); return r;
+}
+function pidsUV(r,rot){                  // 左下・右下・右上・左上(rot:縦長の面に90°回して貼る)
+  const u0=(r.k%PIDS_COLS)/PIDS_COLS, u1=u0+r.w/PIDS_COLS;
+  const row=Math.floor(r.k/PIDS_COLS), v1=1-row/PIDS_ROWS, v0=v1-1/PIDS_ROWS;
+  return rot?[[u0,v1],[u0,v0],[u1,v0],[u1,v1]]:[[u0,v0],[u1,v0],[u1,v1],[u0,v1]];
+}
+const pFit=(c,t,px,wmax,wt)=>{let f=px;c.font=wt+' '+f+'px '+PIDS_F;
+  while(f>8&&c.measureText(t).width>wmax){f-=1;c.font=wt+' '+f+'px '+PIDS_F;} return f;};
+/* 面を1枚貼る(signQuad と同じ向きの決め方:見る人の左に絵の左端) */
+function pidsQuad(Sx,r,s,off,y0,y1,w,face,rot){
+  const A=Sx.axes(s,off), c=[A.f.x,0,A.f.z];
+  let L,R,out;
+  if(face===1||face===-1){ L=v3sc(A.t,-face*w/2); R=v3sc(A.t,face*w/2); out=v3sc(A.n,face); }
+  else { const f=(face==='w')?1:-1; L=v3sc(A.n,f*w/2); R=v3sc(A.n,-f*w/2); out=v3sc(A.t,f); }
+  const P=(h,y)=>[c[0]+h[0],y,c[2]+h[2]];
+  Sx.face(MAT.pids,[P(L,y0),P(R,y0),P(R,y1),P(L,y1)],out,pidsUV(r,rot));
+}
+/* 出口(黄)。階段のピクトグラムと「出口 Exit」 */
+function pidsExit(w){
+  return pidsCell('exit'+w,w,function(c,x,y,W,H){
+    c.fillStyle='#f6c800'; c.fillRect(x,y,W,H);
+    c.fillStyle='#e0b200'; c.fillRect(x,y+H-5,W,5);
+    const cx=x+W/2-(w===2?150:120), b=y+H-22;                 // 階段(下りる人)のピクトグラム
+    c.fillStyle='#111';
+    for(let i=0;i<4;i++) c.fillRect(cx-44+i*20,b-(4-i)*18,20,(4-i)*18);
+    c.beginPath(); c.arc(cx+24,y+24,9,0,Math.PI*2); c.fill();
+    c.fillRect(cx+18,y+34,12,24);
+    c.textBaseline='middle'; c.textAlign='left';
+    pFit(c,'出口',70,170,'800'); c.fillText('出口',cx+70,y+H/2+2);
+    pFit(c,'Exit',44,120,'700'); c.fillText('Exit',cx+220,y+H/2+6);
+  });
+}
+/* 番線案内の半分(1つの線)。t={n,dest,en}。arrow=-1:左端に左向きの矢印/+1:右端に右向き/0:なし */
+function pidsArrow(c,x,y,d){
+  c.beginPath();
+  c.moveTo(x+d*24,y); c.lineTo(x-d*4,y-26); c.lineTo(x-d*4,y-11); c.lineTo(x-d*26,y-11);
+  c.lineTo(x-d*26,y+11); c.lineTo(x-d*4,y+11); c.lineTo(x-d*4,y+26); c.closePath(); c.fill();
+}
+function pidsTrack(t,arrow){
+  return pidsCell('trk|'+t.n+'|'+t.dest+'|'+arrow,1,function(c,x,y,W,H){
+    c.fillStyle='#f8f8f5'; c.fillRect(x,y,W,H);
+    c.fillStyle='#c9c9c4'; c.fillRect(x,y+H-4,W,4);
+    let lx=x+14, rx=x+W-14;
+    c.fillStyle='#111';
+    if(arrow<0){ pidsArrow(c,lx+26,y+H/2,-1); lx+=64; }
+    if(arrow>0){ pidsArrow(c,rx-26,y+H/2,1); rx-=64; }
+    c.fillStyle='#15181c'; roundRect(c,lx,y+16,92,92,10); c.fill();         // 番線:黒地に白抜き
+    c.fillStyle='#ffffff'; c.textAlign='center'; c.textBaseline='middle';
+    pFit(c,String(t.n),76,80,'800'); c.fillText(String(t.n),lx+46,y+64);
+    lx+=108;
+    c.fillStyle='#111'; c.textAlign='left'; c.textBaseline='alphabetic';
+    pFit(c,t.dest,36,rx-lx,'700'); c.fillText(t.dest,lx,y+62);
+    c.fillStyle='#3a3f45'; pFit(c,t.en,20,rx-lx,'600'); c.fillText(t.en,lx,y+96);
+  });
+}
+/* ---- 発車標の時刻表(模式) ----
+   20分の繰り返し(下りは笹塚、上りは仙川の発車の分)に、駅までの所要を足して各駅の時刻を出す。
+   停車駅は 2022年3月のダイヤ改正後(特急:笹塚・明大前・千歳烏山/急行:+桜上水/区間急行:+仙川/各停:全駅)。
+   快速は本数が少ないので載せない。2面4線は各停=外側(待避線)・優等=内側(本線)。
+   笹塚の上りは3番線=新宿行き・4番線=本八幡行き(京王新線・都営新宿線) */
+const DEP_NOW={morning:7*60+30, noon:12*60, evening:17*60+30, night:21*60};
+let depNow=DEP_NOW.noon;
+const DEP_COL={'特急':'#ff4038','急行':'#2fd36a','区急':'#b6e33a','各停':'#f4f4f4'};
+const DEP_STOP={'特急':['笹塚','明大前','千歳烏山'], '急行':['笹塚','明大前','桜上水','千歳烏山'],
+                '区急':['笹塚','明大前','桜上水','千歳烏山','仙川']};
+const DEP_PAT={
+  dn:[[0,'特急','京王八王子'],[3,'各停','京王八王子'],[6,'急行','橋本'],[10,'特急','高尾山口'],[13,'各停','調布'],[16,'区急','橋本']],
+  up:[[1,'特急','新宿'],[4,'各停','本八幡'],[7,'急行','新宿'],[11,'特急','新宿'],[14,'各停','新宿'],[17,'区急','本八幡']],
+};
+function depList(i,t){                    // 駅 i・線 t の次の2本 [種別,行先,分]
+  const st=STA[i], base=t.dn?STA[0]:STA[STA.length-1], out=[];
+  for(let k=-2;k<=3;k++) for(const e of DEP_PAT[t.dn?'dn':'up']){
+    const ty=e[1], to=e[2], stops=DEP_STOP[ty];
+    if(stops&&stops.indexOf(st.n)<0) continue;
+    if(st.n==='笹塚'&&!t.dn){ if((t.n===3)!==(to==='新宿')) continue; }
+    else if(t.quad&&((ty==='各停')!==t.outer)) continue;
+    const T=Math.floor(depNow/20)*20+20*k+e[0]+Math.round(Math.abs(st.x-base.x)/(ty==='各停'?520:900));
+    if(T>=depNow) out.push([ty,to,T]);
+  }
+  return out.sort((a,b)=>a[2]-b[2]).slice(0,2);
+}
+function drawDep(c,x,y,W,H,d){
+  c.fillStyle='#060708'; c.fillRect(x,y,W,H);
+  c.fillStyle='#1c2026'; c.fillRect(x,y,W,30);                                  // 見出し:番線と方面
+  c.fillStyle='#f4f4f0'; roundRect(c,x+6,y+3,30,24,4); c.fill();
+  c.fillStyle='#111'; c.textAlign='center'; c.textBaseline='middle';
+  pFit(c,String(d.t.n),20,26,'800'); c.fillText(String(d.t.n),x+21,y+16);
+  c.fillStyle='#e9eef2'; c.textAlign='left'; pFit(c,'番線',14,34,'600'); c.fillText('番線',x+40,y+16);
+  pFit(c,d.t.dest,17,W-90,'600'); c.fillText(d.t.dest,x+80,y+16);
+  const L=depList(d.st,d.t);
+  ['先発','次発'].forEach(function(lab,j){
+    const cy=y+30+j*49+25;
+    c.fillStyle='#b9c0c7'; c.textAlign='left'; pFit(c,lab,16,36,'600'); c.fillText(lab,x+8,cy);
+    const e=L[j]; if(!e) return;
+    const hm=Math.floor(e[2]/60)%24+':'+(e[2]%60<10?'0':'')+e[2]%60;
+    c.fillStyle=DEP_COL[e[0]]; pFit(c,e[0],32,72,'800'); c.fillText(e[0],x+50,cy);
+    c.fillStyle='#ffa41c'; pFit(c,hm,32,92,'800'); c.fillText(hm,x+130,cy);
+    pFit(c,e[1],32,170,'800'); c.fillText(e[1],x+232,cy);
+    c.textAlign='right'; pFit(c,'10両',24,60,'700'); c.fillText('10両',x+W-8,cy);
+  });
+  c.fillStyle='rgba(0,0,0,.45)';                                                // LED の粒(3画素ごとの目地)
+  for(let yy=y+30;yy<y+H;yy+=3) c.fillRect(x,yy,W,1);
+  for(let xx=x;xx<x+W;xx+=3) c.fillRect(xx,y+30,1,H-30);
+}
+function pidsDep(i,t){
+  const key='dep|'+i+'|'+t.n; if(PIDS.memo.has(key)) return PIDS.memo.get(key);
+  const d={st:i,t:t}, r=pidsCell(key,1,function(c,x,y,W,H){drawDep(c,x,y,W,H,d);});
+  PIDS.deps.push({r:r,d:d}); return r;
+}
+/* 時刻を替えたら発車標を書き直す(画面のメニュー・撮影モードの CINE.setTime から呼ぶ) */
+function pidsSetTime(k){
+  depNow=DEP_NOW[k]!==undefined?DEP_NOW[k]:DEP_NOW.noon;
+  for(const q of PIDS.deps) pidsPaint(q.r,function(c,x,y,W,H){drawDep(c,x,y,W,H,q.d);});
+}
+/* 自動販売機の前面(縦長)。商品見本の窓(光る)・値札(赤=あたたか〜い/青=つめた〜い)・ボタン・
+   金額の表示・投入口・取出口。k=0 赤/1 青/2 白の機体 */
+function pidsVend(k){
+  return pidsCell('vend'+k,1,function(c,x,y,W,H){
+    c.setTransform(0,1,-1,0,x+W,y);                  // 幅128×高さ512 の立てた絵を90°回して描く
+    const bc=['#c8242b','#2a5caa','#e9eaea'][k], dark=(k===2);
+    c.fillStyle=bc; c.fillRect(0,0,128,512);
+    c.fillStyle='#f7f8f6'; c.fillRect(8,12,112,240);
+    const B=['#2b6fd0','#e8e8e8','#d9302c','#f0b400','#3aa04a','#7a4b2a','#ff7a1a','#1d1d1d'];
+    for(let r=0;r<3;r++) for(let j=0;j<6;j++){
+      const bx=10+j*18, by=18+r*78;
+      c.fillStyle=B[(r*6+j+k*3)%8]; c.fillRect(bx+3,by+20,11,40); c.fillRect(bx+5,by+13,7,8);
+      c.fillStyle='#dfe3e5'; c.fillRect(bx+5,by+9,7,4);
+      c.fillStyle=(r===0&&j<3)?'#d8322e':'#2f6fd0'; c.fillRect(bx+1,by+62,15,5);
+      c.fillStyle='#30343a'; c.fillRect(bx+5,by+69,7,4);
+    }
+    c.fillStyle=dark?'#a3a9af':'rgba(255,255,255,.92)'; c.fillRect(8,262,112,24);
+    c.fillStyle=dark?'#2a2f35':bc; c.textAlign='center'; c.textBaseline='middle'; pFit(c,'DRINK',18,90,'800'); c.fillText('DRINK',64,275);
+    c.fillStyle='#0f2310'; c.fillRect(12,300,60,22);
+    c.fillStyle='#58e05a'; pFit(c,'0',18,40,'700'); c.fillText('0',42,312);
+    c.fillStyle='#23272d'; c.fillRect(84,296,32,70);
+    c.fillStyle='#8a929a'; c.fillRect(90,304,20,6); c.fillRect(90,318,20,16); c.fillRect(90,344,20,8);
+    c.fillStyle='#15181c'; c.fillRect(14,416,100,56);
+    c.fillStyle='#3d434a'; c.fillRect(18,420,92,12);
+  });
+}
+/* ---- 駅の番線:ホームに面する線路を南(off の小さい側)から 1,2,… と数える ----
+   京王の各駅の番線と同じ並び(左側通行なので下り=西行きは南側の線)。2面4線は外側が待避線 */
+function staTracks(st,pm){
+  const L=[];
+  PLT_OF[st.t].forEach(function(pp,pi){
+    for(const sg of[-1,1]){
+      const edge=pp[0]+sg*pp[1];
+      for(const t of TRACKS){
+        if(pm<t.x0||pm>t.x1) continue;
+        const o=t.zf(pm), d=sg*(o-edge);
+        if(!(d>0.5&&d<2.6)) continue;
+        let q=L.find(r=>Math.abs(r.off-o)<0.5);
+        if(!q){ q={off:o,plats:[]}; L.push(q); }
+        if(q.plats.indexOf(pi)<0) q.plats.push(pi);
+      }
+    }
+  });
+  L.sort((a,b)=>a.off-b.off);
+  const quad=L.length>=4;
+  L.forEach(function(q,j){
+    q.n=j+1; q.dn=q.off<0; q.quad=quad;
+    const same=L.filter(r=>(r.off<0)===q.dn);
+    q.outer=quad&&Math.abs(q.off)>=Math.max.apply(null,same.map(r=>Math.abs(r.off)))-1e-6;
+    if(q.dn){ q.dest='京王八王子・高尾山口・橋本方面'; q.en='for Keio-hachioji, Takaosanguchi, Hashimoto'; }
+    else if(st.n==='笹塚'&&q.n===3){ q.dest='新宿方面'; q.en='for Shinjuku'; }
+    else if(st.n==='笹塚'&&q.n===4){ q.dest='新線新宿・本八幡方面'; q.en='for Shinjuku (Keio New Line), Motoyawata'; }
+    else { q.dest='新宿・本八幡方面'; q.en='for Shinjuku, Motoyawata'; }
+  });
+  return L;
+}
+/* 階段口の案内(利用者指示):ホームから階段を望む向き=黄の「出口」(列車を降りた乗客に見える)、
+   階段からホームを望む向き=白の番線案内(見る人の左右に合わせて番線と方面を並べる)。両面の吊り看板。
+   s=看板の位置(入口 e0 からホーム側へ)、w.trk=そのホームの線(staTracks) */
+function stairGuide(md,w,s,yA,yB){
+  const f=w.dir||1, oc=(w.o0+w.o1)/2, T=w.trk||[], two=T.length>=2, W=two?2.8:1.4;
+  const fP=f>0?'e':'w', fS=f>0?'w':'e';          // ホーム側を向く面(法線 -f)/階段側を向く面(法線 +f)
+  pidsQuad(md,pidsExit(two?2:1),s-f*0.012,oc,yA,yB,W,fP);
+  const lf=f>0?1:-1;                              // 階段側の面を見る人(-f を向く)の左は lf·off の側
+  const ord=T.slice().sort((a,b)=>lf*(b.off-a.off));
+  if(two){
+    pidsQuad(md,pidsTrack(ord[0],-1),s+f*0.012,oc+lf*W/4,yA,yB,W/2,fS);
+    pidsQuad(md,pidsTrack(ord[1],1),s+f*0.012,oc-lf*W/4,yA,yB,W/2,fS);
+  }else if(T.length===1){
+    pidsQuad(md,pidsTrack(T[0],lf*(T[0].off-oc)>0?-1:1),s+f*0.012,oc,yA,yB,W,fS);
+  }
+  md.col(0x2b3036).box(SV,s,oc,yA-0.02,yB+0.02,0.016,W+0.04,{tag:'階段の案内'});
+  GUIDES.push({kind:'stair',st:w.st,s:s,off:oc,w:W,dir:f,faceP:fP,faceS:fS,y0:yA,y1:yB,
+    shown:ord.slice(0,two?2:1).map(q=>({n:q.n,off:q.off,dest:q.dest}))});
+}
+/* 発車標:階段口の少しホーム寄りに、そのホームの線ごとに1台(島式は線の側の半分の上)。両面。
+   筐体・吊り棒は細部(md)。yTop=吊り棒の上端(屋根・上屋の天井) */
+function depBoards(md,w,s,yt,yTop){
+  const T=w.trk||[]; if(!T.length) return;
+  const two=T.length>=2, bw=two?Math.min(2.3,w.hw-0.45):Math.min(2.3,2*w.hw-0.9), yA=yt+2.70, yB=yA+bw/4;   // 案内(〜2.62)の上に見える高さ
+  for(const t of T){
+    const oc=two?w.pc+Math.sign(t.off-w.pc)*(0.12+bw/2):w.pc, r=pidsDep(STA.indexOf(w.st),t);
+    pidsQuad(md,r,s+0.07,oc,yA,yB,bw,'w'); pidsQuad(md,r,s-0.07,oc,yA,yB,bw,'e');
+    md.col(0x15181c).box(SV,s,oc,yA-0.04,yB+0.04,0.13,bw+0.08,{tag:'発車標'});
+    for(const e of[-1,1]) md.col(0x8d949b).box(SV,s,oc+e*(bw/2-0.2),yB+0.04,yTop,0.04,0.04);
+    GUIDES.push({kind:'dep',st:w.st,s:s,off:oc,w:bw,n:t.n,toff:t.off,y0:yA,y1:yB,t:t});
+  }
+}
 /* ---- 駅の外装と駅舎の模様のテクスチャ ----------------------------------------
    小さな画像を UV で繰り返す(データ量を増やさない)。白っぽく描いておき、色合いは
    頂点カラーで塗り分ける(同じ模様で何色も出せ、材質=描画の呼び出しを増やさない)。 */
@@ -1990,7 +2224,7 @@ const MAT_BALLAST=M(0xffffff,{vertexColors:true,map:texOf(64,64,function(c){
      柱        … ホームの樹状柱(枝で屋根の梁を受ける)。架線柱は屋根の梁と同じ位置で受ける
      昇降      … 階段とエスカレーターの井戸(床を抜く)・エレベーター
      サイン    … 吊りレールの駅名標(線路に向けて両面)・出口の案内・駅舎の看板
-     ベンチ等  … ベンチ・自動販売機・乗務員用モニター
+     ベンチ等  … ベンチ・自動販売機(乗務員用モニターは置かない:車上の車内モニター式とする。利用者指示)
      外装      … 側面(ホーム階)と高架下の駅舎。公表デザインの要点を形で表す
    公表デザインの要点(京王電鉄 2019.5.30 の発表文。図は参照できていない):
      代田橋   … レンガ調+透明感のある素材(近隣の歴史的建築物・玉川上水の流れ)
@@ -2091,11 +2325,9 @@ function stairWell(S,w,y){
   md.col(0xd4d8dc).box(SV,e1,(w.o0+w.o1)/2,yt+H,yt+H+0.05,0.07,w.o1-w.o0,{skip:'-y'});
   for(let s=w.s0+1.5;s<w.s1-0.5;s+=1.5) for(const o of[w.o0,w.o1])          // 支柱
     md.col(0xc3c7cc).box(SV,s,o,yt,yt+H,0.05,0.05,{skip:'-y'});
-  // 入口の案内(出口=黄)。井戸の入口の上に、ホームの向きに両面で吊る
-  const k=3*STA.length;
-  signQuad(md,k,e0-f*0.6,(w.o0+w.o1)/2,yt+2.25,yt+2.62,1.4,'e');
-  signQuad(md,k,e0-f*0.62,(w.o0+w.o1)/2,yt+2.25,yt+2.62,1.4,'w');
-  md.col(0x2b3036).box(SV,e0-f*0.61,(w.o0+w.o1)/2,yt+2.23,yt+2.64,0.015,1.44);
+  // 入口の案内:ホーム側=出口(黄)/階段側=番線案内(白)。少しホーム寄りに発車標
+  stairGuide(md,w,e0-f*0.6,yt+2.25,yt+2.62);
+  depBoards(md,w,e0-f*4.0,yt,w.yTop);
 }
 /* 地上駅(仙川)の上り階段:ホームから線路の上の橋上駅舎(床 yF)へ上がる。w の向きは stairWell と同じ
    (入口 e0 → 奥 e1)。奥の端で駅舎の床に着く。半分が階段(段の塊)、半分が上りエスカレーター。
@@ -2122,8 +2354,8 @@ function stairUp(S,w,y,yF){
     mg.col(0xd5d8db).face(SV,[P(e0,a,y0),P(sB,a,y0),P(sB,b,y0),P(e0,b,y0)],[0,sd,0])
       .face(SV,[P(sB,a,y0),P(e1,a,y1),P(e1,b,y1),P(sB,b,y0)],[0,sd,0]);
   }
-  const k=3*STA.length;                                                     // 入口の案内(出口=黄)
-  signQuad(md,k,e0-f*0.05,(w.o0+w.o1)/2,yt+2.05,yt+2.42,1.4,f>0?'e':'w');
+  stairGuide(md,w,e0-f*0.05,yt+2.05,yt+2.42);                              // 入口の案内:出口(黄)/番線案内(白)
+  depBoards(md,w,e0-f*4.0,yt,w.yTop);
 }
 /* 橋上駅舎:線路の上を渡る駅舎。床の下端はレール面+7.6m(架線柱の頂部・ビームより上)。
    ガラスの帯の壁・屋根・柱(ホームの中心線と線路の外)。看板は南北の面に */
@@ -2152,24 +2384,21 @@ function elevator(S,s,o,y,col,Hh){
   mg.col(0x5b6470).box(SV,s-1.03,o,yt+2.1,yt+2.3,0.03,1.2,{skip:'-y'});      // 扉の上の表示
   S.md.col(0x30353b).box(SV,s+0.1,o,yt,yt+2.3,1.6,1.6,{skip:'-y'});          // かご(ガラス越しに見える)
 }
-/* ホームの付帯物(ベンチ・自動販売機・乗務員用モニター)。近くだけ描く */
+/* ホームの付帯物(ベンチ・自動販売機)。近くだけ描く。乗務員用のホームモニターは置かない
+   (ホームドアの線区は車上の車内モニター式になる見込み。利用者指示で撤去) */
 function benchAt(md,s,o,y,face){                 // face=+1/-1:座る人が向く off の向き
   const yt=y+STD.PLAT;
   md.col(0xa87c50).box(SV,s,o,yt+0.40,yt+0.46,1.8,0.44,{tag:'ベンチ'});
   md.col(0xa87c50).box(SV,s,o-face*0.24,yt+0.50,yt+0.88,1.8,0.05);
   for(const d of[-0.75,0.75]) md.col(0x6c737b).box(SV,s+d,o,yt,yt+0.40,0.06,0.40,{skip:'-y'});
 }
+/* 自動販売機(飲料)。機体はその色(赤・青・白)、前面は商品見本の窓・投入口・取出口を描いた光る面。
+   以前は白い箱に赤/青の板だけで、ごみ箱と見分けにくかった(利用者の問い合わせ) */
 function vendAt(md,s,o,y,face,k){
   const yt=y+STD.PLAT, c=[0xc8242b,0x2a5caa,0xe8e8e8][k%3];
-  md.col(0xeceeef).box(SV,s,o,yt,yt+1.83,0.98,0.72,{skip:'-y',tag:'自動販売機'});
-  md.col(c).box(SV,s,o+face*0.365,yt+0.75,yt+1.75,0.9,0.02);
-  md.col(0x1d2228).box(SV,s,o+face*0.37,yt+1.05,yt+1.6,0.7,0.02);
-}
-function monitorAt(md,s,o,y,dirS){               // dirS:モニターを見る運転士の来る向き(±s)
-  const yt=y+STD.PLAT;
-  md.col(0x5b6470).cyl(SV,s,o,yt,yt+2.6,0.05,6,{tag:'乗務員モニター'});
-  md.col(0x2c3138).box(SV,s,o,yt+2.35,yt+2.85,0.12,0.62);
-  md.col(0x6d8fb0).box(SV,s-dirS*0.065,o,yt+2.42,yt+2.78,0.01,0.52);
+  md.col(c).box(SV,s,o,yt,yt+1.83,0.98,0.72,{skip:'-y',tag:'自動販売機'});
+  md.col(0x2b3036).box(SV,s,o,yt+1.83,yt+1.86,1.0,0.74,{skip:'-y'});
+  pidsQuad(md,pidsVend(k%3),s,o+face*0.366,yt+0.04,yt+1.80,0.94,face,true);
 }
 
 /* ---- 屋根 ---- */
@@ -2587,6 +2816,7 @@ for(const s of STA){
   const lampY=big?y+STD.RAIL0-0.06:y+STD.CAN0-0.08;
   const lifts=[];                    // 井戸とエレベーター(柱・ベンチを避ける)
   const up=(s.t==='gnd'), yF=y+RAIL_TOP+7.6+0.34;   // 地上駅は橋上駅舎へ上がる。その床の上面
+  const TRK_ST=staTracks(s,pm);                     // 番線(南から1,2,…)。階段口の案内と発車標が使う
   PLT_OF[s.t].forEach(function(pp,pi){
     const pc=pp[0], hw=pp[1];
     // 相対式は背面(線路の無い側)。地上駅(仙川)の単式ホームも背面に寄せる
@@ -2597,9 +2827,11 @@ for(const s of STA){
     // 高架駅は高架下の駅舎へ降り、地上駅(仙川)は線路の上の橋上駅舎へ上がる(利用者指示)
     const wells=narrow?(up?[{s0:pm-34,s1:pm-18,o0:wc-ww/2,o1:wc+ww/2,dir:1}]:[]):
                        [{s0:pm-34,s1:pm-18,o0:wc-ww/2,o1:wc+ww/2,dir:1},{s0:pm+18,s1:pm+34,o0:wc-ww/2,o1:wc+ww/2,dir:-1}];
+    for(const w of wells) Object.assign(w,{st:s,pc:pc,hw:hw,trk:TRK_ST.filter(q=>q.plats.indexOf(pi)>=0),
+      yTop:big?y+STD.CEIL:y+STD.CAN0});
     platBody(S,x0,x1,pc,hw,y,up?[]:wells);
     platDetail(S,x0,x1,pc,hw,y,{lampY:lampY});
-    for(const w of wells){(up?stairUp(S,w,y,yF):stairWell(S,w,y));lifts.push(w);STAIRS.push({st:s,kind:'階段',up:up,s0:w.s0,s1:w.s1,o0:w.o0,o1:w.o1});}
+    for(const w of wells){(up?stairUp(S,w,y,yF):stairWell(S,w,y));lifts.push(w);STAIRS.push({st:s,kind:'階段',up:up,dir:w.dir,s0:w.s0,s1:w.s1,o0:w.o0,o1:w.o1});}
     if(!narrow){                                     // エレベーターは2つの階段の間(柱と柱の間)
       const es=pm+STD.COLP/2;
       elevator(S,es,wc,y,s.c,up?yF-(y+STD.PLAT):0);
@@ -2639,7 +2871,7 @@ for(const s of STA){
       S.mg.col(0x3a4048).box(SV,ss,pc,ry0-0.57,ry0-0.08,1.66,0.06);
       S.md.col(0x5b6470).box(SV,ss,pc,ry0-0.08,ry0,0.04,0.04);
     }
-    // ベンチ・自動販売機・乗務員用モニター(近くだけ)
+    // ベンチ・自動販売機(近くだけ)
     for(let k=-9;k<=8;k+=2){
       const bs=pm+(k+0.5)*STD.COLP; if(bs<x0+6||bs>x1-6||nearAny(bs,lifts,2.5)) continue;
       if(back) benchAt(S.md,bs,pc+back*(hw-0.5),y,-back);
@@ -2651,13 +2883,6 @@ for(const s of STA){
         if(back) vendAt(S.md,vs,pc+back*(hw-0.42),y,-back,k);
         else {vendAt(S.md,vs,pc+0.38,y,1,k); vendAt(S.md,vs,pc-0.38,y,-1,k+1);}
       }
-    }
-    for(const sg of[-1,1]){        // 乗務員用モニター:列車が着く端(下り=西端・上り=東端)の手前
-      const edge=pc+sg*hw;
-      if(!trackNear(pm,edge+sg*TACTILE_TOL/2,TACTILE_TOL/2)) continue;
-      const tOff=edge+sg*1.5, dir=(tOff<0)?1:-1;              // 南側の線路=下り
-      const ms=dir>0?x1-8:x0+8;
-      monitorAt(S.md,ms,edge-sg*1.1,y,dir);
     }
     if(!big){                                        // 上屋。上り階段の上は階段の屋根に任せて切る
       let a=x0+(s.t==='ctx'?1:2); const e=x1-(s.t==='ctx'?1:2);
@@ -4401,25 +4626,27 @@ const XCAR={
   ino :{L:19.5, W:2.80, H:3.55, FLOOR:1.05, GAUGE:GAUGE_INO,  band:0x1a9ed6, body:0xd8dbdf, panto:true},
   seta:{L:13.6, W:2.50, H:3.40, FLOOR:0.95, GAUGE:GAUGE_SETA, band:0x6aa84f, body:0xe8e6df, panto:true},
 };
-const XMAT={};
-for(const k in XCAR) XMAT[k]={body:M(XCAR[k].body), band:M(XCAR[k].band)};
-const XM_WIN=M(0x25333c), XM_ROOF=M(0xb4b9be), XM_UND=M(0x3a3f45),
-      XM_TRK=M(0x33383d), XM_WHL=M(0x4a4f55), XM_PAN=M(0x8d949b);
-function makeXCar(kind){
-  const S=XCAR[kind], MT=XMAT[kind], g=new THREE.Group(), B=new Map();
-  /* 部品は材質ごとに1つのジオメトリへ積む(1両26個の Mesh を7個に。7両で約130回の描画が減る)。
-     箱=長さ L(x)・高さ H・幅 W(z)、中心 x,y,z、z軸まわりの傾き rz */
-  const buf=mat=>{let q=B.get(mat); if(!q){q={P:[],N:[],I:[]};B.set(mat,q);} return q;};
-  const put=(L,H,W,mat,x,y,z,rz)=>{
-    const q=buf(mat), c=Math.cos(rz||0), s=Math.sin(rz||0);
+/* 材質は3つ:車体・帯・屋根・床下・台車・パンタは頂点カラーで塗る1つ(XM_VC)、窓(夜に灯る。8b章)、
+   車輪(⑦が頂点から軌間を測る)。以前は部品の色ごとに8材質=1両8回の描画だった */
+const XM_VC=M(0xffffff,{vertexColors:true}), XM_WIN=M(0x25333c), XM_WHL=M(0x4a4f55);
+const XC={roof:0xb4b9be, und:0x3a3f45, trk:0x33383d, pan:0x8d949b};
+/* 1両ぶんの面を材質ごとの頂点配列(buf)へ積む。x0=車体中心の局所 x
+   (編成を1つのジオメトリにまとめるときに車両ごとにずらす)。
+   箱=長さ L(x)・高さ H・幅 W(z)、中心 x,y,z、z軸まわりの傾き rz。m=色(16進。XM_VC へ)か材質(窓) */
+function xCarFaces(kind,buf,x0){
+  const S=XCAR[kind], col=new THREE.Color();
+  const put=(L,H,W,m,x,y,z,rz)=>{
+    const vc=(typeof m==='number'), q=buf(vc?XM_VC:m), c=Math.cos(rz||0), s=Math.sin(rz||0);
+    if(vc) setSrgb(col,m);
     for(const [n,f] of boxFaces(-L/2,L/2,-H/2,H/2,-W/2,W/2,['top','bot','px','nx','pz','nz'])){
       const o=q.P.length/3;
-      for(let j=0;j<4;j++){const p=f[j]; q.P.push(x+p[0]*c-p[1]*s, y+p[0]*s+p[1]*c, z+p[2]); q.N.push(f[4][0]*c-f[4][1]*s, f[4][0]*s+f[4][1]*c, f[4][2]);}
+      for(let j=0;j<4;j++){const p=f[j]; q.P.push(x0+x+p[0]*c-p[1]*s, y+p[0]*s+p[1]*c, z+p[2]); q.N.push(f[4][0]*c-f[4][1]*s, f[4][0]*s+f[4][1]*c, f[4][2]);
+        if(vc) q.C.push(col.r,col.g,col.b);}
       q.I.push(o,o+1,o+2,o,o+2,o+3);
     }
   };
   const wheel=(x,y,z,r,t)=>{                                // 車輪(軸は z)。12角の円柱と両面の蓋
-    const q=buf(XM_WHL), n=12, o=q.P.length/3;
+    x+=x0; const q=buf(XM_WHL), n=12, o=q.P.length/3;
     for(let k=0;k<n;k++){const a=k/n*Math.PI*2, cx=Math.cos(a), cy=Math.sin(a);
       for(const sz of[-1,1]){q.P.push(x+r*cx,y+r*cy,z+sz*t/2); q.N.push(cx,cy,0);}}
     for(let k=0;k<n;k++){const a=o+k*2, b=o+((k+1)%n)*2; q.I.push(a,b,b+1,a,b+1,a+1);}
@@ -4429,44 +4656,92 @@ function makeXCar(kind){
   };
   const bodyH=S.H-0.30-S.FLOOR;                       // 腰板から肩まで
   const cy=S.FLOOR+bodyH/2;
-  put(S.L,bodyH,S.W,MT.body,0,cy,0);
+  put(S.L,bodyH,S.W,S.body,0,cy,0);
   // 段付きの丸屋根(2段の箱で近似。遠景では丸みの差は分からない)
-  put(S.L,0.14,S.W,XM_ROOF,0,S.FLOOR+bodyH+0.07,0);
-  put(S.L-0.12,0.16,S.W-0.36,XM_ROOF,0,S.FLOOR+bodyH+0.22,0);
+  put(S.L,0.14,S.W,XC.roof,0,S.FLOOR+bodyH+0.07,0);
+  put(S.L-0.12,0.16,S.W-0.36,XC.roof,0,S.FLOOR+bodyH+0.22,0);
   // 窓帯(側面)と線区の帯
   put(S.L-1.7,0.92,S.W+0.02,XM_WIN,0,S.FLOOR+bodyH*0.62,0);
-  put(S.L,0.20,S.W+0.04,MT.band,0,S.FLOOR+bodyH*0.24,0);
+  put(S.L,0.20,S.W+0.04,S.band,0,S.FLOOR+bodyH*0.24,0);
   // 前後の妻面:線区の帯を回した平妻+前面窓
   for(const sg of [-1,1]){
-    put(0.10,bodyH,S.W-0.06,MT.band,sg*(S.L/2+0.05),cy,0);
+    put(0.10,bodyH,S.W-0.06,S.band,sg*(S.L/2+0.05),cy,0);
     put(0.06,0.86,S.W-0.62,XM_WIN,sg*(S.L/2+0.11),S.FLOOR+bodyH*0.66,0);
   }
   // 床下機器とスカート
-  put(S.L*0.52,0.56,S.W-0.66,XM_UND,0,S.FLOOR-0.36,0);
-  for(const sg of [-1,1]) put(0.14,0.52,S.W-0.30,XM_UND,sg*(S.L/2-0.25),0.52,0);
+  put(S.L*0.52,0.56,S.W-0.66,XC.und,0,S.FLOOR-0.36,0);
+  for(const sg of [-1,1]) put(0.14,0.52,S.W-0.30,XC.und,sg*(S.L/2-0.25),0.52,0);
   // 台車(軌間は線区ごと)
   const wOff=(S.GAUGE+RAIL_W)/2;
   for(const bx of [-S.L*0.33,S.L*0.33]){
-    put(2.60,0.46,S.W-0.60,XM_TRK,bx,0.62,0);
+    put(2.60,0.46,S.W-0.60,XC.trk,bx,0.62,0);
     for(const ax of [bx-1.05,bx+1.05]) for(const sz of [-wOff,wOff]) wheel(ax,0.43,sz,0.43,0.10);
   }
   if(S.panto){   // 簡易のシングルアーム(台枠・下枠・上枠・舟体)
     const py=S.H, px=-S.L*0.28;
-    put(1.90,0.06,1.30,XM_PAN,px,py+0.05,0);
-    put(1.10,0.07,0.09,XM_PAN,px-0.30,py+0.35,0,0.62);
-    put(0.95,0.06,0.07,XM_PAN,px+0.12,py+0.72,0,-0.55);
-    put(0.16,0.05,1.80,XM_PAN,px+0.52,py+0.94,0);
+    put(1.90,0.06,1.30,XC.pan,px,py+0.05,0);
+    put(1.10,0.07,0.09,XC.pan,px-0.30,py+0.35,0,0.62);
+    put(0.95,0.06,0.07,XC.pan,px+0.12,py+0.72,0,-0.55);
+    put(0.16,0.05,1.80,XC.pan,px+0.52,py+0.94,0);
   }
-  for(const [mat,q] of B) g.add(new THREE.Mesh(facesGeo(q.P,q.N,q.I),mat));
+}
+const xBufs=()=>{const B=new Map(); return {B:B, buf:mat=>{let q=B.get(mat); if(!q){q={P:[],N:[],I:[],C:[]};B.set(mat,q);} return q;}};};
+const xGeo=q=>facesGeo(q.P,q.N,q.I,q.C.length?q.C:undefined);
+function makeXCar(kind){
+  const g=new THREE.Group(), X=xBufs();
+  xCarFaces(kind,X.buf,0);
+  for(const [mat,q] of X.B) g.add(new THREE.Mesh(xGeo(q),mat));
   g.userData.xcar=kind;
   scene.add(g); return g;
 }
-/* 交差鉄道の列車。折り返し範囲は「編成の最後尾まで線路の上に載る」ように決める
-   (編成長ぶんを引かずに ±440 まで走らせると、後ろの車両が線路の外へ出て宙に浮く)。 */
-const INO_CARS=5, INO_PITCH=20, INO_TRK=-3;      // 5両・車両間隔・走る線(掘割の南側)
-const INO_LIM=Math.min(-XR.U0,XR.U1)-(INO_CARS-1)*INO_PITCH-XCAR.ino.L/2;
-const inoCars=[];for(let j=0;j<INO_CARS;j++)inoCars.push(makeXCar('ino'));
-let inoZ=-INO_LIM,inoDir=1;
+/* 直線を走る編成(井の頭線)は剛体なので、n 両を材質ごとに1つのジオメトリへ積む(以前の5両×8材質=40回の描画が3回に)。
+   原点=先頭車の中心、車両 j は局所 x=-dir·j·pitch。索引は車両の順に並ぶので、線路の外にいる車両は
+   描く範囲(drawRange)から外せる。1両あたりの索引の数は材質ごとに一定(userData.perCar)。 */
+function makeXTrain(kind,n,pitch,dir){
+  const g=new THREE.Group(), X=xBufs(), per=new Map();
+  for(let j=0;j<n;j++){
+    xCarFaces(kind,X.buf,-dir*j*pitch);
+    if(j===0) for(const [mat,q] of X.B) per.set(mat,q.I.length);
+  }
+  let ext=0;                                              // 車体の半長(前面窓の出っ張りまで)
+  for(const [mat,q] of X.B){
+    const m=new THREE.Mesh(xGeo(q),mat); m.userData.perCar=per.get(mat); g.add(m);
+    for(let i=0;i<per.get(mat);i++) ext=Math.max(ext,Math.abs(q.P[3*q.I[i]]));
+  }
+  g.userData.xcar=kind; g.userData.cars=n; g.userData.ext=ext;
+  scene.add(g); return g;
+}
+/* 井の頭線の列車:上下1本ずつ(左側通行)。下り(吉祥寺方=+u)は西側の線(-3)、上り(渋谷方=-u)は東側の線(+3)。
+   以前は1本が同じ線(-3)を往復していたので、-u へ走る間は右側通行になっていた。
+   各編成は片道を走って線路の端の先へ抜け、見えない所で反対の端へ戻る(線路の上で線を移らない)。
+   線路の外にいる車両は描かない(車両ごとに判定し、描く範囲を詰める)。明大前のホームに停車する。 */
+const INO_CARS=5, INO_PITCH=20, INO_V=16, INO_ACC=0.9, INO_DEC=1.0, INO_DWELL=20;
+const INO_UL=Math.min(-XR.U0,XR.U1);                    // 線路の端(軸の中心から)
+let inoShow=true;                                       // 列車走行 ON/OFF(trainsOn は10章で宣言されるのでここでは見ない)
+const inoTrains=[1,-1].map(function(dir){
+  const g=makeXTrain('ino',INO_CARS,INO_PITCH,dir), ext=g.userData.ext;
+  const pl=dir>0?INO_PLAT.dn:INO_PLAT.up;               // 停車位置:先頭の前端をホームの先の端の1m手前に
+  return {g:g, dir:dir, off:-3*dir, ext:ext, uS:dir>0?pl[1]-1-ext:pl[0]+1+ext,
+          u:dir>0?-150:330, v:INO_V, wait:0, served:false};
+});
+function stepIno(t,dt){
+  if(t.wait>0){ t.wait=Math.max(0,t.wait-dt); t.v=0; }
+  else if(!t.served){
+    const d=t.dir*(t.uS-t.u);                            // 停車位置までの残り
+    if(d<=0||t.v*dt>=d){ t.u=t.uS; t.v=0; t.wait=INO_DWELL; t.served=true; }
+    else t.v=Math.min(t.v+INO_ACC*dt, INO_V, Math.sqrt(2*INO_DEC*d));
+  } else t.v=Math.min(t.v+INO_ACC*dt, INO_V);
+  t.u+=t.dir*t.v*dt;
+  if(t.dir*t.u-(INO_CARS-1)*INO_PITCH-t.ext>INO_UL){ t.u=-t.dir*(INO_UL+t.ext); t.served=false; t.v=INO_V; }
+  // 線路の上に全体が載っている車両だけ描く(j0..j1 は連続)
+  let j0=-1, j1=-1;
+  for(let j=0;j<INO_CARS;j++) if(Math.abs(t.u-t.dir*j*INO_PITCH)+t.ext<=INO_UL){ if(j0<0) j0=j; j1=j; }
+  const g=t.g;
+  g.visible=inoShow&&j0>=0;
+  for(const m of g.children) m.geometry.setDrawRange(j0<0?0:j0*m.userData.perCar, j0<0?0:(j1-j0+1)*m.userData.perCar);
+  g.position.set(INO.x+INO.ax*t.u+INO.nx*t.off, XR.RAILTOP, INO.z+INO.az*t.u+INO.nz*t.off);
+  g.rotation.y=-INO.phi;
+}
 const SETA_CARS=2, SETA_PITCH=14;
 const setaCars=[];for(let j=0;j<SETA_CARS;j++)setaCars.push(makeXCar('seta'));
 const SETA_LO=XR.SETA_U0+(SETA_CARS-1)*SETA_PITCH+XCAR.seta.L/2,
@@ -4477,13 +4752,7 @@ let setaZ=SETA_LO,setaDir=1;
    (以前は .86 固定で、レール頭頂面 .89 より3cm沈み、車輪とレールの面が
    同じ高さで重なってちらついていた)。 */
 function stepXRail(dt){
-  inoZ+=inoDir*13*dt;
-  if(inoZ>INO_LIM){inoZ=INO_LIM;inoDir=-1;}else if(inoZ<-INO_LIM){inoZ=-INO_LIM;inoDir=1;}
-  for(let j=0;j<inoCars.length;j++){
-    const u=inoZ-inoDir*j*INO_PITCH, c=inoCars[j];   // 井の頭線の実測軸に沿って走行
-    c.position.set(INO.x+INO.ax*u+INO.nx*INO_TRK, XR.RAILTOP, INO.z+INO.az*u+INO.nz*INO_TRK);
-    c.rotation.y=-INO.phi;
-  }
+  for(const t of inoTrains) stepIno(t,dt);              // 井の頭線の実測軸に沿って走行
   setaZ+=setaDir*8*dt;
   if(setaZ>SETA_HI){setaZ=SETA_HI;setaDir=-1;}else if(setaZ<SETA_LO){setaZ=SETA_LO;setaDir=1;}
   for(let j=0;j<setaCars.length;j++){
@@ -4862,7 +5131,7 @@ function setChase(v){
 
 function setTrainsVisible(v){   // 列車走行OFF時は全車両を隠す
   for(const t of trains)for(const c of t.cars)c.visible=v;
-  inoCars.forEach(c=>c.visible=v);setaCars.forEach(c=>c.visible=v);
+  inoShow=v;stepXRail(0);setaCars.forEach(c=>c.visible=v);   // 井の頭線は線路の上の車両だけ(stepIno が見る)
 }
 /* ============ 11. 縦断図ナビ ============ */
 const nsvg=document.getElementById('navSvg'),NSPS='http://www.w3.org/2000/svg';
@@ -5184,6 +5453,7 @@ const CINE=(function(){
     scene.fog.near=t.fog[0]; scene.fog.far=t.fog[1];
     scene.background.copy(srgb(SKY.HOR));
     NIGHT.set(!!t.lights);      // 窓・街灯・ホームの灯り(8b章)
+    pidsSetTime(k);             // 発車標の時刻(7章)
     applyLook();                // 地表・樹木は時刻でも明るさが変わる
   }
   /* 地表と樹木の色を今の「季節 × 時刻」で塗り直す。

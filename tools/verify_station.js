@@ -16,7 +16,8 @@ const X = require('./stub_three')(path,
   'STAIRS:(typeof STAIRS!=="undefined"?STAIRS:[]),SIGNS:(typeof SIGNS!=="undefined"?SIGNS:[]),' +
   'WEAVE:(typeof WEAVE!=="undefined"?WEAVE:[]),MAT:MAT,MAT_BRICK:MAT_BRICK,MAT_STONE:MAT_STONE,MAT_LOUVER:MAT_LOUVER,MAT_RIB:MAT_RIB,' +
   'platRange:platRange,deckHalf:deckHalf,' +
-  'PSD:PSD,K8:K8,DECK_END:DECK_END,LODS:LODS,POLE_S:POLE_S,WIRE_CAT:WIRE_CAT');
+  'PSD:PSD,K8:K8,DECK_END:DECK_END,LODS:LODS,POLE_S:POLE_S,WIRE_CAT:WIRE_CAT,' +
+  'GUIDES:GUIDES,depList:depList,pidsSetTime:pidsSetTime');
 
 /* ---- 検証側が独立に持つ寸法 -------------------------------------------- */
 const REF = {
@@ -54,6 +55,16 @@ const REF = {
   SWEEP: 1.0,              // 下高井戸の大庇の縁の高さの変化(反り上がり)の最小[m]
   BOW_PITCH: [10, 20],     // 上北沢の白い弓形の柱の間隔[m]
   BOW_TOP: 6.5,            // 同 上端(レール面から)の最小[m]:屋根の軒より上へ伸びる
+  // 発車標(利用者指示:階段とホームの接続部の付近)
+  DEP_DIST: [1.0, 6.0],    // 階段口(入口の端)からホーム側への距離[m]
+  DEP_EDGE: 0.25,          // ホームの縁からの内側の余裕[m]
+  DEP_NOW: { morning: 450, noon: 720, evening: 1050, night: 1260 },   // 時刻の場面ごとの「今」[分]
+  DEP_WITHIN: 25,          // 次の2本はこの分以内(日中の京王線は1方向に毎時十数本)
+  // 種別ごとの停車駅(笹塚〜仙川。2022年3月のダイヤ改正後)
+  STOPS: { '特急': ['笹塚', '明大前', '千歳烏山'], '急行': ['笹塚', '明大前', '桜上水', '千歳烏山'],
+           '区急': ['笹塚', '明大前', '桜上水', '千歳烏山', '仙川'], '各停': 'all' },
+  DEST_DOWN: ['京王八王子', '高尾山口', '橋本', '調布', 'つつじヶ丘', '若葉台'],
+  DEST_UP: ['新宿', '本八幡', '新線新宿'],
 };
 
 const rows = [];
@@ -86,7 +97,7 @@ function tracksAt(s, end) {
   return out;
 }
 const STA_TAGS = new Set(['ホーム', '点字ブロック', 'ホーム端の柵', 'ホームドア', '階段の囲い', 'エレベーター',
-  'ベンチ', '自動販売機', '乗務員モニター', 'ホームの柱', '吊りレール', '屋根の梁', '大屋根', '上屋',
+  'ベンチ', '自動販売機', '発車標', '階段の案内', 'ホームの柱', '吊りレール', '屋根の梁', '大屋根', '上屋',
   '駅舎', '駅舎の庇', '大庇', '大庇の柱', '大庇の縁', '橋上駅舎', '橋上駅舎の柱']);
 
 /* ---- 1. 建築限界:駅の部品が列車・パンタグラフの通る空間に入らない ---------- */
@@ -206,7 +217,7 @@ const STA_TAGS = new Set(['ホーム', '点字ブロック', 'ホーム端の柵
 // 2b. ホームの柱・ベンチ・自動販売機は井戸・EVの中に立たない(階段を増やしたので位置がぶつかりうる)
 {
   let bad = null, n = 0;
-  const FLOOR = new Set(['ホームの柱', 'ベンチ', '自動販売機', '乗務員モニター']);
+  const FLOOR = new Set(['ホームの柱', 'ベンチ', '自動販売機']);
   for (const q of X.STRUCT) {
     if (!FLOOR.has(q.tag)) continue;
     n++;
@@ -214,6 +225,103 @@ const STA_TAGS = new Set(['ホーム', '点字ブロック', 'ホーム端の柵
       if (q.s1 > w.s0 && q.s0 < w.s1 && q.o1 > w.o0 && q.o0 < w.o1 && !bad) bad = [w.st.n, w.kind, q.tag, 's=' + q.s0.toFixed(1)];
   }
   ok('柱・ベンチ等が井戸・EVに立たない', bad === null, '0件', bad ? bad.join(' ') : '0件(' + n + '個)');
+}
+
+// 2c. 乗務員用のホームモニターは置かない(利用者指示:車上の車内モニター式とする)
+ok('乗務員モニターを置かない', !X.STRUCT.some((q) => q.tag === '乗務員モニター'), '0台',
+  X.STRUCT.filter((q) => q.tag === '乗務員モニター').length + '台');
+// 2d. 階段口の案内(利用者指示):ホームから階段を望む向き=黄の「出口」(降りた乗客に見える)、
+//     階段からホームを望む向き=白の番線案内。番線は検証側で数え直す(ホームの縁の外 0.5〜2.6m の線路を
+//     南から 1,2,…)。下り(西行き)は左側通行で、進行方向の左の線=京王八王子方面。
+//     発車標は、階段口のホーム側にそのホームの線ごとに1台(島式は線の側の半分の上)。
+{
+  const G = X.GUIDES;
+  const sub = (a, b) => [a.x - b.x, a.z - b.z];
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1];
+  const staTrk = new Map();
+  for (const st of X.STA) {
+    const pr = X.platRange(st), pm = (pr[0] + pr[1]) / 2, L = [];
+    for (const p of X.PLATS) {
+      if (!(p.x0 <= pm && p.x1 >= pm)) continue;
+      for (const sg of [-1, 1]) {
+        const edge = p.off + sg * p.hw;
+        for (const t of X.TRACKS) {
+          if (pm < t.x0 || pm > t.x1) continue;
+          const o = t.zf(pm), d = sg * (o - edge);
+          if (d > 0.5 && d < 2.6 && !L.some((q) => Math.abs(q.off - o) < 0.5)) L.push({ off: o });
+        }
+      }
+    }
+    L.sort((a, b) => a.off - b.off).forEach((q, j) => { q.n = j + 1; });
+    // 下りの側:+s(西)へ進むときの左(上×進行方向)が off のどちら向きか
+    const f0 = X.frame(pm, 0), tW = sub(X.frame(pm + 1, 0), f0), nO = sub(X.frame(pm, 1), f0);
+    const downSign = Math.sign(dot([tW[1], -tW[0]], nO));
+    staTrk.set(st, { L: L, down: downSign, pm: pm });
+  }
+  const platOf = (w) => X.PLATS.find((p) => w.o0 >= p.off - p.hw - 1e-6 && w.o1 <= p.off + p.hw + 1e-6 && w.s0 >= p.x0 && w.s1 <= p.x1);
+  let badFace = null, badNum = null, badLR = null, badDest = null, badDep = null, nS = 0, nD = 0;
+  for (const w of X.STAIRS) {
+    if (w.kind !== '階段') continue;
+    const e0 = w.dir > 0 ? w.s0 : w.s1, S = staTrk.get(w.st), p = platOf(w);
+    const own = S.L.filter((q) => p && [-1, 1].some((sg) => { const d = sg * (q.off - (p.off + sg * p.hw)); return d > 0.5 && d < 2.6; }));
+    const g = G.find((q) => q.kind === 'stair' && q.st === w.st && Math.abs(q.s - e0) <= 1.0 && q.off >= w.o0 - 1e-6 && q.off <= w.o1 + 1e-6);
+    if (!g) { if (!badFace) badFace = [w.st.n, 's=' + e0.toFixed(0), '案内が無い']; continue; }
+    nS++;
+    // 向き:黄の出口の面の法線はホーム側(-dir)、番線案内は階段側(+dir)。'e'=-s 向き/'w'=+s 向き
+    const want = w.dir > 0 ? ['e', 'w'] : ['w', 'e'];
+    if ((g.faceP !== want[0] || g.faceS !== want[1] || Math.sign(e0 - g.s) !== Math.sign(w.dir)) && !badFace)
+      badFace = [w.st.n, 's=' + e0.toFixed(0), '出口' + g.faceP + '/番線' + g.faceS + '(期待 ' + want.join('/') + ')'];
+    // 番線の数・番号・方面
+    if (g.shown.length !== own.length && !badNum) badNum = [w.st.n, 's=' + e0.toFixed(0), g.shown.length + '線を表示/ホームの線' + own.length];
+    for (const q of g.shown) {
+      const m = S.L.find((r) => Math.abs(r.off - q.off) < 0.5);
+      if ((!m || m.n !== q.n) && !badNum) badNum = [w.st.n, 'off ' + q.off.toFixed(2), q.n + '番線(期待 ' + (m ? m.n : '?') + ')'];
+      const isDown = Math.sign(q.off) === S.down;
+      if ((isDown ? q.dest.indexOf('京王八王子') < 0 : q.dest.indexOf('新宿') < 0) && !badDest)
+        badDest = [w.st.n, q.n + '番線', q.dest];
+    }
+    // 左右:番線案内を見る人は階段側に立ち、ホーム側(-dir·s)を向く。左に表示した線が見る人の左にある
+    if (g.shown.length === 2) {
+      const tS = sub(X.frame(g.s + 1, g.off), X.frame(g.s, g.off)), look = [-w.dir * tS[0], -w.dir * tS[1]], left = [look[1], -look[0]];
+      const d = sub(X.frame(g.s, g.shown[0].off), X.frame(g.s, g.shown[1].off));
+      if (dot(d, left) <= 0 && !badLR) badLR = [w.st.n, 's=' + e0.toFixed(0), '左に' + g.shown[0].n + '番線・右に' + g.shown[1].n + '番線'];
+    }
+    // 発車標:ホームの線ごとに、階段口のホーム側 REF.DEP_DIST の範囲に1台。ホームに収まり、島式は線の側
+    for (const q of own) {
+      const d = G.find((r) => r.kind === 'dep' && r.st === w.st && Math.abs(r.toff - q.off) < 0.5 && Math.abs(r.off - p.off) < p.hw &&
+        Math.sign(e0 - r.s) === Math.sign(w.dir) && Math.abs(r.s - e0) >= REF.DEP_DIST[0] && Math.abs(r.s - e0) <= REF.DEP_DIST[1]);
+      if (!d) { if (!badDep) badDep = [w.st.n, 's=' + e0.toFixed(0), q.n + '番線の発車標が無い']; continue; }
+      nD++;
+      if (d.n !== q.n && !badDep) badDep = [w.st.n, q.n + '番線に' + d.n + '番線の表示'];
+      if (Math.abs(d.off - p.off) + d.w / 2 > p.hw - REF.DEP_EDGE && !badDep) badDep = [w.st.n, q.n + '番線', 'ホームの縁に近い'];
+      if (own.length === 2 && Math.sign(d.off - p.off) !== Math.sign(q.off - p.off) && !badDep) badDep = [w.st.n, q.n + '番線', '線と反対の側'];
+    }
+  }
+  ok('階段口:ホーム側=出口(黄)/階段側=番線案内(白)', badFace === null && nS > 0, '全ての階段', badFace ? badFace.join(' ') : nS + 'か所');
+  ok('番線案内の番線(南から1,2,…)', badNum === null, 'ホームの線と一致', badNum ? badNum.join(' ') : '全て');
+  ok('番線案内の左右が見る向きと合う', badLR === null, '全て', badLR ? badLR.join(' ') : '全て');
+  ok('番線案内の方面(下り=左側通行の側)', badDest === null, '下り=京王八王子方面/上り=新宿方面', badDest ? badDest.join(' ') : '全て');
+  ok('発車標が階段口に線ごと', badDep === null && nD > 0, 'ホーム側' + REF.DEP_DIST.join('〜') + 'm・縁から' + REF.DEP_EDGE + 'm内側', badDep ? badDep.join(' ') : nD + '台');
+  // 発車標の時刻表:どの時刻でも、次の2本は今より後・REF.DEP_WITHIN 分以内、その駅に止まる種別、向きの合う行先
+  let badT = null, nT = 0;
+  for (const k of Object.keys(REF.DEP_NOW)) {
+    X.pidsSetTime(k);
+    for (const d of G) {
+      if (d.kind !== 'dep') continue;
+      const L = X.depList(X.STA.indexOf(d.st), d.t), now = REF.DEP_NOW[k], down = Math.sign(d.toff) === staTrk.get(d.st).down;
+      if (L.length !== 2 && !badT) badT = [d.st.n, d.n + '番線', k, L.length + '本'];
+      for (const e of L) {
+        nT++;
+        const stops = REF.STOPS[e[0]];
+        if (!stops && !badT) badT = [d.st.n, '種別 ' + e[0]];
+        else if (stops !== 'all' && stops.indexOf(d.st.n) < 0 && !badT) badT = [d.st.n, e[0] + 'は止まらない'];
+        if ((e[2] < now || e[2] - now > REF.DEP_WITHIN) && !badT) badT = [d.st.n, k, '発車 ' + e[2] + '分(今 ' + now + ')'];
+        if ((down ? REF.DEST_DOWN : REF.DEST_UP).indexOf(e[1]) < 0 && !badT) badT = [d.st.n, d.n + '番線', '行先 ' + e[1]];
+      }
+    }
+  }
+  X.pidsSetTime('noon');
+  ok('発車標の時刻表', badT === null && nT > 0, '止まる種別・今から' + REF.DEP_WITHIN + '分以内・向きの合う行先', badT ? badT.join(' ') : nT + '本(4つの時刻)');
 }
 
 /* ---- 3. 駅名標:駅ごとの数と、見る向きに対する左右の駅名 ---------------------- */
