@@ -14,7 +14,7 @@
 //   使い方: node tools/verify_car.js [keio_elevated_3d.html]
 const path = process.argv[2] || 'keio_elevated_3d.html';
 const X = require('./stub_three')(path,
-  'K8:K8,K8GEO:K8GEO,K8_WIN:K8_WIN,K8_FORMATIONS:K8_FORMATIONS,makeCar:makeCar,' +
+  'K8:K8,K8GEO:K8GEO,K8_WIN:K8_WIN,K8_FORMATIONS:K8_FORMATIONS,K9_FORMATIONS:K9_FORMATIONS,makeCar:makeCar,' +
   'setCarDoors:setCarDoors,k8nose:k8nose,trains:trains,parkedCars:parkedCars,' +
   'WIRE_TRO:WIRE_TRO,RAIL_OFF:RAIL_OFF,GAUGE:GAUGE,RAIL_W:RAIL_W,RAIL_TOP:RAIL_TOP,' +
   'seatCar:seatCar,frame:frame,railY:railY,zRunDown:zRunDown,M_HL:M_HL,M_TL:M_TL,' +
@@ -41,6 +41,9 @@ const REF = {
   AC_TOP: 4.055, AC_L: 4.38,
   PANTO_FROM_SHINJUKU: [2, 4, 5, 8, 9],                // パンタは新宿方から2・4・5・8・9両目
   CARS_8714F: ['8714', '8014', '8064', '8114', '8164', '8514', '8564', '8214', '8264', '8764'],
+  // 9000系 9731F(10両。編成表の公表の並び)。パンタは デハ9000形・デハ9050形の京王八王子寄りに1基
+  CARS_9731F: ['9731', '9031', '9081', '9531', '9131', '9581', '9681', '9231', '9281', '9781'],
+  PANTO_9731F: [2, 3, 5, 8, 9],
   TOL: 0.01,
 };
 
@@ -177,9 +180,11 @@ const range = (pts, k) => { let lo = 1e9, hi = -1e9; for (const p of pts) { if (
   for (const t of X.trains) {
     for (let j = 0; j < t.cars.length; j++) {
       const c = t.cars[j], o = c.userData.k8, n = t.dir > 0 ? 10 - j : j + 1;
-      const F = Object.values(X.K8_FORMATIONS).find((f) => f.cars.indexOf(o.num) >= 0);
+      const F = Object.values(X.K8_FORMATIONS).concat(Object.values(X.K9_FORMATIONS)).find((f) => f.cars.indexOf(o.num) >= 0);
       if (!F || F.cars.indexOf(o.num) !== n - 1) badNum = badNum || ('列車' + t.dir + ' j=' + j + ' ' + o.num);
-      const wantP = REF.PANTO_FROM_SHINJUKU.indexOf(n) >= 0;
+      const s9 = o.num[0] === '9';                                  // 車番の千の位で形式を見分ける
+      if (s9 !== (o.series === '9000')) badNum = badNum || ('j=' + j + ' ' + o.num + ' の形式が ' + o.series);
+      const wantP = (s9 ? REF.PANTO_9731F : REF.PANTO_FROM_SHINJUKU).indexOf(n) >= 0;
       if (o.panto !== wantP) badPanto = badPanto || ('j=' + j + ' 新宿方から' + n + '両目');
       if (o.panto) {
         // パンタは京王八王子方(西)の台車の上:車体ローカルx の符号=進行方向が西なら+
@@ -190,8 +195,12 @@ const range = (pts, k) => { let lo = 1e9, hi = -1e9; for (const p of pts) { if (
       if (o.lights !== wantL) badLight = badLight || ('j=' + j + ' ' + o.lights);
     }
   }
-  ok('車番の並び(新宿方から)', badNum === null, '8714F/8713F の順', badNum || '3本とも一致');
-  ok('パンタの車両', badPanto === null, '新宿方から2・4・5・8・9両目', badPanto || '3本とも一致');
+  ok('車番の並び(新宿方から)', badNum === null, '8714F/9731F/8713F の順', badNum || '3本とも一致');
+  ok('パンタの車両', badPanto === null, '8000系=2・4・5・8・9/9000系=2・3・5・8・9両目', badPanto || '3本とも一致');
+  ok('9731F の車番', JSON.stringify(X.K9_FORMATIONS['9731F'].cars) === JSON.stringify(REF.CARS_9731F),
+    REF.CARS_9731F.join(' '), X.K9_FORMATIONS['9731F'].cars.join(' '));
+  ok('9000系の編成が走る', X.trains.some((t) => t.cars.every((c) => c.userData.k8.series === '9000')), '1本以上',
+    X.trains.filter((t) => t.cars.every((c) => c.userData.k8.series === '9000')).length + '本');
   ok('パンタの位置', badPos === null, '京王八王子方の台車上(±6.88)', badPos || '一致');
   ok('灯火', badLight === null, '先頭=前照灯/最後尾=尾灯', badLight || '3本とも一致');
   // 8714F は実測の編成表どおり
