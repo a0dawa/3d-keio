@@ -36,6 +36,9 @@ const PAGE = path.join(OUT, 'page.html');
   src = src.replace(/<script src="https?:\/\/[^"]*three[^"]*"><\/script>/, '<script src="three.min.js"></script>');
   fs.writeFileSync(PAGE, src);
   fs.copyFileSync(THREEJS, path.join(OUT, 'three.min.js'));
+  // 沿線の建物データ(別ファイル)。HTML の隣にあれば一緒に写す(無ければ模式の街で測る)
+  const pl = path.join(path.dirname(HTML), 'plateau_bldg.js');
+  if (fs.existsSync(pl)) fs.copyFileSync(pl, path.join(OUT, 'plateau_bldg.js'));
 }
 function findChromium() {
   if (opt('chromium')) return opt('chromium');

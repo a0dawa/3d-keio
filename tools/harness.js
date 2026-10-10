@@ -7,6 +7,11 @@ const html = fs.readFileSync(path, 'utf8');
 const m = html.match(/<script>([\s\S]*?)<\/script>/);
 if (!m) { console.error('NO_SCRIPT'); process.exit(1); }
 const code = m[1];
+// 別ファイルの沿線の建物データ(あれば先に読む)
+{
+  const pl = require('path').join(require('path').dirname(path), 'plateau_bldg.js');
+  if (/<script src="plateau_bldg\.js">/.test(html) && fs.existsSync(pl)) (0, eval)(fs.readFileSync(pl, 'utf8'));
+}
 
 // 何でも受け止めるProxy(メソッド呼び出し・プロパティアクセス・new すべて許容)
 const anything = new Proxy(function () {}, {

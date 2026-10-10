@@ -8,6 +8,7 @@
 //     const X = require('./stub_three')('keio_elevated_3d.html', 'K8:K8,STA:STA');
 //     // X.K8 / X.STA が取り出せる
 const fs = require('fs');
+const nodePath = require('path');
 
 /* ---- 何でも受け止めるProxy(測定に関係しないブラウザ/描画APIはこれで潰す) ---- */
 const anything = new Proxy(function () {}, {
@@ -288,6 +289,9 @@ module.exports = function runHtml(htmlPath, exportExpr) {
   const m = html.match(/<script>([\s\S]*?)<\/script>/);
   if (!m) { console.error('NO_SCRIPT'); process.exit(1); }
   install();
+  // 別ファイルの沿線の建物データ(<script src="plateau_bldg.js">)。HTML と同じ場所にあれば先に読む
+  const pl = nodePath.join(nodePath.dirname(htmlPath), 'plateau_bldg.js');
+  if (/<script src="plateau_bldg\.js">/.test(html) && fs.existsSync(pl)) (0, eval)(fs.readFileSync(pl, 'utf8'));
   try {
     // eval に export 文を継ぎ足す:同一スコープなので const/let で宣言された値も取り出せる
     eval(m[1] + '\n;globalThis.__X={' + exportExpr + '};');

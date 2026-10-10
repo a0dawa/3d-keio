@@ -82,6 +82,9 @@ const PAGE = path.join(OUT, 'page.html');
       '<script src="three.min.js"></script>');
     if (src === before) { console.error('three のscriptタグが見つからない'); process.exit(1); }
   }
+  // 沿線の建物データ(別ファイル)。HTML の隣にあれば一緒に写す
+  const pl = path.join(path.dirname(OPT.html), 'plateau_bldg.js');
+  if (fs.existsSync(pl)) fs.copyFileSync(pl, path.join(OUT, 'plateau_bldg.js'));
   fs.writeFileSync(PAGE, src);
 }
 
