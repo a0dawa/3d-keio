@@ -528,7 +528,10 @@ const TPROP = {};
    同じ線路に別の列車が重ならないこと。 */
 {
   const SHOT = 10, DT = 1 / 12, MOVE = 80;    // カットの長さ[秒]・最低限の動き[m](検証側の値)
-  let badA = null, badD = null, badO = null, n = 0;
+  // 特急の停車駅(京王の特急。この区間内)。それ以外の駅では、撮影の到着は「通過」になる(止まらずに駅を抜ける)
+  const EXP_STOPS = ['笹塚', '明大前', '千歳烏山'];
+  const stopsHere = (t, st) => !t.kind || t.kind === '各停' || EXP_STOPS.indexOf(st.n) >= 0;
+  let badA = null, badD = null, badO = null, n = 0, nPass = 0;
   for (let i = 0; i < X.STA.length; i++) for (const dir of [1, -1]) {
     const nm = X.STA[i].n + (dir > 0 ? '下り' : '上り');
     // 到着
@@ -538,9 +541,13 @@ const TPROP = {};
     for (let k = 0; k < SHOT / DT; k++) C.step(DT);
     const movedA = (t.x - x0) * dir;
     let stopped = false;
+    const pass = !stopsHere(t, X.STA[i]), stopS0 = X.stopPosOf(X.STA[i], dir) - dir * X.CAR_HALF;
     for (let k = 0; k < 20 / DT && !stopped; k++) { C.step(DT); if (t.st === 'dwell') stopped = t.atSt === X.STA[i]; }
     if (!(movedA >= MOVE)) badA = badA || nm + ' 動きが小さい ' + movedA.toFixed(0) + 'm';
-    else if (!stopped) badA = badA || nm + ' その駅に止まらない';
+    else if (pass) {                              // 通過駅:止まらず、停止位置を越えて駅を抜ける
+      nPass++;
+      if (stopped || !((t.x - stopS0) * dir > 0)) badA = badA || nm + '(通過駅) ' + (stopped ? '止まった' : '駅を抜けない');
+    } else if (!stopped) badA = badA || nm + ' その駅に止まらない';
     for (const q of X.trains) if (q !== t && q.dir === dir && Math.abs(q.x - t.x) < 300)
       badO = badO || nm + ' 2本が重なる';
     // 発車
@@ -553,7 +560,7 @@ const TPROP = {};
     if (!(movedD >= MOVE) || !(away0 >= 0 && away0 < 60)) badD = badD || nm + ' 動き' + movedD.toFixed(0) + 'm/駅から' + away0.toFixed(0) + 'm';
     n++;
   }
-  ok('到着:ホームへ滑り込む', badA === null, MOVE + 'm以上動き、その駅に止まる', badA || n + '通り');
+  ok('到着:ホームへ滑り込む(特急の通過駅は通過)', badA === null && nPass > 0, MOVE + 'm以上動き、その駅に止まる/通過する', badA || n + '通り(うち通過' + nPass + ')');
   ok('発車:駅を出ていく', badD === null, '停止位置の直後から' + MOVE + 'm以上', badD || n + '通り');
   ok('同じ線路に2本重ならない', badO === null, '300m以内に同じ向きなし', badO || 'なし');
 }

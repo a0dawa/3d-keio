@@ -17,7 +17,7 @@ const X = require('./stub_three')(path,
   'setRideState:setRideState,getRideState:getRideState,setNotch:setNotch,NIDX_N:NIDX_N,' +
   'NOTCH_LAG:NOTCH_LAG,ATC_DISP_STEP:ATC_DISP_STEP,ATC_UP_LAG:ATC_UP_LAG,' +
   'ridePSDFor:ridePSDFor,mainOff:mainOff,' +
-  'DOOR_OPEN_SEC:DOOR_OPEN_SEC,DOOR_STOP_TOL:DOOR_STOP_TOL,stopPosOf:stopPosOf');
+  'DOOR_OPEN_SEC:DOOR_OPEN_SEC,DOOR_STOP_TOL:DOOR_STOP_TOL,stopPosOf:stopPosOf,placeTrain:placeTrain');
 
 /* ---- 期待値(検証側が独立して持つ) ---------------------------------------- */
 const REF = {
@@ -48,6 +48,10 @@ const REF = {
   // 戸閉灯は実物と同じ「扉が閉まっていれば点灯」。開いている間は消灯する
   LAMP_ON_WHEN_CLOSED: true,
   DOOR_STOP_TOL: 1.0,      // 停車と見なす停止位置からのずれ[m]
+  // 特急(利用者指示:各停以外の種別を走らせて識別灯を点ける)。停車駅は京王の特急(2022年3月改正後)の区間内
+  EXP_STOPS: ['笹塚', '明大前', '千歳烏山'],
+  EXP_VMAX_KMH: 90,        // 特急の上限速度
+  EXP_DWELL: 25,           // 特急の停車時間(待避しない)
 };
 
 const rows = [];
@@ -104,6 +108,70 @@ for (let i = 0; i < 200000 && log.length < 40; i++) {
 }
 ok('自動運転が全駅に停車', log.length >= X.STA.length, X.STA.length + '駅以上', log.length + '回停車');
 ok('上限速度を超えない', vmax <= REF.VMAX_KMH + 0.5, '≤' + REF.VMAX_KMH + 'km/h', vmax.toFixed(1) + 'km/h');
+
+/* ---- 2b. 特急(上り1本を全線):停車駅だけに停まり、本線を走る ------------------- */
+{
+  const e = { dir: -1, kind: '特急', x: X.DOM.x1 - 40, x0: X.DOM.x1 - 40, v: 0, st: 'run', dwell: 0, target: null, atSt: null };
+  const elog = [];
+  let ev = 0, pv = null, ds = 0, ts = 0;
+  for (let i = 0; i < 200000; i++) {
+    X.driveTrain(e, dt); ts += dt;
+    if (e.v * 3.6 > ev) ev = e.v * 3.6;
+    if (e.st === 'dwell' && pv !== 'dwell') ds = ts;
+    if (pv === 'dwell' && e.st !== 'dwell') elog.push({ n: e.atSt ? e.atSt.n : '?', x: e.x, dwell: ts - ds });
+    if (e.x === e.x0 && i > 10) break;        // 端で入り直した=全線を走り終えた
+    pv = e.st;
+  }
+  // 上りなので、西(s の大きい方)から順に停車駅を通る
+  const want = X.STA.filter((s) => REF.EXP_STOPS.indexOf(s.n) >= 0).sort((a, b) => b.x - a.x).map((s) => s.n);
+  ok('特急は停車駅だけに停まる', elog.map((q) => q.n).join('/') === want.join('/'), want.join('/'), elog.map((q) => q.n).join('/') || '停車なし');
+  const badD = elog.find((q) => Math.abs(q.dwell - REF.EXP_DWELL) > 1.5);
+  ok('特急の停車時間', elog.length > 0 && !badD, REF.EXP_DWELL + '秒', badD ? badD.n + ' ' + badD.dwell.toFixed(1) + '秒' : (elog.length ? '全駅' + REF.EXP_DWELL + '秒' : '-'));
+  ok('特急の上限速度', ev <= REF.EXP_VMAX_KMH + 0.5 && ev > REF.VMAX_KMH + 5, '各停より速く ≤' + REF.EXP_VMAX_KMH + 'km/h', ev.toFixed(1) + 'km/h');
+  const badS = elog.find((q) => { const st = X.STA.find((s) => s.n === q.n); return Math.abs(q.x - (X.stopPosOf(st, -1) + X.CAR_HALF)) > REF.TOL; });
+  ok('特急の停止位置の正着', elog.length > 0 && !badS, '±' + REF.TOL + 'm', badS ? badS.n : '全駅OK');
+  // 走行中の列車:上りの1本が特急・新宿行で、先頭車の表示が特急
+  const ex = X.trains.filter((q) => q.kind === '特急');
+  const sg = ex.length === 1 ? ex[0].cars[0].userData.k8.sign : null;
+  ok('走行列車に特急が1本(上り・新宿行)', ex.length === 1 && ex[0].dir === -1 && sg && sg.kind === '特急' && sg.dest === '新宿',
+    '1本・上り・特急 新宿', ex.length + '本' + (sg ? '・' + sg.kind + ' ' + sg.dest : ''));
+  // 描かれる位置:通過する八幡山は外側の通過線、2面4線の駅は本線(内側)。先頭車の位置を frame と比べる(北が+off)
+  if (ex.length === 1) {
+    const tr = ex[0], save = { x: tr.x, st: tr.st, dwell: tr.dwell, atSt: tr.atSt, v: tr.v, target: tr.target };
+    let bad = null;
+    const cases = [['八幡山', REF.HACHI_PASS_OFF]].concat(REF.QUAD_STA.map((n) => [n, REF.QUAD_MAIN_OFF]));
+    for (const [n, off] of cases) {
+      const st = X.STA.find((s) => s.n === n);
+      tr.x = st.x; X.placeTrain(tr);
+      const c = tr.cars[0].position, q = X.frame(st.x, off), d = Math.hypot(c.x - q.x, c.z - q.z);
+      if (d > 0.3 && !bad) bad = n + ' ずれ' + d.toFixed(2) + 'm';
+    }
+    ok('特急は本線を走る(八幡山は通過線)', !bad, '八幡山±' + REF.HACHI_PASS_OFF + '・2面4線±' + REF.QUAD_MAIN_OFF + '(0.3m以内)', bad || (cases.length + '駅とも'));
+    // 2面4線の駅に停まると、開くのは本線側(内側)のホームドアだけ
+    const st = X.STA.find((s) => s.n === '明大前');
+    tr.x = X.stopPosOf(st, -1) + X.CAR_HALF; tr.st = 'dwell'; tr.dwell = 20; tr.atSt = st; tr.v = 0;
+    const others = X.trains.filter((q) => q !== tr).map((q) => ({ q: q, st: q.st, atSt: q.atSt }));
+    for (const o of others) { o.q.st = 'run'; o.q.atSt = null; }
+    for (let i = 0; i < 120; i++) X.stepPSD(0.05);
+    const op = X.PSD.filter((q) => q.r > 0.95);
+    const okRow = op.length === 1 && op[0].st === st && Math.abs(op[0].off - REF.QUAD_MAIN_OFF) < 2.5;
+    ok('特急の停車で本線側のホームドアが開く', okRow, '明大前の本線側(off≈+' + REF.QUAD_MAIN_OFF + ')の1列',
+      op.map((q) => q.st.n + ' off' + q.off.toFixed(2)).join(' ') || '開かない');
+    for (let i = 0; i < 150; i++) X.stepCarDoors(tr, 0.05);
+    const dOpen = tr.dr, dSide = tr.dside;
+    Object.assign(tr, save); for (const o of others) { o.q.st = o.st; o.q.atSt = o.atSt; }
+    tr.st = 'run'; tr.atSt = null;
+    for (let i = 0; i < 120; i++) X.stepPSD(0.05);
+    for (let i = 0; i < 150; i++) X.stepCarDoors(tr, 0.05);
+    Object.assign(tr, save);
+    // 開く面:本線の北側(+off 側)にホームがある。seatCar と同じ式 R=F×UP で、車体ローカル+z が北を向くかを独立に求める
+    const s = st.x, pA = X.frame(s - 1, 0), pB = X.frame(s + 1, 0), pO = X.frame(s, 0), pN = X.frame(s, 1);
+    const fx = -(pB.x - pA.x), fz = -(pB.z - pA.z), rx = -fz, rz = fx;   // 上り(dir<0)は向きを反転
+    const lz = (rx * (pN.x - pO.x) + rz * (pN.z - pO.z)) > 0 ? 1 : -1;
+    const wantSide = (op.length ? (op[0].off > REF.QUAD_MAIN_OFF ? 1 : -1) : 0) * lz;
+    ok('特急の客用扉はホーム側が開く', dOpen > 0.98 && dSide === wantSide, '開度>0.98・面' + wantSide, dOpen.toFixed(3) + '・面' + dSide);
+  }
+}
 
 /* ---- 3. 停止位置の正着(シミュレーション結果 ⇄ 期待値) --------------------- */
 {
@@ -317,7 +385,9 @@ ok('上限速度を超えない', vmax <= REF.VMAX_KMH + 0.5, '≤' + REF.VMAX_K
       if (q.dir < 0) { fx = -fx; fz = -fz; }
       const rx = -fz, rz = fx;                       // R = F × (0,1,0)
       const lz = (rx * (pN.x - pO.x) + rz * (pN.z - pO.z)) > 0 ? 1 : -1;
-      const ro = X.runOff(s), trackOff = q.dir > 0 ? -ro : ro;
+      // その列が面している線:その方向の線(各停の線 ±runOff/本線 ±mainOff)のうち列に近い方
+      const ro = X.runOff(s), mo = X.mainOff(s), lines = q.dir > 0 ? [-ro, -mo] : [ro, mo];
+      const trackOff = Math.abs(q.off - lines[0]) <= Math.abs(q.off - lines[1]) ? lines[0] : lines[1];
       const want = (q.off > trackOff ? 1 : -1) * lz;
       if (want !== q.side && !bad) bad = [q.st.n, q.dir > 0 ? '下り' : '上り',
         'モデル' + (q.side > 0 ? '+z' : '-z') + '/正解' + (want > 0 ? '+z' : '-z')];
