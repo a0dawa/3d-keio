@@ -4658,6 +4658,8 @@ const M_HL =mkMat('MeshLambertMaterial',{color:0xffffff,emissive:0xfff2d8});   /
 const M_TL =mkMat('MeshLambertMaterial',{color:0xff1a10,emissive:0xff0d08});   // 尾灯
 const M_HL_OFF=mkMat('MeshLambertMaterial',{color:k8hex(.33,.32,.30)});
 const M_TL_OFF=mkMat('MeshLambertMaterial',{color:k8hex(.35,.05,.05)});
+const M_PASS=mkMat('MeshBasicMaterial',{color:0xffffff});                       // 識別灯(点灯=白)
+const M_PASS_OFF=mkMat('MeshLambertMaterial',{color:k8hex(.30,.30,.29)});       // 消灯=レンズの灰
 
 /* ---- 9-8. 文字(表示器・車番・ロゴ)はキャンバスに描いて貼る -------------------- */
 const K8_FONT='"IPAGothic","Noto Sans JP","Hiragino Kaku Gothic ProN",sans-serif';
@@ -4718,6 +4720,13 @@ const K8_SKIRT_NOTCH=[0.36*1.2,0.60*1.2];  // 8000系のスカートの切り欠
 const K8_FRONT_TXT=1.10;                   // 8000系の前面の行先・種別はさらに10%大きく(利用者指示)
 // 種別の表記:2文字は間を空ける(「特  急」「各  停」。利用者指示)。色は元の種別名で引く
 function k8KindTxt(k){ return (k&&k.length===2)?k[0]+'  '+k[1]:k; }
+// 行先の表記:「新宿」は間を空けて「新  宿」(形式によらず。前面・側面とも。利用者指示)
+function k8DestTxt(d){ return d==='新宿'?'新  宿':d; }
+/* 識別灯(通過標識灯。京王の呼び名は「識別灯」):白の縦長の灯。各停以外の種別で点く(利用者指示。実車は快速以上の種別で
+   通過駅のある区間に点ける)。位置は 8000系=行先の左と種別の右(上段の表示器と同じ高さ)、9000系=種別の左と車号の右(K9.FPASS)。
+   [y0,y1] の組 ×2 と z 下端・上端 */
+const K8_PASS={Y:[[-1.255,-1.195],[1.050,1.110]], Z:[3.115,3.265]};
+function k8PassOn(o){ return !!(o.sign&&o.lights==='head'&&o.sign.kind!=='各停'); }
 /* s>1 は文字の高さを s 倍に(幅が表示器に収まらないときは、高さを保ったまま横を詰める) */
 function k8Led(txt,color,w,h,s){
   s=s||1;
@@ -4741,7 +4750,7 @@ function k8SideLed(kind,dest,w,h){
     cx.fillStyle=K8_KIND_COLORS[kind]||'#ff2e14';
     k8fitText(cx,k8KindTxt(kind),w*0.155,h/2,w*0.22*1.15,h*0.70*1.15,'bold 64px '+K8_FONT);
     cx.fillStyle='#ff8c14';
-    k8fitText(cx,dest,w*0.645,h/2,w*0.62*1.15,h*0.62*1.15,'bold 64px '+K8_FONT);
+    k8fitText(cx,k8DestTxt(dest),w*0.645,h/2,w*0.62*1.15,h*0.62*1.15,'bold 64px '+K8_FONT);
   });
 }
 function k8FrontNum(num,w,h,keep){          // keep=字形の縦横比を保つ(枠いっぱいに引き伸ばさない)
@@ -4889,6 +4898,9 @@ function k8FrontGeos(){
   G.kind=mk(B=>k8patch(B,3.107,3.272,.555,1.010,.003,8,[1,1,1]));
   G.num =mk(B=>k8patch(B,1.448,1.514,-.89,-.63,.008,4,[1,1,1]));
   G.logo=mk(B=>k8patch(B,1.618,1.662,.70,1.02,.0075,6,[1,1,1]));
+  // 識別灯(行先の左・種別の右。白の縦長)と、点いたときの淡い光
+  G.pass    =mk(B=>{for(const r of K8_PASS.Y) k8patch(B,K8_PASS.Z[0],K8_PASS.Z[1],r[0],r[1],.006,2,[1,1,1]);});
+  G.passGlow=mk(B=>{for(const r of K8_PASS.Y) k8patch(B,K8_PASS.Z[0]-.015,K8_PASS.Z[1]+.015,r[0]-.015,r[1]+.015,.010,2,[1,1,1]);});
   return G;
 }
 // 台車(bogie_mesh を移植)。軸距 wb。車輪はレール中心(RAIL_OFF)の上に載せる
@@ -5142,7 +5154,9 @@ const K9={
   FLAMP:[0.57,1.00,1.565,1.71],          // 灯火のケース(青帯の中)。内=前照灯 0.61〜0.78・外=尾灯 0.83〜0.99
   FDEST:[-0.21*1.15,0.21*1.15,3.28-0.075*1.15,3.28+0.075*1.15],   // 行先表示器(扉の上)。写真の実測(|y|≤0.21・z3.205〜3.355)を表示板ごと1.15倍(利用者指示)
   FKIND:[-0.89,-0.51,3.14,3.34],         // 種別表示器(向かって左の窓の上部、ガラスの内)
-  FNUM:[0.58,0.92,3.10,3.23],            // 車号(向かって右の窓の上部、ガラスの内に白い数字)
+  FNUM:[0.61,0.95,3.175,3.305],          // 車号(向かって右の窓の上部、ガラスの内に白い数字)。写真の実測(0.58〜0.92・z3.10〜3.23)から
+                                         // 少し右上へ、種別と同じ高さ(中心 z3.24)に(利用者指示)
+  FPASS:[[-1.00,-0.94],[0.99,1.05],3.16,3.32],   // 識別灯(種別の左・車号の右。白の縦長)。写真の灰の縦長の灯(|y|≈0.95〜1.02)から
   FLOGO:[0.71,1.00,1.80,1.93],           // KEIO ロゴ(向かって右の赤帯の上に白)
   FANTI:[0.43,1.00,1.105,1.19],          // アンチクライマーの板
   FBOT:1.10, FCPL:0.29,                  // 前面の下端 / 連結器まわりの開口の半幅(扉の下〜)
@@ -5410,6 +5424,9 @@ function k9FrontGeos(){
   // 表示器:行先=扉の上・種別=向かって左の窓の上部(ガラスの内)。車号=向かって右の窓の上部。ロゴ=右の赤帯
   const pt=(R,off,n)=>mk(B=>k9patch(B,R[2],R[3],R[0],R[1],off,n,[1,1,1]));
   G.dest=pt(K9.FDEST,.003,4); G.kind=pt(K9.FKIND,.003,4); G.num=pt(K9.FNUM,.003,4); G.logo=pt(K9.FLOGO,.004,4);
+  const PS=K9.FPASS;                     // 識別灯と、点いたときの淡い光
+  G.pass    =mk(B=>{for(const r of PS.slice(0,2)) k9patch(B,PS[2],PS[3],r[0],r[1],.006,2,[1,1,1]);});
+  G.passGlow=mk(B=>{for(const r of PS.slice(0,2)) k9patch(B,PS[2]-.015,PS[3]+.015,r[0]-.015,r[1]+.015,.010,2,[1,1,1]);});
   return G;
 }
 // 前面の KEIO ロゴ(赤帯の上に白抜き。写真)
@@ -5519,10 +5536,12 @@ function makeCar(opt){
     const lit=o.sign&&o.lights==='head';                        // 行先=扉の上・種別=向かって左の窓の上部(写真)
     // 画像の縦横比は貼る面(K9.FDEST・FKIND・FNUM)と同じに(1m=640px)
     const px=(R)=>[Math.round((R[1]-R[0])*640),Math.round((R[3]-R[2])*640)];
-    addFine(F.dest,lit?k8Led(o.sign.dest,'#ff8c14',...px(K9.FDEST)):K8M.ledOff,sh);
+    addFine(F.dest,lit?k8Led(k8DestTxt(o.sign.dest),'#ff8c14',...px(K9.FDEST)):K8M.ledOff,sh);
     addFine(F.kind,lit?k8Led(k8KindTxt(o.sign.kind),K8_KIND_COLORS[o.sign.kind]||'#ff2e14',...px(K9.FKIND)):K8M.ledOff,sh);
     addFine(F.num,k8FrontNum(o.num,...px(K9.FNUM),true),sh);   // 字形のまま(引き伸ばさない)
     addFine(F.logo,k9LogoW(256,96),sh);
+    addFine(F.pass,k8PassOn(o)?M_PASS:M_PASS_OFF,sh);          // 識別灯(各停以外で点く)
+    if(k8PassOn(o)) addFine(F.passGlow,K8M.hlGlow,sh);
   }
   if(cab&&!S9){
     addFine(K8GEO.cabLogo,k8Logo(384,96),sh);
@@ -5533,10 +5552,12 @@ function makeCar(opt){
     if(o.lights==='head') addFine(F.hlGlow,K8M.hlGlow,sh);
     if(o.lights==='tail') addFine(F.tlGlow,K8M.tlGlow,sh);
     const lit=o.sign&&o.lights==='head';                       // 表示は先頭車だけ点く
-    addFine(F.dest,lit?k8Led(o.sign.dest,'#ff8c14',256,68,K8_FRONT_TXT):K8M.ledOff,sh);
+    addFine(F.dest,lit?k8Led(k8DestTxt(o.sign.dest),'#ff8c14',256,68,K8_FRONT_TXT):K8M.ledOff,sh);
     addFine(F.kind,lit?k8Led(k8KindTxt(o.sign.kind),K8_KIND_COLORS[o.sign.kind]||'#ff2e14',192,68,K8_FRONT_TXT):K8M.ledOff,sh);
     addFine(F.num,k8FrontNum(o.num),sh);
     addFine(F.logo,k8Logo(256,40),sh);
+    addFine(F.pass,k8PassOn(o)?M_PASS:M_PASS_OFF,sh);          // 識別灯(各停以外で点く)
+    if(k8PassOn(o)) addFine(F.passGlow,K8M.hlGlow,sh);
   }
   // 台車・床下・冷房・幌
   add(o.motor?GEO.bogieM:GEO.bogieT,M_BOG);

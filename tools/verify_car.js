@@ -18,7 +18,7 @@ const X = require('./stub_three')(path,
   'setCarDoors:setCarDoors,k8nose:k8nose,trains:trains,parkedCars:parkedCars,' +
   'WIRE_TRO:WIRE_TRO,RAIL_OFF:RAIL_OFF,GAUGE:GAUGE,RAIL_W:RAIL_W,RAIL_TOP:RAIL_TOP,' +
   'seatCar:seatCar,frame:frame,railY:railY,zRunDown:zRunDown,M_HL:M_HL,M_TL:M_TL,' +
-  'M_HL_OFF:M_HL_OFF,M_TL_OFF:M_TL_OFF,K8M:K8M');
+  'M_HL_OFF:M_HL_OFF,M_TL_OFF:M_TL_OFF,K8M:K8M,M_PASS:M_PASS,M_PASS_OFF:M_PASS_OFF');
 
 /* ---- 基準値(ref/keio8000_measured_v4.md から。検証側が独立して持つ)---------- */
 const REF = {
@@ -170,6 +170,36 @@ const range = (pts, k) => { let lo = 1e9, hi = -1e9; for (const p of pts) { if (
   ok('スカートの切り欠き', near(hwN, 0.36 * 1.2, 0.002) && near(zN, 1.09 - 0.6 * 1.2 * 0.85, 0.01),
     '半幅0.432・下端z0.478(v4×1.2)', '半幅' + hwN.toFixed(3) + '・下端z' + zN.toFixed(3));
   ok('スカートの大きさ(v4 のまま)', near(zb, 0.24, 0.002) && outer > 1.15 && outer < 1.30, '下端0.24・外端1.2前後', '下端' + zb.toFixed(3) + '・外端' + outer.toFixed(3));
+}
+
+/* ---- 3c. 識別灯(通過標識灯)。利用者指示:白の縦長、行先の左と種別の右。各停以外の種別で点く ----
+   行先・種別の表示器の位置は前面写真の実測(行先 y −1.16〜−0.54・種別 +0.555〜+1.01・z 3.107〜3.272) */
+{
+  const DEST = [-1.160, -0.540], KIND = [0.555, 1.010], ROW = [3.107, 3.272];
+  const P = v4pts(X.K8GEO.front.pass).filter((p) => p[0] > 9);
+  const L = P.filter((p) => p[1] < 0), R = P.filter((p) => p[1] > 0);
+  const box = (Q) => [range(Q, 1), range(Q, 2)];
+  const bl = box(L), br = box(R);
+  const tall = (b) => (b[1][1] - b[1][0]) / Math.max(1e-6, b[0][1] - b[0][0]);
+  ok('識別灯:行先の左・種別の右', L.length > 0 && R.length > 0 && bl[0][1] < DEST[0] && bl[0][1] > DEST[0] - 0.08 &&
+     br[0][0] > KIND[1] && br[0][0] < KIND[1] + 0.08,
+    '左の灯の右端 < ' + DEST[0] + '・右の灯の左端 > ' + KIND[1] + '(離れ8cm以内)',
+    L.length && R.length ? bl[0][1].toFixed(3) + ' / ' + br[0][0].toFixed(3) : '灯が無い');
+  ok('識別灯:縦長・表示器と同じ段', L.length > 0 && R.length > 0 && tall(bl) > 2 && tall(br) > 2 &&
+     [bl, br].every((b) => b[1][0] >= ROW[0] - 0.01 && b[1][1] <= ROW[1] + 0.01),
+    '高さ/幅 > 2・z ' + ROW.join('〜'), L.length && R.length ? tall(bl).toFixed(1) + '/' + tall(br).toFixed(1) + '・z ' + bl[1].map((v) => v.toFixed(3)).join('〜') : '-');
+  // 点灯条件:先頭(前照灯が点く車)で、種別が各停以外のときだけ点く。基準の判定はここで独立に持つ
+  const lamp = (c) => { let m = null; c.traverse((o) => { if (o.geometry === X.K8GEO.front.pass) m = o.material; }); return m; };
+  const cases = [['特急', 'head', true], ['急行', 'head', true], ['各停', 'head', false], ['特急', 'tail', false]];
+  let bad = null;
+  for (const [kind, lights, want] of cases) {
+    const c = X.makeCar({ cabF: true, hachi: 1, num: '8714', lights: lights, sign: { kind: kind, dest: '新宿' }, crowd: null });
+    const m = lamp(c);
+    if (m !== (want ? X.M_PASS : X.M_PASS_OFF) && !bad) bad = kind + '・' + lights + ' → ' + (m === X.M_PASS ? '点灯' : m === X.M_PASS_OFF ? '消灯' : '灯が無い');
+  }
+  ok('識別灯:各停以外で点く(先頭のみ)', !bad, '特急・急行=点灯/各停・最後尾=消灯', bad || '4通りとも');
+  ok('識別灯:点灯は白', X.M_PASS.color.r > 0.9 && X.M_PASS.color.g > 0.9 && X.M_PASS.color.b > 0.9, '白',
+    [X.M_PASS.color.r, X.M_PASS.color.g, X.M_PASS.color.b].map((v) => v.toFixed(2)).join(','));
 }
 
 /* ---- 4. 冷房装置・パンタグラフ ----------------------------------------------- */

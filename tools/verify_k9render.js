@@ -31,7 +31,8 @@ const REF = {
   HL: [0.695, 1.64], TL: [0.91, 1.64],          // 前照灯・尾灯の中心 [|y|, z](青帯の中)
   DEST: [-0.20, 0.20, 3.21, 3.35],              // 行先表示器(扉の上)の範囲 [y0,y1,z0,z1]
   KIND: [-0.88, -0.52, 3.15, 3.33],             // 種別表示器(向かって左の窓の上部)
-  NUM: [0.60, 0.90, 3.11, 3.22],                // 車号(向かって右の窓の上部)
+  NUM: [0.58, 0.97, 3.15, 3.33],                // 車号(向かって右の窓の上部。種別と同じ高さへ上げた=利用者指示)
+  PASS: [[-1.00, -0.94], [0.99, 1.05], 3.16, 3.32],   // 識別灯(種別の左・車号の右。白の縦長。写真の灰の縦長の灯)
   LOGO: [0.72, 0.99, 1.81, 1.92],               // KEIO ロゴ(向かって右の赤帯の上に白)
 };
 
@@ -81,6 +82,10 @@ function findChromium() {
       sign: { kind: '各停', dest: '京王八王子' }, crowd: 1 });
     for (const c of [lead, second]) { c.parent.remove(c); sc.add(c); }
     second.position.x = -20;
+    // 識別灯と行先の表記を見る先頭車(特急・新宿行)。同じ位置に置き、描くときだけ入れ替える
+    const lead2 = makeCar({ cabF: true, panto: false, motor: false, hachi: 1, num: '9781', series: '9000',
+      lights: 'head', sign: { kind: '特急', dest: '新宿' }, crowd: 0 });
+    lead2.parent.remove(lead2); sc.add(lead2); lead2.visible = false;
     const save = { tm: renderer.toneMapping, sh: renderer.shadowMap.enabled, pr: renderer.getPixelRatio() };
     renderer.toneMapping = T.NoToneMapping; renderer.shadowMap.enabled = false; renderer.setPixelRatio(1);
     const cv = renderer.domElement;
@@ -94,11 +99,13 @@ function findChromium() {
     cam = new T.OrthographicCamera(-1.6, 1.6, 2.1, -2.1, 0.3, 200);
     cam.position.set(30, 2.1, 0); cam.up.set(0, 1, 0); cam.lookAt(0, 2.1, 0);
     renderer.render(sc, cam); const front = grab(480, 630);
+    lead.visible = false; lead2.visible = true;
+    renderer.render(sc, cam); const front2 = grab(480, 630);
     renderer.toneMapping = save.tm; renderer.shadowMap.enabled = save.sh; renderer.setPixelRatio(save.pr);
-    return { side: side, front: front };
+    return { side: side, front: front, front2: front2 };
   });
   await b.close();
-  for (const k of ['side', 'front']) fs.writeFileSync(path.join(OUT, k + '.png'), Buffer.from(res[k].url.split(',')[1], 'base64'));
+  for (const k of ['side', 'front', 'front2']) fs.writeFileSync(path.join(OUT, k + '.png'), Buffer.from(res[k].url.split(',')[1], 'base64'));
   if (errs.length) console.log('ページのエラー:\n  ' + errs.slice(0, 5).join('\n  '));
 
   const rows = []; let ng = errs.length ? 1 : 0;
@@ -106,6 +113,7 @@ function findChromium() {
   const px = (img, w, i, j) => { const k = 4 * (j * w + i); return [img.d[k], img.d[k + 1], img.d[k + 2]]; };
   const S = (x, z) => px(res.side, 2400, Math.round(1200 + (-9 - x) * 60), Math.round(150 + (2.5 - z) * 60));
   const F = (y, z) => px(res.front, 480, Math.round((y + 1.6) * 150), Math.round((4.2 - z) * 150));
+  const F2 = (y, z) => px(res.front2, 480, Math.round((y + 1.6) * 150), Math.round((4.2 - z) * 150));
   const isRed = (c) => c[0] > 150 && c[1] < 60 && c[2] > 60 && c[2] < 170;
   const isBlue = (c) => c[2] > 70 && c[0] < 70 && c[1] < 90 && c[2] > c[0] + 40;
   const isSteel = (c) => Math.abs(c[0] - 184) < 25 && Math.abs(c[1] - 186) < 25 && Math.abs(c[2] - 189) < 25 && Math.max(...c) - Math.min(...c) < 18;
@@ -172,21 +180,54 @@ function findChromium() {
         for (let y = R[0]; y <= R[1]; y += 1 / 150) for (let z = R[2]; z <= R[3]; z += 1 / 150)
           if (th(F(y, z))) { y0 = Math.min(y0, y); y1 = Math.max(y1, y); z0 = Math.min(z0, z); z1 = Math.max(z1, z); }
         return [y0, y1, z0, z1]; };
-      const k = bb(REF.KIND, (c) => Math.max(...c) > 150), ar = (k[1] - k[0]) / Math.max(1e-6, k[3] - k[2]);
+      // 幅・高さは両端の画素を含めて数える(+1画素。文字の高さは十数画素しかないので、端の差だけでは1割ずれる)
+      const ext = (a, b) => b - a + 1 / 150;
+      const k = bb(REF.KIND, (c) => Math.max(...c) > 150), ar = ext(k[0], k[1]) / Math.max(1e-6, ext(k[2], k[3]));
       const cm = (k[0] + k[1]) / 2, gap = count([cm - 0.1 * (k[1] - k[0]), cm + 0.1 * (k[1] - k[0]), k[2], k[3]], (c) => Math.max(...c) > 150);
       ok('前面:種別の文字の縦横比と字間', ar >= 2.2 && ar <= 3.4 && gap === 0, '幅/高さ 2.2〜3.4・中央の2割は空き', ar.toFixed(2) + '・中央' + gap + '画素(高さ' + (k[3] - k[2]).toFixed(3) + 'm)');
       // 車号「9781」:字形のまま(Arial 太字の4桁で 幅/高さ ≈3)。枠いっぱいに引き伸ばすと約2.6 の縦長になる
-      const n = bb(REF.NUM, (c) => c[0] > 200 && c[1] > 200 && c[2] > 200), an = (n[1] - n[0]) / Math.max(1e-6, n[3] - n[2]);
+      const n = bb(REF.NUM, (c) => c[0] > 200 && c[1] > 200 && c[2] > 200), an = ext(n[0], n[1]) / Math.max(1e-6, ext(n[2], n[3]));
       ok('前面:車号の縦横比', an >= 2.8 && an <= 3.6, '幅/高さ 2.8〜3.6', an.toFixed(2)); }
     const lgW = count(REF.LOGO, (c) => c[0] > 200 && c[1] > 200 && c[2] > 190), lgL = count([-REF.LOGO[1], -REF.LOGO[0], REF.LOGO[2], REF.LOGO[3]], (c) => c[0] > 200 && c[1] > 200 && c[2] > 190);
     ok('前面:KEIO ロゴは向かって右の赤帯', lgW > 20 && lgL < 3, '右に白>20画素・左に無し', lgW + '/' + lgL + '画素');
     const nn = count(REF.NUM, (c) => c[0] > 200 && c[1] > 200 && c[2] > 200);
     ok('前面:車号は向かって右の窓の上部', nn > 10, '白い文字>10画素', nn + '画素');
-    // 向かって左の窓の上部には種別表示器があるので、その下(車号と同じ高さの、表示器の外)に白い数字が無いこと
-    const nl = count([-REF.NUM[1], -REF.NUM[0], REF.NUM[2], REF.KIND[2] - 0.02], (c) => c[0] > 200 && c[1] > 200 && c[2] > 200);
+    // 車号は種別と同じ高さ(利用者指示):白い数字の外接矩形の中心と、種別の文字の中心の高さの差
+    { let z0 = 1e9, z1 = -1e9, k0 = 1e9, k1 = -1e9;
+      for (let y = REF.NUM[0]; y <= REF.NUM[1]; y += 1 / 150) for (let z = REF.NUM[2]; z <= REF.NUM[3]; z += 1 / 150)
+        if (Math.min(...F(y, z)) > 200) { z0 = Math.min(z0, z); z1 = Math.max(z1, z); }
+      for (let y = REF.KIND[0]; y <= REF.KIND[1]; y += 1 / 150) for (let z = REF.KIND[2]; z <= REF.KIND[3]; z += 1 / 150)
+        if (Math.max(...F(y, z)) > 150) { k0 = Math.min(k0, z); k1 = Math.max(k1, z); }
+      const d = (z0 + z1) / 2 - (k0 + k1) / 2;
+      ok('前面:車号は種別と同じ高さ', Math.abs(d) <= 0.02, '文字の中心の差 ≤0.02m', d.toFixed(3) + 'm'); }
+    // 向かって左の窓の上部には種別表示器があるので、その下(表示器の外)に白い数字が無いこと
+    const nl = count([-REF.NUM[1], -REF.NUM[0], 3.00, REF.KIND[2] - 0.02], (c) => c[0] > 200 && c[1] > 200 && c[2] > 200);
     ok('前面:向かって左には車号が無い', nl < 3, '0画素', nl + '画素');
   }
-  console.log('=== 京王9000系の描画(塗り分け) ⇄ 公表の説明・推定値 ===\n描画: ' + OUT + '/side.png front.png');
+  // ---- 識別灯と行先の表記(各停=front・特急 新宿行=front2) ----
+  {
+    const white = (c) => Math.min(...c) > 225;
+    const at = (G, r) => G((r[0] + r[1]) / 2, (REF.PASS[2] + REF.PASS[3]) / 2);
+    const on = REF.PASS.slice(0, 2).map((r) => at(F2, r)), off = REF.PASS.slice(0, 2).map((r) => at(F, r));
+    ok('前面:識別灯は各停以外で点く', on.every(white) && off.every((c) => !white(c)), '特急=白・各停=消灯',
+      on.map(fmt).join(' ') + ' / ' + off.map(fmt).join(' '));
+    // 点いた灯の形:白い画素の外接矩形が縦長(高さ/幅 > 1.8)
+    const box = (r) => { let y0 = 1e9, y1 = -1e9, z0 = 1e9, z1 = -1e9;
+      for (let y = r[0] - 0.05; y <= r[1] + 0.05; y += 1 / 150) for (let z = REF.PASS[2] - 0.05; z <= REF.PASS[3] + 0.05; z += 1 / 150)
+        if (white(F2(y, z))) { y0 = Math.min(y0, y); y1 = Math.max(y1, y); z0 = Math.min(z0, z); z1 = Math.max(z1, z); }
+      return (z1 - z0) / Math.max(1e-6, y1 - y0); };
+    const ar = REF.PASS.slice(0, 2).map(box);
+    ok('前面:識別灯は白の縦長', ar.every((a) => a > 1.8 && a < 6), '高さ/幅 1.8〜6', ar.map((a) => a.toFixed(2)).join(' / '));
+    // 「新  宿」(2文字の間を空ける。利用者指示):橙の文字の外接矩形の中央2割に文字が無い
+    const isOr = (c) => c[0] > 150 && c[0] > c[2] + 60;
+    let y0 = 1e9, y1 = -1e9;
+    for (let y = REF.DEST[0]; y <= REF.DEST[1]; y += 1 / 150) for (let z = REF.DEST[2]; z <= REF.DEST[3]; z += 1 / 150)
+      if (isOr(F2(y, z))) { y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+    const cm = (y0 + y1) / 2, w = y1 - y0;
+    let g = 0; for (let y = cm - 0.1 * w; y <= cm + 0.1 * w; y += 1 / 150) for (let z = REF.DEST[2]; z <= REF.DEST[3]; z += 1 / 150) if (isOr(F2(y, z))) g++;
+    ok('前面:行先「新  宿」の字間', w > 0.15 && g === 0, '中央の2割は空き', '幅' + w.toFixed(3) + 'm・中央' + g + '画素');
+  }
+  console.log('=== 京王9000系の描画(塗り分け) ⇄ 公表の説明・推定値 ===\n描画: ' + OUT + '/side.png front.png front2.png');
   const pad = (s, n) => s + ' '.repeat(Math.max(1, n - [...s].reduce((a, ch) => a + (ch.charCodeAt(0) > 0x2000 ? 2 : 1), 0)));
   for (const r of rows) console.log(pad(r[0], 34) + pad(r[1], 34) + pad(r[2], 40) + r[3]);
   console.log(ng ? '\nRESULT: FAIL(' + ng + '項目NG)' : '\nRESULT: PASS');
