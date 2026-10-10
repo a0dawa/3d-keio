@@ -17,7 +17,7 @@ const X = require('./stub_three')(path,
   'WIRES:(typeof WIRES!=="undefined"?WIRES:null),' +
   'POLE_S:(typeof POLE_S!=="undefined"?POLE_S:[]),' +
   'PIERS:(typeof PIERS!=="undefined"?PIERS:[]),' +
-  'parkedCars:parkedCars,YARD_A:YARD_A,YARD_B:YARD_B,YARD_E:YARD_E,YARD_W:YARD_W,K8:K8,' +
+  'parkedCars:parkedCars,PARKS:PARKS,YARD_A:YARD_A,YARD_B:YARD_B,YARD_E:YARD_E,YARD_W:YARD_W,K8:K8,' +
   'INOKASHIRA_X:INOKASHIRA_X,SETAGAYA_X:SETAGAYA_X,BRIDGE:BRIDGE,KAN7_X:KAN7_X,' +
   'KANPACHI_X:KANPACHI_X,XINGS:XINGS,' +
   'WIRE_CAT:WIRE_CAT,WIRE_TRO:WIRE_TRO,BEAM_LOW:BEAM_LOW,POLE_TOP:POLE_TOP,' +
@@ -207,12 +207,54 @@ if (X.TRACKS && X.WIRES) {
       X.YARD_E.toFixed(0) + '〜' + X.YARD_W.toFixed(0) + 'm', show(outer));
     ok('留置線(内側)が通しで敷かれる', spans(inner),
       X.YARD_E.toFixed(0) + '〜' + X.YARD_W.toFixed(0) + 'm', show(inner));
-    ok('滞泊編成の両数', X.parkedCars.length === PARK_CARS * 2,
-      PARK_CARS + '両×2本', X.parkedCars.length + '両');
+    const sak = X.PARKS.filter((q) => /桜上水/.test(q.name));
+    ok('滞泊編成の両数(桜上水)', sak.length === 2 && sak.every((q) => q.cars.length === PARK_CARS),
+      PARK_CARS + '両×2本', sak.map((q) => q.cars.length + '両').join('・') || 'なし');
     // 編成が収まる長さがあるか(内側は副本線の一定区間より東/西の区間に停める)
     const fitI = inner.some((q) => q[1] - q[0] >= LEN), fitO = outer.some((q) => q[1] - q[0] >= LEN);
     ok('留置線に10両が収まる', fitI && fitO, '≥' + LEN.toFixed(0) + 'm',
       (fitI ? '内側OK' : '内側不足') + ' / ' + (fitO ? '外側OK' : '外側不足'));
+  }
+  /* 2-4e 笹塚の西側の留置線に 9000系10両(利用者指示)。基準は検証側で持つ:
+       編成 9732F(30番台は下2桁が編成番号。新宿方から 9732・9032・9082・9532・9132・9582・9682・9232・9282・9782)、
+       置き場所は笹塚の内側の留置線(±2m)のうちホームより西。
+     守ること:①車両がその線路の上(|off|=2)②ホームと重ならない ③線路の端(車止め)の手前
+     ④ほかの線路(渡り線・本線)が車体の幅に入ってこない(=分岐の先に置く。離れ3.0m 以上)⑤運転台が外を向き、灯火は消灯 */
+  {
+    const REF_9732F = ['9732', '9032', '9082', '9532', '9132', '9582', '9682', '9232', '9282', '9782'];
+    const sasa = X.STA.find((s) => s.n === '笹塚');
+    const P = X.PARKS.find((q) => /笹塚/.test(q.name));
+    if (!P) ok('笹塚の留置線に9000系', false, '10両', '無い');
+    else {
+      const nums = P.cars.map((c) => c.userData.k8.num), ser = P.cars.every((c) => c.userData.k8.series === '9000');
+      ok('笹塚の留置線に9000系10両', P.cars.length === 10 && ser && JSON.stringify(nums) === JSON.stringify(REF_9732F),
+        '9732F(新宿方から)', P.cars.length + '両・' + (ser ? '9000系' : '形式違い') + '・' + nums.join(' '));
+      const half = (X.K8.LEN) / 2, ss = P.cars.map((c) => c.userData.s);
+      const e0 = Math.min(...ss) - half, e1 = Math.max(...ss) + half;
+      const pr = X.platRange(sasa);
+      const tr = X.TRACKS.filter((t) => Math.abs(t.zf(e0 + 5) - P.off) < 0.05 && e0 >= t.x0 && e1 <= t.x1);
+      let badOn = null;
+      for (const c of P.cars) {
+        const q = X.frame(c.userData.s, P.off), d = Math.hypot(c.position.x - q.x, c.position.z - q.z);
+        if (d > 0.3 && !badOn) badOn = c.userData.k8.num + ' ずれ' + d.toFixed(2) + 'm';
+      }
+      ok('笹塚の留置:線路の上・ホームより西', Math.abs(Math.abs(P.off) - 2) < 1e-6 && tr.length > 0 && !badOn && e0 > pr[1],
+        '|off|=2 の線路の上・東端 > ホーム西端 ' + pr[1].toFixed(0), (badOn || ('off ' + P.off)) + '・東端 ' + e0.toFixed(1) + '・線路' + tr.length);
+      const end = tr.length ? Math.min(...tr.map((t) => t.x1)) : -1e9;
+      ok('笹塚の留置:車止めの手前', tr.length > 0 && e1 <= end - 2.0 && e1 >= end - 6.0, '線路の端の2〜6m 手前',
+        tr.length ? (end - e1).toFixed(1) + 'm 手前' : '-');
+      // ほかの線路が車体の幅に入ってこない(渡り線の分岐の先に置く)
+      let foul = null;
+      for (let s = e0; s <= e1; s += 1) for (const t of X.TRACKS) {
+        if (tr.indexOf(t) >= 0 || s < t.x0 || s > t.x1) continue;
+        const d = Math.abs(t.zf(s) - P.off);
+        if (d < 3.0 && (!foul || d < foul[1])) foul = [t.id + ' s=' + s.toFixed(0), d];
+      }
+      ok('笹塚の留置:ほかの線路と離れる', !foul, '離れ3.0m 以上(東端は分岐の先)', foul ? foul[0] + ' 離れ' + foul[1].toFixed(2) + 'm' : 'すべて3.0m 以上');
+      const lit = P.cars.filter((c) => c.userData.k8.lights !== 'off' || c.userData.k8.sign).length;
+      const cabs = P.cars[0].userData.k8.cabR && P.cars[9].userData.k8.cabF && P.cars.slice(1, 9).every((c) => !c.userData.k8.cabF && !c.userData.k8.cabR);
+      ok('笹塚の留置:運転台は両端・消灯', cabs && lit === 0, '両端に運転台・灯火と表示は消灯', (cabs ? '両端' : '運転台の位置違い') + '・点灯' + lit + '両');
+    }
   }
   // 2-5 架線の高さの順序:トロリ線 < ちょう架線 < ビーム下弦(部材と干渉しない)
   {

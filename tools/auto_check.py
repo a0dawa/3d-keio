@@ -191,6 +191,16 @@ def main():
     print('%-18s %14s %14s %8s  %s' % ('行先「新  宿」', '表記・3か所', ('表記' if fd else '表記なし') + '・%dか所' % uses,
                                        '-', 'OK' if ok else 'NG'))
 
+    # クレジット:画面に PLATEAU の出典(CC BY 4.0)を出し、CREDITS.txt に PLATEAU・three.js の表記があること
+    import os
+    cp = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'CREDITS.txt')   # リポジトリの直下
+    cr = open(cp, encoding='utf-8').read() if os.path.exists(cp) else ''
+    onscreen = "(CC BY 4.0)を加工" in src and '建物・道路・土地利用' in src
+    ok = onscreen and all(k in cr for k in ('Project PLATEAU', 'CC BY 4.0', 'three.js', 'MIT'))
+    ng += 0 if ok else 1
+    print('%-18s %14s %14s %8s  %s' % ('クレジット', '画面+CREDITS', ('画面' if onscreen else '画面なし') + ('・CREDITS' if cr else '・CREDITSなし'),
+                                       '-', 'OK' if ok else 'NG'))
+
     # 旧「写真転写方式」の残骸が無いこと
     dead = [s for s in ('FTEX', 'FRONT_TEX', 'FACEMAT', 'buildCarGeo', 'carColor') if s in src]
     ok = not dead

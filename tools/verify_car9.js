@@ -122,8 +122,10 @@ const G = X.K9GEO;
   { const P = v4pts(F.pass).filter((p) => p[0] > 9), L = P.filter((p) => p[1] < 0), R = P.filter((p) => p[1] > 0);
     const bl = [range(L, 1), range(L, 2)], br = [range(R, 1), range(R, 2)];
     const tall = (b) => (b[1][1] - b[1][0]) / Math.max(1e-6, b[0][1] - b[0][0]);
-    ok('識別灯:種別の左・車号の右', L.length > 0 && R.length > 0 && bl[0][1] < ky[0] && bl[0][1] > ky[0] - 0.08 && br[0][0] > ny[1] && br[0][0] < ny[1] + 0.08,
-      '左の灯の右端 < 種別の左端・右の灯の左端 > 車号の右端(8cm以内)',
+    ok('識別灯:中心線に対称', L.length > 0 && R.length > 0 && Math.abs(bl[0][0] + br[0][1]) < 0.003 && Math.abs(bl[0][1] + br[0][0]) < 0.003,
+      '左 [−a,−b]・右 [b,a](3mm以内)', L.length && R.length ? '左 ' + bl[0].map((v) => v.toFixed(3)).join('〜') + '・右 ' + br[0].map((v) => v.toFixed(3)).join('〜') : '-');
+    ok('識別灯:種別の左・車号の右', L.length > 0 && R.length > 0 && bl[0][1] < ky[0] && bl[0][1] > ky[0] - 0.10 && br[0][0] > ny[1] && br[0][0] < ny[1] + 0.08,
+      '左の灯の右端 < 種別の左端(10cm以内)・右の灯の左端 > 車号の右端(8cm以内)',
       L.length && R.length ? bl[0][1].toFixed(3) + '<' + ky[0].toFixed(3) + ' / ' + br[0][0].toFixed(3) + '>' + ny[1].toFixed(3) : '灯が無い');
     ok('識別灯:縦長・種別と同じ段', L.length > 0 && R.length > 0 && tall(bl) > 2 && tall(br) > 2 &&
        [bl, br].every((b) => b[1][0] >= REF.KIND_Z[0] - 0.01 && b[1][1] <= REF.KIND_Z[1] + 0.01),

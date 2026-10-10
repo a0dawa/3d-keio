@@ -425,7 +425,17 @@ ok('乗務員モニターを置かない', !X.STRUCT.some((q) => q.tag === '乗�
     ok('明大前の紫の横帯', n >= REF.PURPLE_MIN, '片側' + REF.PURPLE_MIN + '本以上', n + '本'); }
   { const E = X.STRUCT.filter((q) => q.tag === '大庇の縁').map((q) => q.y0);
     const sw = E.length ? Math.max.apply(null, E) - Math.min.apply(null, E) : 0;
-    ok('下高井戸の大庇の反り', sw >= REF.SWEEP, '縁の高さの差≥' + REF.SWEEP + 'm', sw.toFixed(2) + 'm'); }
+    ok('下高井戸の大庇の反り', sw >= REF.SWEEP, '縁の高さの差≥' + REF.SWEEP + 'm', sw.toFixed(2) + 'm');
+    /* 置き場所(利用者指示・公表パース):駅の西南。南側(off<0)だけで、駅の中心より西(s が大きい側)へ張り出し、
+       反り上がるのは西の端(パースは南から望む画で、左=西の端が反る) */
+    const sh = X.STA.find((s) => s.n === '下高井戸');
+    const R = X.STRUCT.filter((q) => q.tag === '大庇の縁');
+    const south = R.length > 0 && R.every((q) => q.o1 < 0);
+    const sMin = Math.min(...R.map((q) => q.s0)), sMax = Math.max(...R.map((q) => q.s0));
+    const top = R.reduce((a, q) => (q.y0 > a.y0 ? q : a), R[0] || { y0: 0, s0: 0 });
+    ok('下高井戸の大庇は駅の西南', south && (sMin + sMax) / 2 > sh.x + 5 && sMax > sh.x + 30,
+      '南側だけ・中心より西(s+)へ', (south ? '南' : '北にもある') + '・s ' + (sMin - sh.x).toFixed(0) + '〜' + (sMax - sh.x).toFixed(0) + 'm');
+    ok('下高井戸の大庇は西の端で反る', R.length > 0 && top.s0 >= sMax - 4.01, '最も高い縁=西端', '最も高い縁 s ' + (top.s0 - sh.x).toFixed(0) + 'm(西端 ' + (sMax - sh.x).toFixed(0) + 'm)'); }
   { const B = north('外装:白い弓形の柱'), pt = pitchOf(B);
     const top = B.length ? Math.min.apply(null, B.map((q) => q.y1 - X.railY((q.s0 + q.s1) / 2))) : 0;
     ok('上北沢の白い弓形の柱', inR(pt, REF.BOW_PITCH) && top >= REF.BOW_TOP,

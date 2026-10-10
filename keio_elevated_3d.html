@@ -1594,8 +1594,9 @@ layTrack('留置線外側',   YARD_E,YARD_W,()=>YARD_B);
   const s5=t=>{t=clamp(t,0,1);return t*t*t*(t*(t*6-15)+10);};
   let n=0;
   const xo=(s0,s1,o1,o2)=>layTrack('笹塚渡り'+(++n),s0,s1,x=>o1+(o2-o1)*s5((x-s0)/(s1-s0)));
-  xo(c0+52,c0+162,10.1,2);  xo(c0+52,c0+162,2,10.1);   // 北本線⇔北留置線(110m)
-  xo(c0+52,c0+162,-10.1,-2);xo(c0+52,c0+162,-2,-10.1); // 南本線⇔南留置線(110m)
+  // 本線⇔留置線は100m(以前は110m。西側の留置線に10両=199.5m を置くため、分岐の先から車止めまでを約205m にした)
+  xo(c0+52,c0+152,10.1,2);  xo(c0+52,c0+152,2,10.1);   // 北本線⇔北留置線(100m)
+  xo(c0+52,c0+152,-10.1,-2);xo(c0+52,c0+152,-2,-10.1); // 南本線⇔南留置線(100m)
   xo(c0+72,c0+122,2,-2);    xo(c0+72,c0+122,-2,2);     // 留置線間(50m)
 }
 /* 分岐する線(副本線・停車線・留置線・渡り線)が本線と同じ位置に重ねて敷かれている所を落とす。
@@ -1748,8 +1749,10 @@ function frogOf(A,ra,B,rb,sf){
   return fr;
 }
 // 区間の集合から [a,b] を抜く
+// 区間の一覧 L から [a,b] を切り取る。残る区間は形(v[2])も状態(v[3]=密着/開)も引き継ぐ
+// (状態を落とすと、クロッシングに端を削られたトングレールが「状態なし」になる。笹塚の渡り線で起きた)
 function cutIv(L,a,b){const out=[];for(const v of L){if(b<=v[0]||a>=v[1]){out.push(v);continue;}
-  if(a>v[0])out.push([v[0],a,v[2]]); if(b<v[1])out.push([b,v[1],v[2]]);}return out;}
+  if(a>v[0])out.push([v[0],a,v[2],v[3]]); if(b<v[1])out.push([b,v[1],v[2],v[3]]);}return out;}
 // 両端をなめらかに外へ逃がす(ガードレール・ウイングレールの端の開き)
 const flare=(s,a,b,d,L)=>{const u=Math.max(0,Math.max(a+L-s,s-(b-L))/L);return d*u*u;};
 function buildTrack(){
@@ -3019,26 +3022,31 @@ function bldg(S,st,y){
     if(!r||!r.noCanopy)
       mg.col((r&&r.canopyCol)||st.c).box(SV,c0,sg*(E+0.9),3.45,3.7,14,1.8,{tag:'駅舎の庇'});
   }
-  // 下高井戸:温かな色彩の大庇を街へ広げる(公表パース:木の下面・白い薄い縁。新宿方の端が
-  // 反り上がる)。白い丸柱(帯付き)で受ける
+  /* 下高井戸:温かな色彩の大庇を街へ広げる(公表パース:木の下面・白い薄い縁)。白い丸柱(帯付き)で受ける。
+     パースは南から北を望む画で、大庇は左=**西の端で反り上がる**。置くのは**駅の西南**(利用者指示):南側だけ、
+     入口(c0±6)の少し東から西へ駅舎の外まで(s が西へ増えるので e1 が西端)。以前は両側・新宿方の端で反っていた */
   if(st.n==='下高井戸'){
-    const e0=c0-44, e1=c0+44;
-    const hE=s=>{const u=(s-e0)/(e1-e0);
-      return 4.35+1.7*Math.pow(Math.max(0,1-u/0.32),2)+0.35*Math.pow(Math.max(0,(u-0.75)/0.25),2);};
-    for(const sg of[-1,1]){
-      mg.loft(SV,e0,e1,s=>{const i=sg*(deckHalf(s)-1.0), q=sg*(deckHalf(s)+4.6), h=hE(s);
-        return [[i,5.0],[q,h],[q,h+0.14],[i,5.35]];},
+    /* 形はパースの人物(約1.7m)との比で読んだ:縁の高さは低い所で約4.0m、西の先端で約6.3m(反り約2.3m)。
+       張出しは先端へ行くほど外へ広がる(桁の縁から4.6m → 先端で8.0m) */
+    const e0=c0-8, e1=c0+44;
+    const uW=s=>(e1-s)/(e1-e0);                                 // u=0 が西端(反り上がる側)
+    const hE=s=>{const u=uW(s);
+      return 4.0+2.3*Math.pow(Math.max(0,1-u/0.38),2)+0.35*Math.pow(Math.max(0,(u-0.75)/0.25),2);};
+    const dE=s=>4.6+3.4*Math.pow(Math.max(0,1-uW(s)/0.45),2);  // 桁の縁からの張出し
+    for(const sg of[-1]){                                       // 南側だけ
+      mg.loft(SV,e0,e1,s=>{const i=sg*(deckHalf(s)-1.0), q=sg*(deckHalf(s)+dE(s)), h=hE(s);
+        return [[i,5.0],[q,h],[q,h+0.16],[i,5.35]];},
         {closed:true,caps:true,cols:[0xc99a62,0xf4f5f6,0xe4e6e8,0xe4e6e8],tag:'大庇'});
       for(let s=e0;s<=e1+0.01;s+=4){                           // 縁の高さの登録簿(検証が反りを測る)
-        const q=deckHalf(s)+4.6;
-        STRUCT.push({tag:'大庇の縁',s0:s,s1:s,o0:sg>0?q-0.05:-q,o1:sg>0?q:-(q-0.05),y0:hE(s),y1:hE(s)+0.14});
+        const q=deckHalf(s)+dE(s);
+        STRUCT.push({tag:'大庇の縁',s0:s,s1:s,o0:sg>0?q-0.05:-q,o1:sg>0?q:-(q-0.05),y0:hE(s),y1:hE(s)+0.16});
       }
       for(let s=e0+0.6;s<e1;s+=1.1){                          // 下面の木の板目
-        const A=md.axes(s,sg*(deckHalf(s)-0.98)), B=md.axes(s,sg*(deckHalf(s)+4.55)), h=hE(s);
+        const A=md.axes(s,sg*(deckHalf(s)-0.98)), B=md.axes(s,sg*(deckHalf(s)+dE(s)-0.05)), h=hE(s);
         md.col(0xa97c47).tube(SV,[A.f.x,4.985,A.f.z],[B.f.x,h-0.015,B.f.z],0.02,4);
       }
       for(let s=e0+5;s<e1-2;s+=13){
-        const o=sg*(deckHalf(s)+3.4), f=(3.4+1.0)/5.6, h=5.0+(hE(s)-5.0)*f;
+        const o=sg*(deckHalf(s)+3.4), f=(3.4+1.0)/(dE(s)+1.0), h=5.0+(hE(s)-5.0)*f;   // 柱の頭=下面の高さ
         mg.col(0xf4f5f6).cyl(SV,s,o,0,h,0.38,12,{tag:'大庇の柱'});
         md.col(0x9aa0a6).cyl(SV,s,o,2.4,2.7,0.41,12);
       }
@@ -3746,7 +3754,7 @@ if(PLB){
   // 出典の表示(CC BY 4.0)
   try{
     const d=document.createElement('div');
-    d.textContent=(PLL?'建物・道路:':'建物:')+PLB.source+'(CC BY 4.0)を加工';
+    d.textContent=(PLL?'建物・道路・土地利用:':'建物:')+PLB.source+'(CC BY 4.0)を加工';   // CREDITS.txt と同じ表記
     d.style.cssText='position:fixed;right:6px;bottom:4px;font:11px sans-serif;color:#334;background:rgba(255,255,255,.7);padding:1px 6px;border-radius:4px;z-index:5;pointer-events:none';
     document.body.appendChild(d);
   }catch(e){}
@@ -4724,8 +4732,9 @@ function k8KindTxt(k){ return (k&&k.length===2)?k[0]+'  '+k[1]:k; }
 function k8DestTxt(d){ return d==='新宿'?'新  宿':d; }
 /* 識別灯(通過標識灯。京王の呼び名は「識別灯」):白の縦長の灯。各停以外の種別で点く(利用者指示。実車は快速以上の種別で
    通過駅のある区間に点ける)。位置は 8000系=行先の左と種別の右(上段の表示器と同じ高さ)、9000系=種別の左と車号の右(K9.FPASS)。
-   [y0,y1] の組 ×2 と z 下端・上端 */
-const K8_PASS={Y:[[-1.255,-1.195],[1.050,1.110]], Z:[3.115,3.265]};
+   左右の灯は車体の中心線に対称に置く(利用者指示。表示器は左右で幅が違うので、外側の行先の左端に合わせて
+   |y| 1.195〜1.255。種別の右とは 0.185m 空く)。[y0,y1] の組 ×2 と z 下端・上端 */
+const K8_PASS={Y:[[-1.255,-1.195],[1.195,1.255]], Z:[3.115,3.265]};
 function k8PassOn(o){ return !!(o.sign&&o.lights==='head'&&o.sign.kind!=='各停'); }
 /* s>1 は文字の高さを s 倍に(幅が表示器に収まらないときは、高さを保ったまま横を詰める) */
 function k8Led(txt,color,w,h,s){
@@ -5156,7 +5165,7 @@ const K9={
   FKIND:[-0.89,-0.51,3.14,3.34],         // 種別表示器(向かって左の窓の上部、ガラスの内)
   FNUM:[0.61,0.95,3.175,3.305],          // 車号(向かって右の窓の上部、ガラスの内に白い数字)。写真の実測(0.58〜0.92・z3.10〜3.23)から
                                          // 少し右上へ、種別と同じ高さ(中心 z3.24)に(利用者指示)
-  FPASS:[[-1.00,-0.94],[0.99,1.05],3.16,3.32],   // 識別灯(種別の左・車号の右。白の縦長)。写真の灰の縦長の灯(|y|≈0.95〜1.02)から
+  FPASS:[[-1.03,-0.97],[0.97,1.03],3.16,3.32],   // 識別灯(種別の左・車号の右。白の縦長)。写真の灰の縦長の灯(|y|≈0.95〜1.02)から、中心線に対称に
   FLOGO:[0.71,1.00,1.80,1.93],           // KEIO ロゴ(向かって右の赤帯の上に白)
   FANTI:[0.43,1.00,1.105,1.19],          // アンチクライマーの板
   FBOT:1.10, FCPL:0.29,                  // 前面の下端 / 連結器まわりの開口の半幅(扉の下〜)
@@ -5171,6 +5180,9 @@ K9.W=K9.HWB*2;
 // 10両編成(新宿方から)。パンタ・電動車は新宿方から何両目か(公表の説明と編成表から)
 const K9_FORMATIONS={
   '9731F':{cars:['9731','9031','9081','9531','9131','9581','9681','9231','9281','9781'],
+           panto:[2,3,5,8,9], motor:[2,3,5,8,9]},
+  // 笹塚の西側の留置線に置く編成(利用者指示)。30番台の車番は下2桁が編成番号(9731F と同じ並び)
+  '9732F':{cars:['9732','9032','9082','9532','9132','9582','9682','9232','9282','9782'],
            panto:[2,3,5,8,9], motor:[2,3,5,8,9]},
 };
 // 断面:8000系と同じ作り。帯・窓・扉の境目に頂点を置く
@@ -5559,22 +5571,25 @@ function makeCar(opt){
     addFine(F.pass,k8PassOn(o)?M_PASS:M_PASS_OFF,sh);          // 識別灯(各停以外で点く)
     if(k8PassOn(o)) addFine(F.passGlow,K8M.hlGlow,sh);
   }
-  // 台車・床下・冷房・幌
-  add(o.motor?GEO.bogieM:GEO.bogieT,M_BOG);
-  add(GEO.under,K8M.vc);
-  add(GEO.ac,K8M.vc);
+  // 台車・床下・冷房・幌。台車・床下・冷房・パンタは遠く(LOD_FAR より先)では描かない(1両あたり描画5〜9回・数千三角形。
+  // 1.5km 先では数画素にしかならない。全体俯瞰で50両ぶん効く)
+  const mid=[], addMid=(geo,mat,parent)=>{const m=add(geo,mat,parent);mid.push(m);return m;};
+  addMid(o.motor?GEO.bogieM:GEO.bogieT,M_BOG);
+  addMid(GEO.under,K8M.vc);
+  addMid(GEO.ac,K8M.vc);
   if(!o.cabR) addFine(GEO.gang,K8M.vc).position.x=-(SP.LEN/2+.25);
   // パンタグラフ:京王八王子方の台車の上(台座の中心が車両中心から 6.88m)、ひじも八王子方
   if(o.panto){
     const pg=new THREE.Group(); pg.position.x=o.hachi*SP.BOGIE_X; if(o.hachi<0) pg.rotation.y=Math.PI;
-    g.add(pg);
+    g.add(pg); mid.push(pg);
     add(GEO.panto.base,M_PANS,pg); add(GEO.panto.frame,M_PN,pg); add(GEO.panto.shoe,M_SH,pg);
-    add(GEO.pantoBits,K8M.vc).position.x=o.hachi*5.1;
+    addMid(GEO.pantoBits,K8M.vc).position.x=o.hachi*5.1;
     g.userData.panto=pg;
   }
   g.userData.body=body; g.userData.bodyMat=bodyMat; g.userData.tail=tail;
   CARS_ALL.push(g);
   g.userData.fine=fine; g.userData.hi=true; g.userData.k8=o;
+  g.userData.mid=mid; g.userData.far=false;
   g.userData.doors={r:0,side:1};
   scene.add(g); return g;
 }
@@ -5677,6 +5692,7 @@ function driveTrain(t,dt){
 const CAR_HALF=K8.LEN/2;
 // 車端2点の実位置から姿勢(ヨー+ピッチ)を決める。勾配区間でも車体が線路に沿う
 let LOD_NEAR=420;   // この距離までは高精細モデル(スマホでは短縮)
+let LOD_FAR=1500;   // この距離より先は台車・床下・冷房・パンタも省く(車体だけ)
 const _UP=new THREE.Vector3(0,1,0), _F=new THREE.Vector3(), _R=new THREE.Vector3(),
       _U=new THREE.Vector3(), _M4=new THREE.Matrix4();
 function seatCar(c,s,zf,dir){
@@ -5705,6 +5721,8 @@ function lodCar(c){
     // 遠景では車内・乗客・ガラス・表示器・細部を省く(塗り分けはシェーダなので遠景でも崩れない)
     if(ud.fine) for(const m of ud.fine) m.visible=hi;
   }
+  const far=d>LOD_FAR;
+  if(far!==ud.far){ ud.far=far; if(ud.mid) for(const m of ud.mid) m.visible=!far; }
 }
 // 編成の各車両を配置する。範囲外の車両は非表示にし、姿勢計算もスキップして軽量化。
 /* 夜の駅の照明で車体を照らす(利用者指示:駅は明るいのに、進入する電車が暗いまま)。駅の結合ジオメトリと同じく
@@ -5881,6 +5899,8 @@ function stepXRail(dt){
 }
 stepXRail(0);           // 初期配置(列車走行OFFのままでも線路の上に載っている)
 const parkedCars=[];
+/* 留置の編成の登録簿(検証が置き場所・編成・向きを読む)。cars は東(新宿方)から順 */
+const PARKS=[];
 { // 滞泊編成:留置線の実測有効長に応じ両数を自動決定
   // 留置線は sx が j とともに増える(走行列車と逆)。cabF/cabR をそのまま使うと
   // 両端の運転台が編成の内側を向いてしまうので、前後を入れ替える。
@@ -5888,16 +5908,23 @@ const parkedCars=[];
   // 留置線は sx が j とともに増える=j が大きいほど西。西端基準は nE-j
   // 留置車は j が大きいほど西(京王八王子方)=新宿方から j+1 両目。灯火・表示は消灯、乗客なし
   const park=(j,n,form)=>{const sp=k8CarSpec(form,j+1);
-    return makeCar({cabF:j===n-1, cabR:j===0, panto:sp.panto, motor:sp.motor, num:sp.num,
+    return makeCar({cabF:j===n-1, cabR:j===0, panto:sp.panto, motor:sp.motor, num:sp.num, series:sp.series,
       hachi:1, lights:'off', sign:null, crowd:null});};
-  for(let j=0;j<nE;j++){const c=park(j,nE,'8713F');
-    const sx=YARD_E+12+j*K8.PITCH+K8.LEN/2;
-    seatCar(c,sx,()=>YARD_A,1);
-    KOUKU[3].VGn.add(c);parkedCars.push(c);}
-  for(let j=0;j<nW;j++){const c=park(j,nW,'8714F');
-    const sx=YW0e+12+j*K8.PITCH+K8.LEN/2;
-    seatCar(c,sx,()=>YARD_B,1);
-    KOUKU[3].VGn.add(c);parkedCars.push(c);}
+  // 東端 e0 から西へ n 両を並べ、群 grp に入れて登録簿に残す
+  const parkSet=(name,form,n,e0,off,grp)=>{
+    const P={name:name, form:form, off:off, e0:e0, e1:e0+(n-1)*K8.PITCH+K8.LEN, cars:[]};
+    for(let j=0;j<n;j++){const c=park(j,n,form);
+      seatCar(c,e0+j*K8.PITCH+K8.LEN/2,()=>off,1);
+      if(grp) grp.add(c);
+      parkedCars.push(c); P.cars.push(c);}
+    PARKS.push(P); return P;
+  };
+  parkSet('桜上水 留置線内側','8713F',nE,YARD_E+12,YARD_A,KOUKU[3].VGn);
+  parkSet('桜上水 留置線外側','8714F',nW,YW0e+12,YARD_B,KOUKU[3].VGn);
+  /* 笹塚の西側の留置線(南。内側 −2m):9000系10両(利用者指示)。西端を車止めの1m 手前(線路の端の3m 手前)に着ける。
+     東端は本線からの渡り線が留置線に入る分岐の先(⑥が分岐との離れを見る) */
+  { const T=TRACKS.find(t=>t.id==='笹塚留置線南'), L=9*K8.PITCH+K8.LEN;
+    parkSet('笹塚 留置線(西側・南)','9732F',10,T.x1-3.0-L,-2,null); }
 }
 
 /* ---- ホームドア(可動式ホーム柵) ------------------------------------------
@@ -6400,6 +6427,7 @@ const IS_MOBILE=/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)||
 if(IS_MOBILE){
   renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));   // 解像度上限で描画負荷を抑える
   LOD_NEAR=260;                                             // 高精細モデルの適用範囲を短縮
+  LOD_FAR=900;                                              // 台車・床下・冷房・パンタを描く範囲も短縮
   LOD_STRUCT=0.6;                                           // 駅・高架橋の細部も近くだけに
   renderer.shadowMap.enabled=false;sun.castShadow=false;    // 影は1パス増えるので無効
   const lockLandscape=()=>{                                 // 可能なら横画面に固定
@@ -6492,6 +6520,10 @@ function loop(now){
     Math.hypot(camera.position.x-cam.tx,camera.position.y,camera.position.z-cam.tz));
   CINE.tick(dt);          // 雪・花びら(冬・春)を進め、空をカメラの真上へ
   lodStruct();            // 駅・高架橋の細部は近くだけ描く(今のカメラで判定)
+  // 車両の LOD も描く直前の今のカメラで(stepWorld はカメラを動かす前。最初のコマはカメラが原点=笹塚の近くに
+  // あり、笹塚の留置車を高精細で描いて車番の画像まで作っていた)
+  for(const t of trains) for(const c of t.cars) if(c.visible) lodCar(c);
+  for(const c of parkedCars) lodCar(c);
   renderer.render(scene,camera);
 }
 
