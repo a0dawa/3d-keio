@@ -252,6 +252,14 @@ const TPROP = {};
   {
     const LAMP_CLEAR = 1.0;   // 灯具の周りに確保する離れ[m](検証側の値)
     const items = X.CITY.buildings.concat(X.CITY.trees);
+    // PLATEAU の建物は足跡の多角形までの距離で測る(内側なら負)。模式の建物・樹木は外接円
+    const polyDist = (P, x, z) => { let ins = false, d = 1e18;
+      for (let i = 0, j = P.length - 1; i < P.length; j = i++) { const a = P[j], b = P[i];
+        if (((a[1] > z) !== (b[1] > z)) && x < (b[0] - a[0]) * (z - a[1]) / (b[1] - a[1]) + a[0]) ins = !ins;
+        const dx = b[0] - a[0], dz = b[1] - a[1], L2 = dx * dx + dz * dz, u = L2 ? Math.max(0, Math.min(1, ((x - a[0]) * dx + (z - a[1]) * dz) / L2)) : 0;
+        d = Math.min(d, Math.hypot(x - a[0] - dx * u, z - a[1] - dz * u)); }
+      return ins ? -d : d; };
+    const clearOf = (it, x, z) => it.poly ? polyDist(it.poly, x, z) : Math.hypot(x - it.x, z - it.z) - it.r;
     let inside = 0, n = 0, first = null;
     for (const m of N.group.children) {
       if (!m.mats || !m.material || m.material.transparent === true) continue;
@@ -259,7 +267,8 @@ const TPROP = {};
         if (!t || Math.abs(t.p.y - 5.2) > 0.01) continue;      // 地上の街灯だけ
         n++;
         for (const it of items) {
-          if (Math.hypot(t.p.x - it.x, t.p.z - it.z) < it.r + LAMP_CLEAR) {
+          if (Math.hypot(t.p.x - it.x, t.p.z - it.z) > it.r + LAMP_CLEAR + 1) continue;
+          if (clearOf(it, t.p.x, t.p.z) < LAMP_CLEAR) {
             inside++; if (!first) first = '(' + t.p.x.toFixed(0) + ',' + t.p.z.toFixed(0) + ')'; break;
           }
         }

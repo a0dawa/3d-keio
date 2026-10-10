@@ -179,6 +179,7 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="plateau_bldg.js"></script><!-- 沿線の建物(PLATEAU)。無ければ模式の街で描く -->
 <script>
 'use strict';
 if(!window.THREE){document.body.insertAdjacentHTML('beforeend','<div class="panel" style="top:50%;left:50%;transform:translate(-50%,-50%);padding:20px">3Dライブラリを読み込めませんでした。通信環境をご確認ください。</div>');throw new Error('three missing');}
@@ -1065,6 +1066,7 @@ function lodStruct(){
     const v=Math.hypot(p.x-L.x,p.y-L.y,p.z-L.z)-L.r < L.d*LOD_STRUCT;
     if(L.o.visible!==v) L.o.visible=v;
   }
+  if(typeof cityLod==='function') cityLod();      // PLATEAU の建物の3段(8章)
 }
 
 /* ============ 4. 地表・道路・水緑・施設(平面図準拠) ============ */
@@ -3227,6 +3229,7 @@ function cityFree(s,off,rad,px,pz){
 // すでに置いた物との重なり(世界座標の格子ハッシュ。建物と樹木で共有する)
 const OCC=new Map(), OCC_CELL=26, OCC_GAP=1.2;
 function occFree(px,pz,r){
+  if(plbHit(px,pz,Math.min(PLB_PAD,r+OCC_GAP))) return false;      // PLATEAU の建物の足跡(あれば)
   const cx=Math.floor(px/OCC_CELL), cz=Math.floor(pz/OCC_CELL);
   for(let a=-1;a<=1;a++)for(let b=-1;b<=1;b++){
     const l=OCC.get((cx+a)+','+(cz+b)); if(!l) continue;
@@ -3242,9 +3245,192 @@ function occAdd(px,pz,r){
   let l=OCC.get(k); if(!l){l=[];OCC.set(k,l);}
   l.push([px,pz,r]);
 }
+/* ---- 街並み:PLATEAU の実データ(別ファイル plateau_bldg.js があるとき) ----------------
+   国土交通省 3D都市モデル(Project PLATEAU)2025年度の建築物(足跡+高さ)。tools/plateau_import.py が作る。
+   ファイルが無ければ下の模式の街(約1万棟)で描く。出典は画面の右下に表示する(CC BY 4.0)。
+   ・足跡の重心を線形へ射影して (s,off) を求め、事業区間の帯(DOM)に絞る
+   ・頂点と辺の2mごとの点が占有域(高架下と側道・交差道路・河川・交差鉄道・施設)に掛かる建物は外す
+     (データの年度が古くても、事業で撤去された沿線の建物は側道の範囲で落ちる)
+   ・形は3段:近く(400m)=足跡の押し出し(平らな屋根。近づいたまとまりで初めて作る)、中(1.4km)=向きを合わせた
+     外接矩形の箱、遠く=120m²以上か9.5m以上の建物だけの箱。中・遠はインスタンス。s の240mごとのまとまりに1つずつ。
+     切り替えは描く直前のカメラで(lodStruct → cityLod)
+   ・樹木と街灯は足跡の中・縁に置かない(occFree が足跡の格子 PLB_GRID も見る) */
+const PLB=(typeof globalThis!=='undefined'&&globalThis.PLATEAU_BLDG&&globalThis.PLATEAU_BLDG.b64)?globalThis.PLATEAU_BLDG:null;
+const PLB_GRID=new Map(), PLB_CELL=26, PLB_PAD=6;
+// 多角形までの距離(内側なら負)
+function polyDist(P,x,z){
+  let inside=false, d=1e18;
+  for(let i=0,j=P.length-1;i<P.length;j=i++){
+    const a=P[j], b=P[i];
+    if(((a[1]>z)!==(b[1]>z)) && x<(b[0]-a[0])*(z-a[1])/(b[1]-a[1])+a[0]) inside=!inside;
+    const dx=b[0]-a[0], dz=b[1]-a[1], L2=dx*dx+dz*dz;
+    const u=L2?Math.max(0,Math.min(1,((x-a[0])*dx+(z-a[1])*dz)/L2)):0;
+    d=Math.min(d,Math.hypot(x-a[0]-dx*u,z-a[1]-dz*u));
+  }
+  return inside?-d:d;
+}
+function plbHit(px,pz,r){                  // 点(半径 r)が建物の足跡に掛かるか(r ≤ PLB_PAD)
+  const l=PLB_GRID.get(Math.floor(px/PLB_CELL)+','+Math.floor(pz/PLB_CELL));
+  if(l) for(const P of l) if(polyDist(P,px,pz)<r) return true;
+  return false;
+}
+function plbDecode(b64){                   // 2進 → [{P:[[x,z]…], h, st}](plateau_import.py の encode の逆)
+  const s=atob(b64), u8=new Uint8Array(s.length);
+  for(let i=0;i<s.length;i++) u8[i]=s.charCodeAt(i);
+  if(s.slice(0,4)!=='PLT1') throw new Error('PLATEAU の建物データの形式が違う');
+  const dv=new DataView(u8.buffer), N=dv.getUint32(4,true), out=[];
+  let o=8;
+  for(let k=0;k<N;k++){
+    const nv=dv.getUint8(o), h=dv.getUint16(o+1,true)/10, st=dv.getUint8(o+3); o+=4;
+    let x=dv.getInt32(o,true), z=dv.getInt32(o+4,true); o+=8;
+    const P=[[x/10,z/10]];
+    for(let i=1;i<nv;i++){ x+=dv.getInt16(o,true); z+=dv.getInt16(o+2,true); o+=4; P.push([x/10,z/10]); }
+    out.push({P:P,h:h,st:st});
+  }
+  return out;
+}
+// 単純多角形の耳切り(屋根の三角形)。[[i,j,k]…]
+function earTri(P){
+  const n=P.length, cr=(a,b,c)=>(b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0]);
+  let A=0; for(let i=0;i<n;i++){const a=P[i],b=P[(i+1)%n]; A+=a[0]*b[1]-b[0]*a[1];}
+  const idx=[...Array(n).keys()]; if(A<0) idx.reverse();
+  const inTri=(p,a,b,c)=>cr(a,b,p)>=0&&cr(b,c,p)>=0&&cr(c,a,p)>=0;
+  const T=[]; let guard=0;
+  while(idx.length>3&&guard++<4*n){
+    let cut=false;
+    for(let i=0;i<idx.length;i++){
+      const a=idx[(i+idx.length-1)%idx.length], b=idx[i], c=idx[(i+1)%idx.length];
+      if(cr(P[a],P[b],P[c])<=1e-9) continue;
+      let ear=true;
+      for(const q of idx) if(q!==a&&q!==b&&q!==c&&inTri(P[q],P[a],P[b],P[c])){ear=false;break;}
+      if(!ear) continue;
+      T.push([a,b,c]); idx.splice(i,1); cut=true; break;
+    }
+    if(!cut) break;
+  }
+  for(let i=1;i<idx.length-1;i++) T.push([idx[0],idx[i],idx[i+1]]);   // 残り(退化した所)は扇で
+  return T;
+}
+const CITY_LODS=[];                       // まとまりごとの [近・中・遠] の Mesh と外接球
+function cityLod(){
+  const p=camera.position;
+  for(const C of CITY_LODS){
+    const d=Math.hypot(p.x-C.x,p.y-C.y,p.z-C.z)-C.r, k=d<C.near*LOD_STRUCT?0:(d<C.mid*LOD_STRUCT?1:2);
+    if(k===0&&!C.m[0]) C.m[0]=C.make(C);          // 近くの形は初めて近づいたときに作る
+    for(let j=0;j<3;j++){const v=(j===k); if(C.m[j]&&C.m[j].visible!==v) C.m[j].visible=v;}
+  }
+}
 const CITY={buildings:[],trees:[]};    // 検証用の登録簿
-{
-  /* 棟数は利用者指示で約2倍(約1万棟)。数を増やすぶん**1棟を実際の街の大きさへ
+if(PLB){
+  const L=plbDecode(PLB.b64), CH=new Map(), CHL=240;
+  const PALS=[[0xe2dccf,0xd9d2c4,0xcfc8bb,0xe6e2d8,0xc9c3b8,0xd8d4cc],    // 低層(戸建て・アパート)
+              [0xc9c8c4,0xd4d0c8,0xbdbab4,0xcfd3d6,0xd8d3c9],             // 中層
+              [0xc2c8cf,0xb7bec6,0xd0d4d8,0xc8c4bd]];                      // 高層
+  let nIn=0;
+  for(const b of L){
+    const P=b.P; if(P.length<3||!(b.h>0)) continue;
+    let A=0,cx=0,cz=0;
+    for(let i=0;i<P.length;i++){const a=P[i],c=P[(i+1)%P.length],w=a[0]*c[1]-c[0]*a[1]; A+=w; cx+=(a[0]+c[0])*w; cz+=(a[1]+c[1])*w;}
+    if(Math.abs(A)<2) continue;
+    cx/=3*A; cz/=3*A;
+    const pr=prjXY(cx,cz), s=pr.s, off=pr.off;
+    if(s<DOM.x0||s>DOM.x1||Math.abs(off)>DOM.z) continue;
+    const f0=frame(s,0), f1=frame(s+1,0), fn=frame(s,1);
+    const tx=f1.x-f0.x, tz=f1.z-f0.z, nx=fn.x-f0.x, nz=fn.z-f0.z;
+    let ok=true;
+    for(let i=0;i<P.length&&ok;i++){                  // 頂点と辺の2mごとの点が占有域に掛からない
+      const a=P[i], c=P[(i+1)%P.length], m=Math.max(1,Math.ceil(Math.hypot(c[0]-a[0],c[1]-a[1])/2));
+      for(let k=0;k<m&&ok;k++){
+        const x=a[0]+(c[0]-a[0])*k/m, z=a[1]+(c[1]-a[1])*k/m;
+        if(!cityFree(s+(x-cx)*tx+(z-cz)*tz, off+(x-cx)*nx+(z-cz)*nz, 0.3, x, z)) ok=false;
+      }
+    }
+    if(!ok) continue;
+    // 向きを合わせた外接矩形(辺の向きのうち面積が最小のもの)
+    let best=null;
+    for(let i=0;i<P.length;i++){
+      const a=P[i], c=P[(i+1)%P.length], l=Math.hypot(c[0]-a[0],c[1]-a[1]); if(l<0.5) continue;
+      const ux=(c[0]-a[0])/l, uz=(c[1]-a[1])/l;
+      let u0=1e9,u1=-1e9,v0=1e9,v1=-1e9;
+      for(const p of P){const u=p[0]*ux+p[1]*uz, v=-p[0]*uz+p[1]*ux; u0=Math.min(u0,u);u1=Math.max(u1,u);v0=Math.min(v0,v);v1=Math.max(v1,v);}
+      const ar=(u1-u0)*(v1-v0);
+      if(!best||ar<best.ar) best={ar:ar,ux:ux,uz:uz,w:u1-u0,d:v1-v0,uc:(u0+u1)/2,vc:(v0+v1)/2};
+    }
+    if(!best) continue;
+    const ox=best.uc*best.ux-best.vc*best.uz, oz=best.uc*best.uz+best.vc*best.ux, a=Math.atan2(best.uz,best.ux);
+    const h=b.h, pal=PALS[h<9.5?0:(h<25?1:2)], hex=pal[Math.abs(Math.round(cx*7+cz*13))%pal.length];
+    const r=Math.hypot(best.w,best.d)/2, k=Math.floor(s/CHL);
+    let c=CH.get(k); if(!c){c={B:[],bx:[1e9,-1e9,1e9,-1e9,0]}; CH.set(k,c);}
+    c.B.push({P:P,h:h,cx:cx,cz:cz,ox:ox,oz:oz,w:best.w,d:best.d,a:a,hex:hex,big:best.w*best.d>=120||h>=9.5});   // 遠くでも描く:120m²以上か9.5m以上(集合住宅・大きな家)
+    c.bx[0]=Math.min(c.bx[0],ox-r); c.bx[1]=Math.max(c.bx[1],ox+r); c.bx[2]=Math.min(c.bx[2],oz-r); c.bx[3]=Math.max(c.bx[3],oz+r); c.bx[4]=Math.max(c.bx[4],h);
+    // 足跡の格子(樹木・街灯が中や縁に入らない)。外接矩形+余白が掛かるセル全部に入れる
+    for(let gx=Math.floor((ox-r-PLB_PAD)/PLB_CELL);gx<=Math.floor((ox+r+PLB_PAD)/PLB_CELL);gx++)
+      for(let gz=Math.floor((oz-r-PLB_PAD)/PLB_CELL);gz<=Math.floor((oz+r+PLB_PAD)/PLB_CELL);gz++){
+        const kk=gx+','+gz; let l=PLB_GRID.get(kk); if(!l){l=[];PLB_GRID.set(kk,l);} l.push(P);
+      }
+    CITY.buildings.push({s:s,off:off,x:ox,z:oz,w:best.w,d:best.d,h:h,a:a,r:r,poly:P,plateau:true});
+    nIn++;
+  }
+  /* 中・遠は単位の箱のインスタンス(まとまりごとに外接球を持たせる)。屋根は頂点カラーで少し暗く */
+  const boxGeo=()=>{const P=[],N=[],I=[],C=[];
+    for(const [n,f] of boxFaces(-0.5,0.5,-0.5,0.5,-0.5,0.5,['top','px','nx','pz','nz'])){
+      const o=P.length/3, v=(n==='top')?0.86:1;
+      for(let j=0;j<4;j++){P.push(f[j][0],f[j][1],f[j][2]);N.push(f[4][0],f[4][1],f[4][2]);C.push(v,v,v);} I.push(o,o+1,o+2,o,o+2,o+3);}
+    return facesGeo(P,N,I,C);};
+  const MAT_B=mkMat('MeshLambertMaterial',{color:0xffffff,vertexColors:true});
+  const m4=new THREE.Matrix4(), q=new THREE.Quaternion(), e=new THREE.Euler(), col=new THREE.Color(), v3=new THREE.Vector3(), sc=new THREE.Vector3();
+  const sphere=(bx)=>new THREE.Sphere(new THREE.Vector3((bx[0]+bx[1])/2,bx[4]/2,(bx[2]+bx[3])/2),Math.hypot(bx[1]-bx[0],bx[4],bx[3]-bx[2])/2);
+  const inst=(list,bx)=>{
+    if(!list.length) return null;
+    const g=boxGeo(), im=new THREE.InstancedMesh(g,MAT_B,list.length);
+    list.forEach((b,j)=>{e.set(0,-b.a,0);q.setFromEuler(e);m4.compose(v3.set(b.ox,b.h/2,b.oz),q,sc.set(b.w,b.h,b.d));
+      im.setMatrixAt(j,m4); im.setColorAt(j,setSrgb(col,b.hex));});
+    g.boundingSphere=sphere(bx); im.frustumCulled=true;
+    im.instanceMatrix.needsUpdate=true; if(im.instanceColor) im.instanceColor.needsUpdate=true;
+    scene.add(im); return im;
+  };
+  /* 近くは足跡の押し出し。近づいたまとまりで初めて作る(全部を先に作ると頂点だけで数百MBになる) */
+  const detail=(C)=>{
+    const P=[],N=[],I=[],Cc=[], c=new THREE.Color();
+    const quad=(a,b,cc,d,n,cl)=>{const o=P.length/3; for(const p of [a,b,cc,d]){P.push(p[0],p[1],p[2]);N.push(n[0],n[1],n[2]);Cc.push(cl.r,cl.g,cl.b);}
+      // 法線の向きに表を向ける
+      const ux=b[0]-a[0],uy=b[1]-a[1],uz=b[2]-a[2],vx=cc[0]-a[0],vy=cc[1]-a[1],vz=cc[2]-a[2];
+      if((uy*vz-uz*vy)*n[0]+(uz*vx-ux*vz)*n[1]+(ux*vy-uy*vx)*n[2]>=0) I.push(o,o+1,o+2,o,o+2,o+3); else I.push(o,o+2,o+1,o,o+3,o+2);};
+    for(const b of C.B){
+      setSrgb(c,b.hex); const roof=c.clone().multiplyScalar(0.86), Q=b.P, h=b.h;
+      for(let i=0;i<Q.length;i++){
+        const a=Q[i], d=Q[(i+1)%Q.length], mx=(a[0]+d[0])/2-b.cx, mz=(a[1]+d[1])/2-b.cz;
+        let nx=d[1]-a[1], nz=-(d[0]-a[0]); const l=Math.hypot(nx,nz)||1; nx/=l; nz/=l; if(nx*mx+nz*mz<0){nx=-nx;nz=-nz;}
+        quad([a[0],0,a[1]],[d[0],0,d[1]],[d[0],h,d[1]],[a[0],h,a[1]],[nx,0,nz],c);
+      }
+      const o=P.length/3;
+      for(const p of Q){P.push(p[0],h,p[1]);N.push(0,1,0);Cc.push(roof.r,roof.g,roof.b);}
+      for(const t of earTri(Q)){
+        const A0=Q[t[0]],A1=Q[t[1]],A2=Q[t[2]], up=(A1[1]-A0[1])*(A2[0]-A0[0])-(A1[0]-A0[0])*(A2[1]-A0[1]);   // 上向きなら正
+        if(up>=0) I.push(o+t[0],o+t[1],o+t[2]); else I.push(o+t[0],o+t[2],o+t[1]);
+      }
+    }
+    const g=facesGeo(P,N,I,Cc); g.boundingSphere=sphere(C.bx);
+    const m=new THREE.Mesh(g,MAT_B); m.visible=false; scene.add(m);
+    m.castShadow=true; m.receiveShadow=true;        // 後から作るので applyShadows() の一括設定に載らない
+    return m;
+  };
+  for(const c of CH.values()){
+    const bx=c.bx;
+    CITY_LODS.push({x:(bx[0]+bx[1])/2,y:bx[4]/2,z:(bx[2]+bx[3])/2,r:Math.hypot(bx[1]-bx[0],bx[4],bx[3]-bx[2])/2,
+      near:400,mid:1400,B:c.B,bx:bx,make:detail,m:[null,inst(c.B,bx),inst(c.B.filter(b=>b.big),bx)]});
+  }
+  CITY.plateau={source:PLB.source,count:PLB.count,used:nIn};
+  // 出典の表示(CC BY 4.0)
+  try{
+    const d=document.createElement('div');
+    d.textContent='建物:'+PLB.source+'(CC BY 4.0)を加工';
+    d.style.cssText='position:fixed;right:6px;bottom:4px;font:11px sans-serif;color:#334;background:rgba(255,255,255,.7);padding:1px 6px;border-radius:4px;z-index:5;pointer-events:none';
+    document.body.appendChild(d);
+  }catch(e){}
+}else{
+
+  /* 模式の街(PLATEAU のデータが無いとき)。棟数は利用者指示で約2倍(約1万棟)。数を増やすぶん**1棟を実際の街の大きさへ
      縮める**:世田谷・杉並の沿線は 間口7〜11m・2〜3階建ての戸建てが大半で、
      アパートが混じり、駅前だけ中高層がまとまる。棄却(cityFree/occFree)は
      従来どおりなので、既存の建物・樹木・線路・道路・河川とは重ならない。 */
@@ -3420,7 +3606,7 @@ const NIGHT=(function(){
       if(!list.length) continue;
       const im=new THREE.InstancedMesh(SHELL,lit({map:lo.t}),list.length);
       list.forEach(function(b,i){
-        e.set(0,-frame(b.s,b.off).a,0);q.setFromEuler(e);
+        e.set(0,-(b.a!==undefined?b.a:frame(b.s,b.off).a),0);q.setFromEuler(e);
         // わずかに外へ出して、建物の面と同じ奥行きにならないようにする
         m4.compose(new THREE.Vector3(b.x,b.h/2,b.z),q,
                    new THREE.Vector3(b.w*1.006,b.h*1.002,b.d*1.006));

@@ -2,9 +2,9 @@
 
 ## 結論
 
-**使える。** 沿線の4区市(渋谷区=笹塚・杉並区・世田谷区・調布市=仙川)はすべて PLATEAU の公開範囲にあり、
+**使っている(2026-10)。** 沿線の4区市(渋谷区=笹塚・杉並区・世田谷区・調布市=仙川)はすべて PLATEAU の公開範囲にあり、
 建物の「足跡(平面形)+高さ」を取り出せば、いまの模式の街(約1万棟の箱)を実際の街区・建物に置き換えられる。
-ただし**データはこの作業環境からは取得できなかった**(下記)。取り込みの道具(試作)は用意した。
+
 
 | 項目 | 内容 |
 |---|---|
@@ -14,14 +14,22 @@
 | ライセンス | CC BY 4.0 ほか(建物は ODbL・ODC-BY とのマルチライセンス)。**出典の表示**で加工・再配布・商用も可。画面に「出典:国土交通省 Project PLATEAU」を出す |
 | 必要なメッシュ | 線路の両側 650m の帯にかかる3次メッシュ 22枚:53393486 53393487 53393496 53393497 53393498 53393499 53393590 53393591 53393592 53393593 53394406 53394407 53394408 53394409 53394418 53394419 53394500 53394501 53394502 53394503 53394512 53394513 |
 
-## この環境で取得できなかったこと
+## 取り込んだデータ(2026-10)
 
-G空間情報センター(www.geospatial.jp)・PLATEAU の配信(assets.cms.plateau.reearth.io、api.plateau.reearth.io)・
-PLATEAU VIEW(plateauview.mlit.go.jp)・国交省(www.mlit.go.jp)は、この作業セッションの外向き通信の制限
-(組織の許可リスト)で 403 になった。次のどちらかで先へ進める:
-1. 環境のネットワークの設定でこれらのホストを許可する(Claude Code on the web の環境設定)
-2. 上の22メッシュの建築物 CityGML(`bldg/*.gml`)を `reference/plateau/citygml/` に置く
-   (23区は「東京都23区」、仙川は「調布市(2025年度)」のデータセットから)
+- 国土交通省 3D都市モデル(Project PLATEAU)**2025年度** CityGML(v5):渋谷区・杉並区・世田谷区・調布市
+  (`assets.cms.plateau.reearth.io` の `131xx_*_pref_2025_citygml_1_op.zip`)。zip 全体(0.44〜1.0GB)は落とさず、
+  HTTP の範囲指定で目次を読み、`udx/bldg/` の22メッシュだけを取り出した(合計 1.1GB の GML)。
+  区ごとの zip に入っている同じメッシュのファイルは同一(メッシュに全区の建物が入っている)
+- `plateau_import.py --min-area 25 --tol 0.5`:帯(駅を結ぶ折れ線から540m)で 31,691棟 → `plateau_bldg.js`(1.5MB)。
+  ビューアの帯(|off|≤470・事業区間)と占有域で約2.2万棟を描く
+- 許可したドメイン:`www.geospatial.jp`(カタログ)・`assets.cms.plateau.reearth.io`(ファイル)
+
+作り直すとき(年度の更新など):カタログ API(`/ckan/api/3/action/package_search?q=plateau 世田谷区`)で zip の URL を引き、
+22メッシュの `udx/bldg/*.gml` を取り出して、
+```bash
+python3 -I tools/plateau_import.py --html keio_elevated_3d.html --min-area 25 --tol 0.5 \
+  --source '国土交通省 3D都市モデル(Project PLATEAU)2025年度 渋谷区・杉並区・世田谷区・調布市' --out plateau_bldg.js <GML…>
+```
 
 ## 取り込みの方法(試作:`tools/plateau_import.py`)
 

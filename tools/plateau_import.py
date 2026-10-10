@@ -95,7 +95,7 @@ def simplify(p, tol):
     return q if len(q) >= 3 else p
 
 
-def read_buildings(path, proj, margin, min_area, tol):
+def read_buildings(path, proj, margin, min_area, tol, band=0):
     raw = open(path, 'rb').read(4096)
     if b'<!DOCTYPE' in raw or b'<!ENTITY' in raw:
         raise SystemExit('DOCTYPE/ENTITY を含むファイルは読まない: ' + path)
@@ -104,6 +104,19 @@ def read_buildings(path, proj, margin, min_area, tol):
     la1 = max(p[0] for p in pts) + margin / mlat
     lo0 = min(p[1] for p in pts) - margin / mlon
     lo1 = max(p[1] for p in pts) + margin / mlon
+    # 駅の中心を結ぶ折れ線(両端は延長)からの距離で帯に絞る。正確な (s,off) の判定はビューアが行う
+    P = [((q[1] - lon0) * mlon, -(q[0] - lat0) * mlat) for q in pts]
+    def ext(a, b, L):
+        dx, dz = a[0] - b[0], a[1] - b[1]; n = math.hypot(dx, dz) or 1
+        return (a[0] + dx / n * L, a[1] + dz / n * L)
+    P = [ext(P[0], P[1], margin)] + P + [ext(P[-1], P[-2], margin)]
+    def band_dist(x, z):
+        best = 1e18
+        for (ax, az), (bx, bz) in zip(P, P[1:]):
+            dx, dz = bx - ax, bz - az; L2 = dx * dx + dz * dz
+            u = max(0.0, min(1.0, ((x - ax) * dx + (z - az) * dz) / L2)) if L2 else 0.0
+            best = min(best, math.hypot(x - ax - dx * u, z - az - dz * u))
+        return best
     out = []
     for ev, el in ET.iterparse(path, events=('end',)):
         if el.tag != BLDG:
@@ -137,6 +150,8 @@ def read_buildings(path, proj, margin, min_area, tol):
         if not (la0 <= clat <= la1 and lo0 <= clon <= lo1) or height <= 0:
             continue
         p = [((q[1] - lon0) * mlon, -(q[0] - lat0) * mlat) for q in foot]   # X=東・Z=南(ビューアの toXY)
+        if band and band_dist(sum(q[0] for q in p) / len(p), sum(q[1] for q in p) / len(p)) > band:
+            continue
         if len(p) > 1 and math.hypot(p[0][0] - p[-1][0], p[0][1] - p[-1][1]) < 1e-6:
             p = p[:-1]                                    # 閉じた輪の終点を除く
         if len(p) < 3 or area2d(p) < min_area:
@@ -177,18 +192,28 @@ def decode(b):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('--html', default='keio_elevated_3d.html')
-    ap.add_argument('--out', required=True)
+    ap.add_argument('--out', required=True, help='2進(.bin)か、ビューアが読む JS(.js:globalThis.PLATEAU_BLDG に base64 で入れる)')
+    ap.add_argument('--source', default='国土交通省 3D都市モデル(Project PLATEAU)', help='出典の表示')
     ap.add_argument('--margin', type=float, default=600.0, help='駅の並びの外側に取る幅[m]')
     ap.add_argument('--min-area', type=float, default=15.0, help='これより小さい足跡は捨てる[m²]')
     ap.add_argument('--tol', type=float, default=0.3, help='足跡の単純化の許容[m]')
+    ap.add_argument('--band', type=float, default=540.0, help='駅を結ぶ折れ線からこの距離[m]より遠い建物は捨てる(0=絞らない)')
     ap.add_argument('gml', nargs='+')
     a = ap.parse_args()
     proj = html_projection(a.html)
     blds = []
     for g in a.gml:
-        blds += read_buildings(g, proj, a.margin, a.min_area, a.tol)
+        blds += read_buildings(g, proj, a.margin, a.min_area, a.tol, a.band)
     data = encode(blds)
-    open(a.out, 'wb').write(data)
+    if a.out.endswith('.js'):
+        import base64, json, datetime
+        meta = {'source': a.source, 'license': 'CC BY 4.0', 'files': [g.split('/')[-1] for g in a.gml],
+                'made': datetime.date.today().isoformat(), 'count': len(blds)}
+        with open(a.out, 'w', encoding='utf-8') as f:
+            f.write('// 沿線の建物(足跡+高さ)。出典:%s(CC BY 4.0)。tools/plateau_import.py が作る。手で直さない\n' % a.source)
+            f.write('globalThis.PLATEAU_BLDG=' + json.dumps(dict(meta, b64=base64.b64encode(data).decode('ascii')), ensure_ascii=False) + ';\n')
+    else:
+        open(a.out, 'wb').write(data)
     nv = sum(len(p) for p, _, _ in blds)
     hs = sorted(h for _, h, _ in blds) or [0]
     print('建物 %d 棟 / 頂点 %d / %d バイト(base64 で約 %d)/ 高さ 中央 %.1fm 最大 %.1fm'

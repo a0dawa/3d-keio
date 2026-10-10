@@ -18,7 +18,7 @@ const X = require('./stub_three')(path,
   'stepXRail:stepXRail,inoTrains:inoTrains,setaCars:setaCars,LAT0:LAT0,MLAT:MLAT,' +
   'SETA_LO:SETA_LO,SETA_HI:SETA_HI,SETA_CARS:SETA_CARS,SETA_PITCH:SETA_PITCH,' +
   'XCAR:XCAR,K8GEO:K8GEO,XM_WHL:XM_WHL,' +
-  'GAUGE_INO:GAUGE_INO,GAUGE_SETA:GAUGE_SETA,RAIL_W:RAIL_W');
+  'GAUGE_INO:GAUGE_INO,GAUGE_SETA:GAUGE_SETA,RAIL_W:RAIL_W,prjXY:prjXY,frame:frame');
 
 /* ---- 期待値(検証側が独立して持つ) ----------------------------------------
    道路の幅は4章の描画寸法(box の第1引数)。ここでは"路面の半幅"だけを持ち、
@@ -57,6 +57,37 @@ function ok(name, cond, expect, got) {
 }
 
 const B = X.CITY.buildings, T = X.CITY.trees;
+/* 測る点:模式の建物・樹木は外接円(中心と半径)。PLATEAU の建物は足跡の多角形なので、頂点と辺の1mごとの点
+   (半径0)で測る。点の (s,off) は検証側で求める:重心を線形へ射影し、その s の接線・法線で近似する */
+const POLY = (o) => !!(o.poly && o.poly.length >= 3);
+function pts(o) {
+  if (!POLY(o)) return [{ s: o.s, off: o.off, x: o.x, z: o.z, r: o.r }];
+  if (o.__pts) return o.__pts;
+  const P = o.poly; let A = 0, cx = 0, cz = 0;
+  for (let i = 0; i < P.length; i++) { const a = P[i], c = P[(i + 1) % P.length], w = a[0] * c[1] - c[0] * a[1]; A += w; cx += (a[0] + c[0]) * w; cz += (a[1] + c[1]) * w; }
+  cx /= 3 * A; cz /= 3 * A;
+  const pr = X.prjXY(cx, cz), f0 = X.frame(pr.s, 0), f1 = X.frame(pr.s + 1, 0), fn = X.frame(pr.s, 1);
+  const out = [];
+  for (let i = 0; i < P.length; i++) {
+    const a = P[i], c = P[(i + 1) % P.length], m = Math.max(1, Math.ceil(Math.hypot(c[0] - a[0], c[1] - a[1])));
+    for (let k = 0; k < m; k++) {
+      const x = a[0] + (c[0] - a[0]) * k / m, z = a[1] + (c[1] - a[1]) * k / m;
+      out.push({ s: pr.s + (x - cx) * (f1.x - f0.x) + (z - cz) * (f1.z - f0.z), off: pr.off + (x - cx) * (fn.x - f0.x) + (z - cz) * (fn.z - f0.z), x: x, z: z, r: 0 });
+    }
+  }
+  return (o.__pts = out);
+}
+// 多角形までの距離(内側なら負)。検証側の実装
+function polyDist(P, x, z) {
+  let inside = false, d = 1e18;
+  for (let i = 0, j = P.length - 1; i < P.length; j = i++) {
+    const a = P[j], b = P[i];
+    if (((a[1] > z) !== (b[1] > z)) && x < (b[0] - a[0]) * (z - a[1]) / (b[1] - a[1]) + a[0]) inside = !inside;
+    const dx = b[0] - a[0], dz = b[1] - a[1], L2 = dx * dx + dz * dz, u = L2 ? Math.max(0, Math.min(1, ((x - a[0]) * dx + (z - a[1]) * dz) / L2)) : 0;
+    d = Math.min(d, Math.hypot(x - a[0] - dx * u, z - a[1] - dz * u));
+  }
+  return inside ? -d : d;
+}
 const ALL = B.map((o) => ({ o: o, kind: '建物' })).concat(T.map((o) => ({ o: o, kind: '樹木' })));
 
 /* ---- 1. 数 ---------------------------------------------------------------- */
@@ -66,10 +97,10 @@ ok('樹木の数', T.length >= REF.MIN_TREES, '≥' + REF.MIN_TREES + '本', T.l
 /* ---- 2. 高架下・側道に入らない ------------------------------------------- */
 {
   let bad = null;
-  for (const e of ALL) {
-    const lim = X.deckHalf(e.o.s) + REF.DECK_CLEAR;
-    if (Math.abs(e.o.off) - e.o.r < lim && !bad)
-      bad = [e.kind, 's=' + e.o.s.toFixed(0), 'off=' + e.o.off.toFixed(1), '限界' + lim.toFixed(1)];
+  for (const e of ALL) for (const q of pts(e.o)) {
+    const lim = X.deckHalf(q.s) + REF.DECK_CLEAR;
+    if (Math.abs(q.off) - q.r < lim && !bad)
+      bad = [e.kind, 's=' + q.s.toFixed(0), 'off=' + q.off.toFixed(1), '限界' + lim.toFixed(1)];
   }
   ok('高架下・側道に入らない', bad === null, '桁半幅+' + REF.DECK_CLEAR + 'm以遠',
     bad ? bad.join(' ') : ALL.length + '件すべて');
@@ -82,11 +113,11 @@ ok('樹木の数', T.length >= REF.MIN_TREES, '≥' + REF.MIN_TREES + '本', T.l
   const lines = [['井の頭線', X.INO, X.XR.U0, X.XR.U1], ['世田谷線', X.SETA, X.XR.SETA_U0, X.XR.SETA_U1]];
   let bad = null, worst = 1e9;
   for (const [nm, A, u0, u1] of lines) {
-    for (const e of ALL) {
-      const dx = e.o.x - A.x, dz = e.o.z - A.z;
+    for (const e of ALL) for (const q of pts(e.o)) {
+      const dx = q.x - A.x, dz = q.z - A.z;
       const du = dx * A.ax + dz * A.az, dn = Math.abs(dx * A.nx + dz * A.nz);
-      if (du < u0 - e.o.r || du > u1 + e.o.r) continue;      // 線路の延長の外
-      const clear = dn - e.o.r;
+      if (du < u0 - q.r || du > u1 + q.r) continue;      // 線路の延長の外
+      const clear = dn - q.r;
       if (clear - REF.XRAIL_HALF[nm] < worst) worst = clear - REF.XRAIL_HALF[nm];
       if (clear < REF.XRAIL_HALF[nm] && !bad)
         bad = [nm, e.kind, 'u=' + du.toFixed(0), '離隔' + clear.toFixed(1) + 'm'];
@@ -102,10 +133,10 @@ ok('樹木の数', T.length >= REF.MIN_TREES, '≥' + REF.MIN_TREES + '本', T.l
   let bad = null;
   for (const c of REF.CROSS) {
     const cs = X[c[1]], hw = c[2], oh = c[3] === undefined ? 1e9 : c[3];
-    for (const e of ALL) {
-      if (Math.abs(e.o.off) > oh) continue;
-      if (Math.abs(e.o.s - cs) + e.o.r < hw && !bad)
-        bad = [c[0], e.kind, 's=' + e.o.s.toFixed(0), 'off=' + e.o.off.toFixed(0)];
+    for (const e of ALL) for (const q of pts(e.o)) {
+      if (Math.abs(q.off) > oh) continue;
+      if (Math.abs(q.s - cs) - q.r < hw && !bad)
+        bad = [c[0], e.kind, 's=' + q.s.toFixed(0), 'off=' + q.off.toFixed(0)];
     }
   }
   ok('交差道路の上に無い', bad === null, REF.CROSS.length + '路線すべて',
@@ -113,23 +144,23 @@ ok('樹木の数', T.length >= REF.MIN_TREES, '≥' + REF.MIN_TREES + '本', T.l
 
   let bp = null;
   for (const c of REF.PARA) {
-    for (const e of ALL) {
-      if (e.o.s < c[3] || e.o.s > c[4]) continue;
-      if (Math.abs(e.o.off - c[1]) + e.o.r < c[2] && !bp)
-        bp = [c[0], e.kind, 's=' + e.o.s.toFixed(0), 'off=' + e.o.off.toFixed(1)];
+    for (const e of ALL) for (const q of pts(e.o)) {
+      if (q.s < c[3] || q.s > c[4]) continue;
+      if (Math.abs(q.off - c[1]) - q.r < c[2] && !bp)
+        bp = [c[0], e.kind, 's=' + q.s.toFixed(0), 'off=' + q.off.toFixed(1)];
     }
   }
   ok('並行道路の上に無い', bp === null, REF.PARA.length + '路線すべて',
     bp ? bp.join(' ') : ALL.length + '件すべて');
 
   let br = null;
-  for (const e of ALL) {
-    if (Math.abs(e.o.off) < REF.RIVER_OFF &&
-      Math.abs(e.o.s - X.BRIDGE.s) + e.o.r < REF.RIVER_HALF && !br)
-      br = ['仙川', e.kind, 's=' + e.o.s.toFixed(0)];
+  for (const e of ALL) for (const p of pts(e.o)) {
+    if (Math.abs(p.off) < REF.RIVER_OFF &&
+      Math.abs(p.s - X.BRIDGE.s) - p.r < REF.RIVER_HALF && !br)
+      br = ['仙川', e.kind, 's=' + p.s.toFixed(0)];
     for (const q of REF.POND) {
-      if (Math.hypot(e.o.s - (X.WADA_S + q[0]), e.o.off - (X.WADA_OFF + q[1])) - e.o.r < q[2] && !br)
-        br = ['和田堀の池', e.kind, 's=' + e.o.s.toFixed(0)];
+      if (Math.hypot(p.s - (X.WADA_S + q[0]), p.off - (X.WADA_OFF + q[1])) - p.r < q[2] && !br)
+        br = ['和田堀の池', e.kind, 's=' + p.s.toFixed(0)];
     }
   }
   ok('河川・池の上に無い', br === null, '仙川+池2面', br ? br.join(' ') : ALL.length + '件すべて');
@@ -140,7 +171,28 @@ ok('樹木の数', T.length >= REF.MIN_TREES, '≥' + REF.MIN_TREES + '本', T.l
   const CELL = 26, grid = new Map();
   const key = (a, b) => a + ',' + b;
   let bad = null, worst = 1e9, pairs = 0;
+  /* PLATEAU の建物(実データ)どうしは実際に壁を接して建つので見ない。樹木など円の物とは、
+     円の中心から足跡の多角形までの距離で見る(足跡の外接矩形が掛かる格子に入れて引く) */
+  const pg = new Map();
+  for (const e of ALL) if (POLY(e.o)) {
+    let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9;
+    for (const v of e.o.poly) { x0 = Math.min(x0, v[0]); x1 = Math.max(x1, v[0]); z0 = Math.min(z0, v[1]); z1 = Math.max(z1, v[1]); }
+    for (let a = Math.floor((x0 - 8) / CELL); a <= Math.floor((x1 + 8) / CELL); a++)
+      for (let b = Math.floor((z0 - 8) / CELL); b <= Math.floor((z1 + 8) / CELL); b++) {
+        let l = pg.get(key(a, b)); if (!l) { l = []; pg.set(key(a, b), l); } l.push(e);
+      }
+  }
   for (const e of ALL) {
+    if (POLY(e.o)) continue;
+    for (const q of (pg.get(key(Math.floor(e.o.x / CELL), Math.floor(e.o.z / CELL))) || [])) {
+      const gap = polyDist(q.o.poly, e.o.x, e.o.z) - e.o.r;
+      pairs++;
+      if (gap < worst) worst = gap;
+      if (gap < REF.GAP && !bad) bad = [e.kind + '⇄' + q.kind + '(PLATEAU)', 'すき間' + gap.toFixed(2) + 'm', '(' + e.o.x.toFixed(0) + ',' + e.o.z.toFixed(0) + ')'];
+    }
+  }
+  for (const e of ALL) {
+    if (POLY(e.o)) continue;
     const cx = Math.floor(e.o.x / CELL), cz = Math.floor(e.o.z / CELL);
     for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) {
       const l = grid.get(key(cx + a, cz + b)); if (!l) continue;
