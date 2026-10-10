@@ -33,6 +33,10 @@ NS = {
     'core': 'http://www.opengis.net/citygml/2.0',
 }
 BLDG = '{%s}Building' % NS['bldg']
+# 建物の用途(Building_usage)→ ビューアの区分。0=不明/1=戸建て住宅/2=店舗・作業所併用住宅/3=共同住宅(店舗併用を含む)/
+# 4=業務/5=商業・宿泊/6=官公庁・文教厚生/7=運輸倉庫/8=工場/9=供給処理/10=農林漁業ほか
+USAGE = {'411': 1, '413': 2, '415': 2, '412': 3, '414': 3, '401': 4, '402': 5, '403': 5, '404': 5,
+         '421': 6, '422': 6, '431': 7, '441': 8, '461': 9, '451': 10, '452': 10, '453': 10, '454': 10}
 
 
 def html_projection(path):
@@ -143,6 +147,8 @@ def read_buildings(path, proj, margin, min_area, tol, band=0):
         lod2 = read_lod2(el) if el.find('bldg:lod2Solid', NS) is not None else None
         h = el.find('bldg:measuredHeight', NS)
         height = float(h.text) if h is not None and h.text and float(h.text) > 0 else (max(zs) - min(zs) if zs else 0.0)
+        us = el.find('bldg:usage', NS)
+        usage = USAGE.get((us.text or '').strip(), 0) if us is not None else 0
         st = el.find('bldg:storeysAboveGround', NS)
         storeys = int(st.text) if st is not None and st.text and st.text.strip().isdigit() else 0
         clat = sum(q[0] for q in foot) / len(foot)
@@ -160,7 +166,7 @@ def read_buildings(path, proj, margin, min_area, tol, band=0):
         p = simplify(p, tol)
         if lod2:
             lod2 = [(t, [((q[1] - lon0) * mlon, -(q[0] - lat0) * mlat, q[2]) for q in r]) for t, r in lod2]
-        out.append((p, height, storeys, lod2))
+        out.append((p, height, storeys, lod2, usage))
     return out
 
 
@@ -197,7 +203,7 @@ def read_lod2(el):
 
 def encode(blds):
     b = bytearray(b'PLT1') + struct.pack('<I', len(blds))
-    for p, h, st, _ in blds:
+    for p, h, st, *_ in blds:
         q = [(round(x * 10), round(z * 10)) for x, z in p][:255]
         b += struct.pack('<BHB', len(q), min(65535, round(h * 10)), min(255, st))
         b += struct.pack('<ii', q[0][0], q[0][1])
@@ -236,7 +242,7 @@ def decode(b):
             dx, dz = struct.unpack_from('<hh', b, o); o += 4
             x += dx; z += dz
             p.append((x / 10, z / 10))
-        out.append((p, h / 10, st, None))
+        out.append((p, h / 10, st, None, 0))
     return out
 
 
@@ -261,7 +267,9 @@ def main():
         import base64, json, datetime
         meta = {'source': a.source, 'license': 'CC BY 4.0', 'files': [g.split('/')[-1] for g in a.gml],
                 'made': datetime.date.today().isoformat(), 'count': len(blds),
-                'lod2': n2, 'lod2b64': base64.b64encode(l2).decode('ascii')}
+                'lod2': n2, 'lod2b64': base64.b64encode(l2).decode('ascii'),
+                # 用途:PLT1 の並びと同じ順に1棟1バイト(上の USAGE の区分)
+                'use64': base64.b64encode(bytes(b[4] for b in blds)).decode('ascii')}
         with open(a.out, 'w', encoding='utf-8') as f:
             f.write('// 沿線の建物(足跡+高さ)。出典:%s(CC BY 4.0)。tools/plateau_import.py が作る。手で直さない\n' % a.source)
             f.write('globalThis.PLATEAU_BLDG=' + json.dumps(dict(meta, b64=base64.b64encode(data).decode('ascii')), ensure_ascii=False) + ';\n')
