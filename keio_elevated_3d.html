@@ -3653,20 +3653,31 @@ const NIGHT=(function(){
   {
     const pts=[];
     for(const pl of PLATS)
-      for(let x=pl.x0+5;x<pl.x1-5;x+=7) pts.push([x,pl.off,pl.y+3.3]);
+      for(let x=pl.x0+5;x<pl.x1-5;x+=7) pts.push([x,pl.off,pl.lampY,pl.y+STD.PLAT,pl.hw]);   // 灯具は上屋・吊りレールの下
     const m4=new THREE.Matrix4(),q=new THREE.Quaternion(),sc=new THREE.Vector3(1,1,1);
-    const lamp=new THREE.InstancedMesh(new THREE.BoxGeometry(1.5,0.12,0.42),
-      mkMat('MeshBasicMaterial',{color:glow(0xfff0cf),fog:false}),pts.length);
-    const halo=new THREE.InstancedMesh(new THREE.BoxGeometry(2.6,0.9,1.9),
-      lit({color:glow(0xffe6b8),opacity:0.16}),pts.length);
+    const lamp=new THREE.InstancedMesh(new THREE.BoxGeometry(2.4,0.12,0.5),
+      mkMat('MeshBasicMaterial',{color:glow(0xfff6e6),fog:false}),pts.length);
+    const halo=new THREE.InstancedMesh(new THREE.BoxGeometry(3.4,1.1,2.4),
+      lit({color:glow(0xfff0d8),opacity:0.18}),pts.length);
+    /* 床の光だまり:灯具の真下に、中心が明るく縁へ消える長円の面を加算で重ねる */
+    const pc=document.createElement('canvas'); pc.width=pc.height=64;
+    {const cx=pc.getContext('2d'), gr=cx.createRadialGradient(32,32,2,32,32,32);
+     gr.addColorStop(0,'rgba(255,248,232,1)'); gr.addColorStop(0.55,'rgba(255,240,215,.45)'); gr.addColorStop(1,'rgba(0,0,0,0)');
+     cx.fillStyle='#000';cx.fillRect(0,0,64,64);cx.fillStyle=gr;cx.fillRect(0,0,64,64);}
+    const pg=new THREE.PlaneGeometry(1,1); pg.rotateX(-Math.PI/2);
+    const pool=new THREE.InstancedMesh(pg,lit({map:canvasTex(pc),color:glow(0x6e6658),opacity:1,polygonOffset:true,polygonOffsetFactor:-2}),pts.length);
+    const e=new THREE.Euler(), qq=new THREE.Quaternion(), ps=new THREE.Vector3();
     pts.forEach(function(p,i){
       const f=frame(p[0],p[1]);
       m4.compose(new THREE.Vector3(f.x,p[2],f.z),q,sc);
       lamp.setMatrixAt(i,m4);halo.setMatrixAt(i,m4);
+      e.set(0,-f.a,0); qq.setFromEuler(e);
+      m4.compose(new THREE.Vector3(f.x,p[3]+0.03,f.z),qq,ps.set(7.5,1,Math.max(2,p[4]*2-0.8)));
+      pool.setMatrixAt(i,m4);
     });
-    lamp.instanceMatrix.needsUpdate=true;halo.instanceMatrix.needsUpdate=true;
-    G.add(lamp);G.add(halo);
-    NIGHT_STAT.plat=pts.length;
+    lamp.instanceMatrix.needsUpdate=true;halo.instanceMatrix.needsUpdate=true;pool.instanceMatrix.needsUpdate=true;
+    G.add(lamp);G.add(halo);G.add(pool);
+    NIGHT_STAT.plat=pts.length; NIGHT_STAT.pool=pool.count;
   }
 
   /* ---- 昼夜の切替 -----------------------------------------------------------
@@ -3675,15 +3686,22 @@ const NIGHT=(function(){
      ※ 車両の材質(9章)はここより後で定義されるが、呼ばれるのは読み込み後なので
        参照して差し支えない。 */
   const EMI=[
-    ['plat',   0x1b1812], ['canopy', 0x272318], ['hdoor', 0x17150f],
-    ['wall',   0x121109], ['glass',  0x1a1b14],
+    ['plat',   0x5a554a], ['canopy', 0x3e3a32], ['hdoor', 0x3a362c],
+    ['wall',   0x121109], ['glass',  0x6a5f44],
     // 高架の上は街灯が照らしている体。前面展望で路盤とレールが見えないと
     // 「真っ暗な板の上を走る」絵になる
     ['slab',   0x101216], ['deckNew', 0x101216], ['deckOld', 0x0e1014],
     ['barrier',0x14161b], ['rail',    0x1d2026], ['pole', 0x0e1014],
     // 結合ジオメトリ(3b章):駅はホーム・上屋と同じく明るめ、高架橋は桁と同じ
-    ['stVC',   0x272318], ['vdVC',    0x101216], ['tie', 0x0e1014],
+    ['stVC',   0x6a6458], ['vdVC',    0x101216], ['tie', 0x0e1014],
   ];
+  /* 駅(結合ジオメトリ MAT.stVC)は夜に強く照らされている(利用者指示:駅部はもっと明るい)。
+     emissive を一様に足すと暗い外装まで白く浮くので、**面の色(頂点カラー)を掛けた**発光にする
+     =照明に照らされた自分の色で見える。ホーム・上屋・駅舎のガラスも強める */
+  if(MAT.stVC) MAT.stVC.onBeforeCompile=function(sh){
+    sh.fragmentShader=sh.fragmentShader.replace('#include <emissivemap_fragment>',
+      '#include <emissivemap_fragment>\n#ifdef USE_COLOR\n  totalEmissiveRadiance*=vColor;\n#endif');
+  };
   function set(on){
     G.visible=!!on;
     for(const [k,hex] of EMI){

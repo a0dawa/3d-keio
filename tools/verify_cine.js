@@ -207,6 +207,19 @@ const TPROP = {};
   const ngtVis = N.group.visible, ngtEmi = lum(X.MAT.plat.emissive);
   ok('夜に灯りが点く', ngtVis === true && ngtEmi > 0, '表示ON・emissive>0',
     ngtVis + ' / ' + ngtEmi.toFixed(4));
+  /* 駅部は夜に強く照らされている(利用者指示:もっともっと明るい)。駅の結合ジオメトリの発光は
+     高架橋の数倍で、面の色(頂点カラー)を掛けて光ること(一様に足すと暗い外装まで白く浮く)。
+     ホームの床には灯具ごとに光だまりがあること */
+  {
+    const st = lum(X.MAT.stVC.emissive), vd = lum(X.MAT.vdVC.emissive);
+    ok('夜の駅部は明るい', st > 0.2 && st > 5 * vd, '>0.2 かつ 高架の5倍超',
+      st.toFixed(3) + ' / 高架 ' + vd.toFixed(3));
+    const sh = { fragmentShader: '#include <emissivemap_fragment>' };
+    if (typeof X.MAT.stVC.onBeforeCompile === 'function') X.MAT.stVC.onBeforeCompile(sh);
+    ok('駅の発光は面の色を掛ける', /totalEmissiveRadiance\s*\*=\s*vColor/.test(sh.fragmentShader),
+      'emissive×vColor', sh.fragmentShader.includes('vColor') ? 'あり' : 'なし');
+    ok('ホームの床の光だまり', S.pool === S.plat, S.plat + '個', S.pool + '個');
+  }
   ok('昼に灯りが消える', dayVis === false && dayEmi === 0, '表示OFF・emissive=0',
     dayVis + ' / ' + dayEmi.toFixed(4));
   /* 夜は地表と緑も暗くなること。灯りを足しても、地面が昼のままの鮮やかな緑だと
