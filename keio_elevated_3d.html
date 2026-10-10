@@ -1085,6 +1085,8 @@ const groundMesh=(function(){
      レール面+9.0m(架線の上)より高くする。橋脚は京王線の高架下・側道には立てない
    ・建物・樹木は道路の面に掛からない(cityFree が roadHit を見る)。登録簿 ROADS_PL */
 const PLL=(typeof globalThis!=='undefined'&&globalThis.PLATEAU_LAND&&globalThis.PLATEAU_LAND.road64)?globalThis.PLATEAU_LAND:null;
+// 実データの建物(plateau_bldg.js)があるか。8章の PLB より前(4章の施設・占有域)で使う
+const HAS_PLB=!!(typeof globalThis!=='undefined'&&globalThis.PLATEAU_BLDG&&globalThis.PLATEAU_BLDG.b64);
 const ROADS_PL=[], LANDS_PL=[], LU={tint:null,col:null,geos:[],water:[]}, ROAD_XING=[], PLR_GRID=new Map(), PLR_CELL=30, ROAD_LAMPS=[], EXPY={deck:[],piers:[]};
 const ROAD_Y=[0.10,0.12,0.12], EXPY_TOP=11.5, EXPY_DEPTH=1.8;
 function roadHit(px,pz,r){                 // 点(半径 r)が道路の面に掛かるか
@@ -1338,11 +1340,15 @@ const NSx=[];{let x=DOM.x0+70;while(x<DOM.x1-40){NSx.push(x);x+=92+Math.random()
  scene.add(new THREE.Mesh(facesGeo(P,N,I),MAT.sidewalk));}
 // 水緑・施設
 box(15,.3,460,MAT.green,JOSUI_X,.15,0,.2);        // 玉川上水(暗渠緑道)
+/* 和田堀給水所・変電所の模式の箱と池は、実データ(PLATEAU の建物)があるときは描かない。
+   実際の施設と周りの家・道路・緑地がデータにあり、模式の箱(430m×230m)がそれらを隠していた(占有域でも203棟を消していた) */
+if(!HAS_PLB){
 box(430,.6,230,M(0xb9cabf),WADA_S,.3,WADA_OFF);   // 和田堀給水所(実測中心)
 cyl(38,1.6,MAT.water,WADA_S-105,1,WADA_OFF+22,28);
 cyl(42,1.6,MAT.water,WADA_S+115,1,WADA_OFF-24,28);
 box(26,5.5,18,M(0x9aa5ad),SUBK.s,2.75,SUBK.off); // 上北沢変電所(実測)
 box(28,6,20,M(0x9aa5ad),SUBC.s,3,SUBC.off);      // 烏山変電所(実測)
+}
 cyl(24,.32,MAT.roadMajor,PLAZA_S,.16,PLAZA_OFF,30); // 千歳烏山駅前広場(計画・実測)
 cyl(9,.6,MAT.green,PLAZA_S,.3,PLAZA_OFF,22);
 if(!LU.water.length) box(9,.25,150,MAT.water,BRIDGE.s,.12,0);   // 仙川(河川)=仙川橋梁架替位置。水部の実データがあれば描かない
@@ -3454,9 +3460,11 @@ keepStrip(93,7,4200,DOM.x1+200);                // 旧甲州街道
 keepStrip(300,12,2000,6100);                    // 首都高4号新宿線(高架・橋脚)
 }
 // 施設・水面
+if(!HAS_PLB){                                   // 実データがあるときは模式の施設を描かないので占有域も無し
 keepRect(WADA_S,220,WADA_OFF,120);              // 和田堀給水所
 keepDisc(WADA_S-105,WADA_OFF+22,22);keepDisc(WADA_S+115,WADA_OFF-24,24);
 keepRect(SUBK.s,16,SUBK.off,12);keepRect(SUBC.s,17,SUBC.off,13);   // 変電所
+}
 keepDisc(PLAZA_S,PLAZA_OFF,26);                 // 千歳烏山駅前広場
 // 交差鉄道:掘割・擁壁・ホームまで含めた幅で確保する(9章の車両もここを走る)
 keepLine(INO,15,XR.U0-10,XR.U1+10);
@@ -3935,7 +3943,10 @@ if(PLB){
    ・ホーム・上屋・車両 … 既存の材質に emissive を足して「照らされている」ように見せる
 
    昼は `visible=false` で完全に無効。影の対象からも外す(光るものは影を落とさない)。 */
-const NIGHT_STAT={win:0,lamp:0,plat:0};     // 検証用(灯りの数)
+const NIGHT_STAT={win:0,lamp:0,plat:0};
+// 夜の駅の照明で車体を照らす強さ・消える距離[m]・全車両の登録簿(9章 carLit)。車両(makeCar)より前に宣言する
+const CAR_LIT=0.35, CAR_LIT_FADE=40, CARS_ALL=[];
+let NIGHT_ON=false;     // 検証用(灯りの数)
 /* 灯りの強さ。窓・街灯・ホーム照明・emissive のすべてに一律で掛ける
    (利用者指示で2.5倍)。色はリニア値に掛けるので、トーンマッピングを通った
    画面上では白へ寄りながら明るくなる(飽和で色が飛ぶのを ACES が和らげる) */
@@ -4091,6 +4102,7 @@ const NIGHT=(function(){
   };
   function set(on){
     G.visible=!!on;
+    NIGHT_ON=!!on; for(const c of CARS_ALL) carLit(c);     // 留置車も含めて車体の照らし方を見直す
     for(const [k,hex] of EMI){
       const m=MAT[k]; if(!m||!m.emissive) continue;
       m.emissive.copy(on?glow(hex):srgb(0x000000));
@@ -4544,17 +4556,18 @@ function k8BodyMat(cab){
     uWinR.push(new THREE.Vector4(w[4],w[5],w[6],0));
   }
   const U={uWin:{value:uWin},uWinR:{value:uWinR},uNWin:{value:W.length},
-           uOpen:{value:new THREE.Vector2(0,0)}};
+           uOpen:{value:new THREE.Vector2(0,0)}, uLit:{value:0}};
   m.userData.k8={cab:!!cab, uni:U};
   m.onBeforeCompile=function(sh){
     Object.assign(sh.uniforms,U);
     sh.vertexShader='varying vec3 vK8P; varying vec3 vK8N;\n'+sh.vertexShader.replace(
       '#include <begin_vertex>',
       '#include <begin_vertex>\n  vK8P=vec3(position.x,-position.z,position.y); vK8N=vec3(normal.x,-normal.z,normal.y);');
-    sh.fragmentShader=k8ShaderDefs()+(cab?'#define K8_CAB\n':'')+K8_FRAG_FUNCS+
+    sh.fragmentShader='uniform float uLit;\n'+k8ShaderDefs()+(cab?'#define K8_CAB\n':'')+K8_FRAG_FUNCS+
       sh.fragmentShader
         .replace('#include <color_fragment>','#include <color_fragment>\n  float k8Spec=1.;\n  {'+K8_FRAG_MAIN+'  }\n')
-        .replace('#include <specularmap_fragment>','#include <specularmap_fragment>\n  specularStrength*=k8Spec;');
+        .replace('#include <specularmap_fragment>','#include <specularmap_fragment>\n  specularStrength*=k8Spec;')
+        .replace('#include <emissivemap_fragment>','#include <emissivemap_fragment>\n  totalEmissiveRadiance+=diffuseColor.rgb*uLit;');   // 夜の駅の照明(carLit)
   };
   m.customProgramCacheKey=()=>'k8body'+(cab?'C':'M');
   return m;
@@ -5224,17 +5237,18 @@ function k9BodyMat(cab){
     uWin.push(new THREE.Vector4(w[0],w[1],w[2],w[3]));
     uWinR.push(new THREE.Vector4(w[4],w[5],w[6],0));
   }
-  const U={uWin:{value:uWin},uWinR:{value:uWinR},uNWin:{value:W.length},uOpen:{value:new THREE.Vector2(0,0)}};
+  const U={uWin:{value:uWin},uWinR:{value:uWinR},uNWin:{value:W.length},uOpen:{value:new THREE.Vector2(0,0)},uLit:{value:0}};
   m.userData.k8={cab:!!cab, uni:U, series:'9000'};
   m.onBeforeCompile=function(sh){
     Object.assign(sh.uniforms,U);
     sh.vertexShader='varying vec3 vK8P; varying vec3 vK8N;\n'+sh.vertexShader.replace(
       '#include <begin_vertex>',
       '#include <begin_vertex>\n  vK8P=vec3(position.x,-position.z,position.y); vK8N=vec3(normal.x,-normal.z,normal.y);');
-    sh.fragmentShader=k9ShaderDefs()+(cab?'#define K8_CAB\n':'')+K8_FRAG_FUNCS+
+    sh.fragmentShader='uniform float uLit;\n'+k9ShaderDefs()+(cab?'#define K8_CAB\n':'')+K8_FRAG_FUNCS+
       sh.fragmentShader
         .replace('#include <color_fragment>','#include <color_fragment>\n  float k8Spec=1.;\n  {'+K9_FRAG_MAIN+'  }\n')
-        .replace('#include <specularmap_fragment>','#include <specularmap_fragment>\n  specularStrength*=k8Spec;');
+        .replace('#include <specularmap_fragment>','#include <specularmap_fragment>\n  specularStrength*=k8Spec;')
+        .replace('#include <emissivemap_fragment>','#include <emissivemap_fragment>\n  totalEmissiveRadiance+=diffuseColor.rgb*uLit;');   // 夜の駅の照明(carLit)
   };
   m.customProgramCacheKey=()=>'k9body'+(cab?'C':'M');
   return m;
@@ -5453,6 +5467,7 @@ function makeCar(opt){
     g.userData.panto=pg;
   }
   g.userData.body=body; g.userData.bodyMat=bodyMat; g.userData.tail=tail;
+  CARS_ALL.push(g);
   g.userData.fine=fine; g.userData.hi=true; g.userData.k8=o;
   g.userData.doors={r:0,side:1};
   scene.add(g); return g;
@@ -5548,6 +5563,7 @@ let LOD_NEAR=420;   // この距離までは高精細モデル(スマホでは�
 const _UP=new THREE.Vector3(0,1,0), _F=new THREE.Vector3(), _R=new THREE.Vector3(),
       _U=new THREE.Vector3(), _M4=new THREE.Matrix4();
 function seatCar(c,s,zf,dir){
+  if(c.userData) c.userData.s=s;              // 夜の駅の照明(carLit)が位置を見る
   const sA=s-CAR_HALF, sB=s+CAR_HALF;
   const pA=frame(sA,zf(sA)), pB=frame(sB,zf(sB));
   const yA=railY(sA)+RAIL_TOP, yB=railY(sB)+RAIL_TOP;    // 車体の原点=レール頭頂面(v4 の z=0)
@@ -5574,6 +5590,22 @@ function lodCar(c){
   }
 }
 // 編成の各車両を配置する。範囲外の車両は非表示にし、姿勢計算もスキップして軽量化。
+/* 夜の駅の照明で車体を照らす(利用者指示:駅は明るいのに、進入する電車が暗いまま)。駅の結合ジオメトリと同じく
+   **車体の色を掛けた**発光(uLit)なので、帯や扉の色を保ったまま明るくなる。ホームの範囲で最大、外へ 40m で消える。
+   昼・夜以外は 0。走行列車は placeTrain が毎コマ、留置車は夜の切替(NIGHT.set)で見直す */
+function stationLight(s){
+  let v=0;
+  for(const st of STA){
+    const r=platRange(st), d=s<r[0]?r[0]-s:(s>r[1]?s-r[1]:0);
+    v=Math.max(v,1-d/CAR_LIT_FADE);
+  }
+  return Math.max(0,v)*CAR_LIT;
+}
+function carLit(c,s){
+  const ud=c.userData; if(!ud||!ud.bodyMat) return;
+  if(s!==undefined) ud.s=s;
+  ud.bodyMat.userData.k8.uni.uLit.value=(NIGHT_ON&&ud.s!==undefined)?stationLight(ud.s):0;
+}
 function placeTrain(t){
   const zf=t.dir>0?zRunDown:zRunUp;   // 停車列車は八幡山で内側(停車線)へ
   for(let j=0;j<t.cars.length;j++){
@@ -5581,6 +5613,7 @@ function placeTrain(t){
     const inside=(s>DOM.x0+CAR_HALF && s<DOM.x1-CAR_HALF);
     c.visible = inside && trainsOn;
     if(inside) seatCar(c, s, zf, t.dir);      // 見えている車両だけ弦法で姿勢決定
+    carLit(c, s);
   }
 }
 /* ---- 交差鉄道の車両(井の頭線・世田谷線) --------------------------------
