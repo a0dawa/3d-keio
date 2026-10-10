@@ -25,6 +25,7 @@ const X = require('./stub_three')(path,
   'SKY:()=>SKY, SKY_TEX:SKY_TEX, skyDome:skyDome, env:()=>scene.environment,' +
   'sunFollow:sunFollow, SH_MAP:SH_MAP, DOM:DOM, srgb:srgb, zRunDown:zRunDown,' +
   'NIGHT:NIGHT, NIGHT_STAT:NIGHT_STAT, PLATS:PLATS, trains:trains, stopPosOf:stopPosOf, CAR_HALF:CAR_HALF,' +
+  'STA_LIT_U:(typeof STA_LIT_U!=="undefined"?STA_LIT_U:null), MAT_BALLAST:MAT_BALLAST, deckHalf:deckHalf,' +
   'LU:(typeof LU!=="undefined"?LU:null), CARS_ALL:(typeof CARS_ALL!=="undefined"?CARS_ALL:[]), platRange:platRange,' +
   'setLookUI:(typeof setLookUI!=="undefined"?setLookUI:null), LOOK_UI:(typeof LOOK_UI!=="undefined"?LOOK_UI:null)');
 
@@ -236,6 +237,32 @@ const TPROP = {};
     ok('電車の発光は車体の色を掛ける', /diffuseColor\.rgb\s*\*\s*uLit/.test(sh.fragmentShader) && sh.uniforms.uLit !== undefined,
       'diffuseColor×uLit', /uLit/.test(sh.fragmentShader) ? 'あり' : 'なし');
     C.setTime('night');
+  }
+  /* 駅の照明の下の線路も明るい(利用者指示)。線路の材質のシェーダに staLitF が入り、uniform の駅の範囲を
+     **検証側で GLSL と同じ式を書いて**評価する:各駅の中心のレール面=1、駅間の中ほど=0、高架駅の桁の下(地面)=0。
+     昼は強さ0、夜は0.2以上 */
+  if (X.STA_LIT_U) {
+    const U = X.STA_LIT_U, A = U.uStaA.value, Bv = U.uStaB.value, FADE = 40;
+    const f = (x, y, z) => { let v = 0; for (let i = 0; i < A.length; i++) { const a = A[i], b = Bv[i]; if (y < b.y) continue;
+      const dx = a.z - a.x, dz = a.w - a.y, L = Math.hypot(dx, dz), tx = dx / L, tz = dz / L, qx = x - a.x, qz = z - a.y;
+      const u = qx * tx + qz * tz, w = Math.abs(-qx * tz + qz * tx); if (w > b.x) continue;
+      const o = Math.max(0, b.z > .5 ? -u : (u < 0 ? 1e9 : 0), b.w > .5 ? u - L : (u > L ? 1e9 : 0)); v = Math.max(v, 1 - o / FADE); }
+      return Math.max(0, Math.min(1, v)); };
+    let bad = null;
+    for (let i = 0; i < X.STA.length; i++) {
+      const st = X.STA[i], p = X.frame(st.x, 2.0), y = X.railY(st.x);
+      if (!(f(p.x, y, p.z) > 0.99) && !bad) bad = st.n + ' 中心 ' + f(p.x, y, p.z).toFixed(2);
+      if (y > 5 && f(p.x, 0.1, p.z) !== 0 && !bad) bad = st.n + ' 桁の下 ' + f(p.x, 0.1, p.z).toFixed(2);
+      if (i + 1 < X.STA.length) { const sm = (st.x + X.STA[i + 1].x) / 2, q = X.frame(sm, 2.0);
+        if (f(q.x, X.railY(sm), q.z) !== 0 && !bad) bad = st.n + '〜 駅間 ' + f(q.x, X.railY(sm), q.z).toFixed(2); }
+    }
+    const mats = [['道床・桁', X.MAT.vdVC], ['まくらぎ', X.MAT.tie], ['レール', X.MAT.rail], ['締結装置', X.MAT.fast], ['バラスト', X.MAT_BALLAST]];
+    const miss = mats.filter(([n, m]) => { const sh = { vertexShader: '#include <begin_vertex>', fragmentShader: '#include <emissivemap_fragment>', uniforms: {} };
+      try { m.onBeforeCompile(sh); } catch (e) { return true; } return !/staLitF\(vStaW\)/.test(sh.fragmentShader) || !sh.uniforms.uStaA; }).map((x) => x[0]);
+    C.setTime('noon'); const dayV = U.uStaLit.value; C.setTime('night'); const ngtV = U.uStaLit.value;
+    ok('駅の照明の下の線路', bad === null && miss.length === 0 && dayV === 0 && ngtV >= 0.2,
+      '駅の中心=1・駅間/桁の下=0・線路の材質5種・昼0/夜≥0.2',
+      bad || (miss.length ? '未適用 ' + miss.join('・') : '全' + X.STA.length + '駅・昼' + dayV + '/夜' + ngtV));
   }
   /* 駅部は夜に強く照らされている(利用者指示:もっともっと明るい)。駅の結合ジオメトリの発光は
      高架橋の数倍で、面の色(頂点カラー)を掛けて光ること(一様に足すと暗い外装まで白く浮く)。
