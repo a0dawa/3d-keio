@@ -4711,25 +4711,29 @@ function k8NumPlate(num){
     cx.fillStyle='#1c2b6b';k8fitText(cx,num,w/2,h/2,w*(1-.07/.433),h*(1-.045/.12),'bold 64px Arial,sans-serif',0,true);
   });
 }
-// LED表示器(黒地に発光の文字)
+/* LED表示器(黒地に発光の文字)。文字の枠は表示器の幅・高さに対する割合 K8_LED_TXT(利用者指示で v4 の 0.86・0.70 から
+   15%大きく)。画像の縦横比は貼る面と同じにすること(違うと文字が縦長・横長に伸びる。9000系の種別で起きた) */
+const K8_LED_TXT=[0.86*1.15,0.70*1.15];
 function k8Led(txt,color,w,h,kind){
-  return k8Tex('led'+txt+color+w,w,h,function(cx){
+  return k8Tex('led'+txt+color+w+'x'+h,w,h,function(cx){
     cx.fillStyle='#030304';cx.fillRect(0,0,w,h);
-    cx.fillStyle=color;k8fitText(cx,txt,w/2,h/2,w*0.86,h*0.70,'bold '+h+'px '+K8_FONT);
+    cx.fillStyle=color;k8fitText(cx,txt,w/2,h/2,w*Math.min(.99,K8_LED_TXT[0]),h*K8_LED_TXT[1],'bold '+h+'px '+K8_FONT);
   });
 }
-function k8SideLed(kind,dest){
-  return k8Tex('sled'+kind+dest,320,64,function(cx,w,h){
+// 側面の表示器:外から見て左に種別、右に行先(v4 side_fittings)。文字の枠は v4 の値から15%大きく、行先を少し右へ
+function k8SideLed(kind,dest,w,h){
+  w=w||320; h=h||64;
+  return k8Tex('sled'+kind+dest+w+'x'+h,w,h,function(cx,w,h){
     cx.fillStyle='#030304';cx.fillRect(0,0,w,h);
-    // 外から見て左に種別、右に行先(v4 side_fittings)
     cx.fillStyle=K8_KIND_COLORS[kind]||'#ff2e14';
-    k8fitText(cx,kind,w*0.17,h/2,w*0.22,h*0.70,'bold 64px '+K8_FONT);
+    k8fitText(cx,kind,w*0.155,h/2,w*0.22*1.15,h*0.70*1.15,'bold 64px '+K8_FONT);
     cx.fillStyle='#ff8c14';
-    k8fitText(cx,dest,w*0.64,h/2,w*0.62,h*0.62,'bold 64px '+K8_FONT);
+    k8fitText(cx,dest,w*0.645,h/2,w*0.62*1.15,h*0.62*1.15,'bold 64px '+K8_FONT);
   });
 }
-function k8FrontNum(num){
-  return k8Tex('fnum'+num,128,32,function(cx,w,h){
+function k8FrontNum(num,w,h){
+  w=w||128; h=h||32;
+  return k8Tex('fnum'+num+w+'x'+h,w,h,function(cx,w,h){
     cx.fillStyle='#f2f2ef';k8fitText(cx,num,w/2,h/2,w,h,'bold 32px Arial,sans-serif',0,true);
   });
 }
@@ -5480,7 +5484,8 @@ function makeCar(opt){
     addFine(pp[(o.crowd|0)%pp.length],K8M.room,sh);
   }
   // 側面の表示器(どの車にもある。表示は点いている編成だけ)
-  addFine(GEO.sideLed, o.sign?k8SideLed(o.sign.kind,o.sign.dest):K8M.ledOff, sh);
+  { const f=(S9?K9_SIDEFIT:K8_SIDEFIT).SLED_FACE;            // 画像の縦横比=表示面(1m=640px)
+    addFine(GEO.sideLed, o.sign?k8SideLed(o.sign.kind,o.sign.dest,Math.round((f[1]-f[0])*640),Math.round((f[3]-f[2])*640)):K8M.ledOff, sh); }
   // 幕板の車番とロゴ。e_local=シェルの+xが新宿方なら+1
   {
     const eLocal=tail?o.hachi:-o.hachi;
@@ -5496,9 +5501,11 @@ function makeCar(opt){
     if(o.lights==='head') addFine(F.hlGlow,K8M.hlGlow,sh);
     if(o.lights==='tail') addFine(F.tlGlow,K8M.tlGlow,sh);
     const lit=o.sign&&o.lights==='head';                        // 行先=扉の上・種別=向かって左の窓の上部(写真)
-    addFine(F.dest,lit?k8Led(o.sign.dest,'#ff8c14',224,80):K8M.ledOff,sh);
-    addFine(F.kind,lit?k8Led(o.sign.kind,K8_KIND_COLORS[o.sign.kind]||'#ff2e14',256,68):K8M.ledOff,sh);
-    addFine(F.num,k8FrontNum(o.num),sh);
+    // 画像の縦横比は貼る面(K9.FDEST・FKIND・FNUM)と同じに(1m=640px)
+    const px=(R)=>[Math.round((R[1]-R[0])*640),Math.round((R[3]-R[2])*640)];
+    addFine(F.dest,lit?k8Led(o.sign.dest,'#ff8c14',...px(K9.FDEST)):K8M.ledOff,sh);
+    addFine(F.kind,lit?k8Led(o.sign.kind,K8_KIND_COLORS[o.sign.kind]||'#ff2e14',...px(K9.FKIND)):K8M.ledOff,sh);
+    addFine(F.num,k8FrontNum(o.num,...px(K9.FNUM)),sh);
     addFine(F.logo,k9LogoW(256,96),sh);
   }
   if(cab&&!S9){
