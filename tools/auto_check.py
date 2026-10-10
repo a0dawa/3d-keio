@@ -162,6 +162,16 @@ def main():
                                        '姿勢から計算' if ok else '決め打ち', '-',
                                        'OK' if ok else 'NG'))
 
+    # 表示器の文字の枠(利用者指示:v4 の 幅0.86・高さ0.70 から15%大きく)。基準は v4 の値を検証側で持つ
+    m = re.search(r'const K8_LED_TXT=\[0\.86\*([\d.]+),0\.70\*([\d.]+)\]', src)
+    ok = m is not None and abs(float(m.group(1)) - 1.15) < 1e-9 and abs(float(m.group(2)) - 1.15) < 1e-9
+    side = len(re.findall(r'w\*0\.(?:22|62)\*1\.15,h\*0\.(?:70|62)\*1\.15', src)) == 2
+    ok = ok and side
+    ng += 0 if ok else 1
+    print('%-18s %14s %14s %8s  %s' % ('表示器の文字', 'v4×1.15(前面・側面)',
+                                       ('×%s/×%s' % (m.group(1), m.group(2)) if m else '無い') + ('' if side else ' 側面×'),
+                                       '-', 'OK' if ok else 'NG'))
+
     # 旧「写真転写方式」の残骸が無いこと
     dead = [s for s in ('FTEX', 'FRONT_TEX', 'FACEMAT', 'buildCarGeo', 'carColor') if s in src]
     ok = not dead
