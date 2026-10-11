@@ -679,6 +679,18 @@ if (X.TRACKS && X.WIRES) {
   ok('架空地線は床版の下を通らない', bG === null && nG > 0, '床版をはさむ柱の間に張らない', bG ? bG.join(' ') : nG + 'か所');
 }
 
+/* ---- 事業区間の東端(2026-10-11 利用者指示:笹塚駅の東側200mを削除) --------------
+   以前の東端は笹塚の中心から480m 東(s=−520)。200m を削って 280m 東。線路・架線・柱・高架の区画は東端より東に無い */
+{
+  const EAST = 280;                                       // 笹塚の中心から東端まで[m](検証側の値)
+  const c0 = X.STA[0].x, e = c0 - X.DOM.x0;
+  const tr = (X.TRACKS || []).filter((t) => Math.min(t.x0, t.x1) < X.DOM.x0 - 0.5).length;
+  const pl = X.POLE_S.filter((s) => s < X.DOM.x0 - 0.5).length;
+  const st = X.STRUCT.filter((q) => q.s1 !== undefined && q.s1 < X.DOM.x0 - 1).length;
+  ok('東端=笹塚の中心から' + EAST + 'm 東', Math.abs(e - EAST) < 1 && tr === 0 && pl === 0 && st === 0,
+    '±1m・東に線路/柱/構造なし', e.toFixed(1) + 'm・線路' + tr + '・柱' + pl + '・構造' + st);
+}
+
 /* ---- 出力 ---- */
 const w = (s, n) => String(s) + ' '.repeat(Math.max(0, n -
   [...String(s)].reduce((a, c) => a + (c.charCodeAt(0) > 0x2e80 ? 2 : 1), 0)));

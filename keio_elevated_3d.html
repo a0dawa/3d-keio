@@ -449,7 +449,7 @@ function axisOf(rl){const A=toXY(rl.a[0],rl.a[1]),B=toXY(rl.b[0],rl.b[1]);
   const dx=A.x-B.x,dz=A.z-B.z,L=Math.hypot(dx,dz),C=toXY(rl.c[0],rl.c[1]);
   return {x:C.x,z:C.z, ax:dx/L,az:dz/L, nx:-dz/L,nz:dx/L, phi:Math.atan2(dz,dx)};}
 const INO=axisOf(RAW.rail.ino), SETA=axisOf(RAW.rail.seta);   // ax,az=軸(a側=北寄り正)
-const DOM={x0:Math.max(CTS0+20,-560), x1:Math.min(CTS1-20,STA[9].x+280), z:470};
+const DOM={x0:Math.max(CTS0+20,-560)+200, x1:Math.min(CTS1-20,STA[9].x+280), z:470};
 // --- 縦断・断面(位置sは上で確定した実測値) ---
 function railY(x){
   if(x<RAMP_T)return RAIL_H;
@@ -1205,8 +1205,14 @@ const HAS_PLB=!!(typeof globalThis!=='undefined'&&globalThis.PLATEAU_BLDG&&globa
 const ROADS_PL=[], LANDS_PL=[], LU={tint:null,col:null,geos:[],water:[]}, ROAD_XING=[], PLR_GRID=new Map(), PLR_CELL=30, ROAD_LAMPS=[], EXPY={deck:[],piers:[]};
 const ROAD_Y=[0.10,0.12,0.12], EXPY_TOP=11.5, EXPY_DEPTH=1.8;
 function roadHit(px,pz,r){                 // 点(半径 r)が道路の面に掛かるか
-  const l=PLR_GRID.get(Math.floor(px/PLR_CELL)+','+Math.floor(pz/PLR_CELL));
-  if(l) for(const R of l) if(px>R.bb[0]-r&&px<R.bb[1]+r&&pz>R.bb[2]-r&&pz<R.bb[3]+r&&polyDist(R.P,px,pz)<r) return true;
+  // 半径の範囲に掛かる格子をすべて見る(中心の格子だけでは、隣の格子にだけ登録された道路の縁を見落とす)
+  // r が負(道路の内側へ |r| 以上入っているか)のときも、範囲は |r| で取る
+  const ra=Math.abs(r);
+  for(let gx=Math.floor((px-ra)/PLR_CELL);gx<=Math.floor((px+ra)/PLR_CELL);gx++)
+    for(let gz=Math.floor((pz-ra)/PLR_CELL);gz<=Math.floor((pz+ra)/PLR_CELL);gz++){
+      const l=PLR_GRID.get(gx+','+gz);
+      if(l) for(const R of l) if(px>R.bb[0]-r&&px<R.bb[1]+r&&pz>R.bb[2]-r&&pz<R.bb[3]+r&&polyDist(R.P,px,pz)<r) return true;
+    }
   return false;
 }
 function expyHit(px,pz,r){                 // 点(半径 r)が自動車道の橋脚(2m角)に掛かるか
@@ -4200,7 +4206,8 @@ if(PLB){
     }
   }
   // 公園・緑地・山林の木
-  for(const t of PARK){const q=prjXY(t[0],t[1]); put(q.s,q.off,t[2],t[3]===2?0x5f8a4e:(Math.random()<.5?0x7fa268:0x6f9160),'公園');}
+  // 帯の外(道路の登録簿も無い)には植えない
+  for(const t of PARK){const q=prjXY(t[0],t[1]); if(q.s<DOM.x0||q.s>DOM.x1||Math.abs(q.off)>DOM.z) continue; put(q.s,q.off,t[2],t[3]===2?0x5f8a4e:(Math.random()<.5?0x7fa268:0x6f9160),'公園');}
   /* 桜並木(上北沢)。実データの道路があれば、狙いの点から 25m 以内で**歩道の上**(道路区域の縁から 0.6〜1.5m 内側)を探す。
      沿線の道路は両側に建物が迫るので、道路の外では植える余地が無い(模式の点のままだと24本中4本しか植わらなかった)。
      樹冠は小さめ(0.65)にして建物に掛けない */
