@@ -5216,7 +5216,7 @@ const K9={
   DWZ0:1.890, DWZ1:2.884,                // 扉窓の下端・上端(写真)
   DZ1:2.971, DOOR_HW:0.648,              // 客用扉の外形の上端(写真。高さ1.841)・開口の半幅(8000系と同じ扉。写真 0.64〜0.66)
   FW:0.017, DWIN:[0.113,0.540],          // 窓枠の見付け/扉窓(扉中心からの距離。写真)
-  WIN:[0.035,0.938], END_WIN:[8.49,9.395],   // 側窓(扉間の中心から。2枚の間の柱は明るい)・車端の窓(写真)
+  WIN:[0.035,0.938], END_WIN:[8.49,9.395],   // 側窓:扉間の中心に大きな窓(外枠 ±0.938)、その中央を明るい柱(±0.035)が通る(利用者指摘)・車端の窓(写真)
   RED:[1.668,1.833], BLUE:[1.557,1.631], // 腰部の帯(写真。赤と青の上端は前面から続く)
   FBLUE0:1.43, BLUE_TAPER:[9.18,9.45],   // 前面と側面の前端の青帯の下端(写真)。側面では 9.45→9.18 で斜めに上がって BLUE[0] へ
   IVORY_X:8.40,                          // これより前がアイボリー(乗務員扉まで=公表の説明。写真 8.398)
@@ -5300,10 +5300,8 @@ const K9_XC0=9.752-K9.NOSE_D-K9.HWB*K9.HWB/(2*K9.NOSE_R);   // 角の終わり(�
 function k9SideWindows(cab){
   const W=[];
   const w=K9.WIN, e=K9.END_WIN;
-  for(const g of [4.70,0.0,-4.70]){                      // 2枚1組の窓(写真:外形 0.035〜0.938。間の柱は車体の色)
-    W.push([g+w[0],g+w[1],K9.WZ0,K9.WZ1,0.07,0.07,0]);
-    W.push([g-w[1],g-w[0],K9.WZ0,K9.WZ1,0.07,0.07,0]);
-  }
+  for(const g of [4.70,0.0,-4.70])                       // 2枚1組の窓:大きな窓(外枠は1つの角の丸い長方形)の中央を柱が通る(利用者指摘・写真)。
+    W.push([g-w[1],g+w[1],K9.WZ0,K9.WZ1,0.07,0.07,0,w[0]]); // 8番目=中央の柱の半幅(シェーダが柱と脇のゴムを描く。ガラスの角は柱の脇で丸くない)
   for(const s of (cab?[-1]:[-1,1])){                     // 車端の窓(先頭車は運転台と反対の端、中間車は両端)
     const a=s*e[0], b=s*e[1];
     W.push([Math.min(a,b),Math.max(a,b),K9.WZ0,K9.WZ1,0.07,0.07,0]);
@@ -5358,6 +5356,7 @@ function k9ShaderDefs(){
     '#define C_BLUE '+c3(k8lin(.11,.17,.42)), '#define C_RUB '+c3(k8lin(.05,.05,.055)),
     '#define C_GROOVE '+c3(k8lin(.30,.31,.32)), '#define C_FGLASS '+c3(k8lin(.13,.15,.17)),   // 前面の窓(写真:映り込みで濃い灰。枠の黒と見分ける)
     '#define C_INSIDE '+c3(k8lin(.80,.80,.77)),
+    '#define C_PILLAR '+c3(k8lin(.80,.81,.82)), '#define FWP 0.008',   // 側窓の中央の柱(車体より明るい金属)と脇のゴムの幅
     '#define NWIN 26',
   ].join('\n')+'\n';
 }
@@ -5385,7 +5384,7 @@ const K9_FRAG_MAIN=`
     if(ring<=0. && ring>-.012) doorLine=1.;
   }
   onLeaf*=isSide; inGap*=isSide;
-  float glass=0., frame=0., crewTop=0.;
+  float glass=0., frame=0., crewTop=0., pillar=0.;
   for(int i=0;i<NWIN;i++){
     if(i>=uNWin) break;
     vec4 b=uWin[i]; vec4 r=uWinR[i];
@@ -5395,9 +5394,15 @@ const K9_FRAG_MAIN=`
     float so=k8rr(vec2(xx,Z),b,r.x,r.y);
     if(so>0.) continue;
     float si=k8rr(vec2(xx,Z),vec4(b.x+FW,b.y-FW,b.z+FW,b.w-FW),max(r.x-FW,.004),max(r.y-FW,.004));
-    if(si<=0.){ glass=1.; if(kind>2.5 && Z>2.81) crewTop=1.; } else frame=1.;
+    if(si<=0.){
+      // 2枚1組の窓:大きな窓の中央を明るい柱が通る(r.w=柱の半幅)。柱の脇に細いゴム、その外がガラス
+      float pc=abs(xx-(b.x+b.y)*.5);
+      if(r.w>0. && pc<r.w) pillar=1.;
+      else if(r.w>0. && pc<r.w+FWP) frame=1.;
+      else { glass=1.; if(kind>2.5 && Z>2.81) crewTop=1.; }
+    } else frame=1.;
   }
-  glass*=isSide; frame*=isSide;
+  glass*=isSide; frame*=isSide; pillar*=isSide;
   if(onLeaf>.5) col=C_DOOR;
   if(Z<Z_FLR-.004) col=mix(col,C_BELOW,.35);
 #ifdef K8_CAB
@@ -5421,6 +5426,7 @@ const K9_FRAG_MAIN=`
     if(isSide>.5 && cr<=0. && cr>-.012) col=C_RUB; }
 #endif
   if(frame>.5) { col=C_RUB; painted=1.; }
+  if(pillar>.5) { col=C_PILLAR; painted=1.; }   // 窓の中央の柱(明るい金属。写真)
   if(inGap>.5) discard;
   if(glass>.5){ if(crewTop>.5) col=C_RUB; else discard; }
 #ifdef K8_CAB
@@ -5452,7 +5458,7 @@ function k9BodyMat(cab){
   for(let i=0;i<NW;i++){
     const w=W[i]||[0,0,0,0,0,0,0];
     uWin.push(new THREE.Vector4(w[0],w[1],w[2],w[3]));
-    uWinR.push(new THREE.Vector4(w[4],w[5],w[6],0));
+    uWinR.push(new THREE.Vector4(w[4],w[5],w[6],w[7]||0));   // w=中央の柱の半幅(0 なら柱なし)
   }
   const U={uWin:{value:uWin},uWinR:{value:uWinR},uNWin:{value:W.length},uOpen:{value:new THREE.Vector2(0,0)},uLit:{value:0}};
   m.userData.k8={cab:!!cab, uni:U, series:'9000'};

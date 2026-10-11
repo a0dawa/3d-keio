@@ -155,6 +155,15 @@ function findChromium() {
       const c = S(g + sg * REF.WIN_OFF, zr(REF.WIN)); if (isSteel(c) && !badW) badW = [g + sg * REF.WIN_OFF, fmt(c)];
     }
     ok('側面:扉間の窓が透ける', !badW, '6枚(ステンレスでない)', badW ? badW.join(' ') : '6枚');
+    // 2枚1組の窓は大きな窓の中央に柱が通る形(利用者指摘・写真):扉間の中心は車体より明るい柱で、黒いゴムの外枠が柱の上下でも
+    // 切れずに通る(以前の2枚の別々の窓では、間は車体の色で枠が無かった)。先頭車と2両目の両方
+    { const dk = (x, z0, z1) => { let m = 999; for (let z = z0; z <= z1; z += 1 / 60) { const c = S(x, z); m = Math.min(m, c[0] + c[1] + c[2]); } return m; };
+      const isPil = (c) => Math.min(...c) > 196 && Math.max(...c) - Math.min(...c) < 12;
+      let bad = null;
+      for (const off of [0, -20]) for (const g of REF.GAPS) {
+        const x = g + off, mid = S(x, zr(REF.WIN)), lo = dk(x, REF.WIN[0] - 0.01, REF.WIN[0] + 0.03), hi = dk(x, REF.WIN[1] - 0.03, REF.WIN[1] + 0.01);
+        if (!(isPil(mid) && lo < 120 && hi < 120) && !bad) bad = 'X' + x + ' 柱' + fmt(mid) + '・枠の下' + lo + '・上' + hi; }
+      ok('側面:2枚1組の窓は大きな窓の中央に柱', !bad, '扉間の中心=明るい柱・その上下も外枠(黒)・6か所', bad || '6か所'); }
     // 先頭車と中間車の同じ u・幕板の高さ(窓・手すりの無い所)で比べる
     const iv = S(REF.IVORY_X + REF.IVORY_PROBE, 3.1), mid = S(-20 + REF.IVORY_X + REF.IVORY_PROBE, 3.1);
     ok('側面:前頭部はアイボリー', isIvory(iv) && isSteel(mid), '先頭車=アイボリー/中間車=ステンレス', fmt(iv) + ' / ' + fmt(mid));

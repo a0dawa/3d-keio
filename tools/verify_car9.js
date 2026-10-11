@@ -37,7 +37,7 @@ const REF = {
   PASS_Y: [1.17, 1.23],                      // 識別灯の |y|(写真の灰の縦長の灯から中心線に対称、間隔+40cm)
   KIND_Z: [3.111, 3.323],                    // 種別表示器の高さ(写真の実測)。車号はこれと同じ高さ(中心)へ(利用者指示)
   // 側面(写真 9736・9036 の実測。measured_9000.md 3c)
-  WIN: [0.035, 0.938], WIN_Z: [1.924, 2.845],   // 2枚1組の窓(扉間の中心から)・上下
+  WIN: [0.035, 0.938], WIN_Z: [1.924, 2.845],   // 2枚1組の窓:扉間の中心の大きな窓の中央の柱の半幅・外枠の半幅(利用者指摘:大きな窓の中央に柱)・上下
   DWIN: [0.113, 0.540], DWIN_Z: [1.890, 2.884], // 扉窓(扉の中心から)・上下
   END_WIN: [8.49, 9.395],                    // 車端の窓(先頭車は運転台と反対の端、中間車は両端)
   CREW_WIN: [8.584, 8.917, 1.979, 2.778],    // 乗務員扉の窓
@@ -97,11 +97,11 @@ const G = X.K9GEO;
     // 側面写真の位置と上下(2枚1組の窓・扉窓・車端の窓)
     const t = 0.006, side = W.filter((w) => w[6] === 0 && Math.abs((w[0] + w[1]) / 2) < 7.5), dws = W.filter((w) => w[6] === 2);
     const ends = W.filter((w) => w[6] === 0 && Math.abs((w[0] + w[1]) / 2) > 7.5);
-    const okWin = side.length === 6 && side.every((w) => { const g = [4.70, 0, -4.70].reduce((a, b) => Math.abs(b - (w[0] + w[1]) / 2) < Math.abs(a - (w[0] + w[1]) / 2) ? b : a);
-      const lo = Math.min(Math.abs(w[0] - g), Math.abs(w[1] - g)), hi = Math.max(Math.abs(w[0] - g), Math.abs(w[1] - g));
-      return near(lo, REF.WIN[0], t) && near(hi, REF.WIN[1], t) && near(w[2], REF.WIN_Z[0], t) && near(w[3], REF.WIN_Z[1], t); });
-    ok('2枚1組の窓(' + nm + ')', okWin, '中心から ' + REF.WIN.join('〜') + '・z ' + REF.WIN_Z.join('〜') + '(写真)',
-      side.length + '枚 ' + (side[0] ? side[0].slice(0, 4).map((v) => v.toFixed(3)).join('/') : ''));
+    // 扉間の中心ごとに大きな窓が1つ(外枠 ±WIN[1])、その中央を柱(半幅 WIN[0]=窓の一覧の8番目)が通る
+    const okWin = side.length === 3 && [4.70, 0, -4.70].every((g) => side.some((w) => near((w[0] + w[1]) / 2, g, t) &&
+      near((w[1] - w[0]) / 2, REF.WIN[1], t) && near(w[7] || 0, REF.WIN[0], t) && near(w[2], REF.WIN_Z[0], t) && near(w[3], REF.WIN_Z[1], t)));
+    ok('2枚1組の窓=大きな窓の中央に柱(' + nm + ')', okWin, '扉間の中心ごとに外枠 ±' + REF.WIN[1] + '・柱 ±' + REF.WIN[0] + '・z ' + REF.WIN_Z.join('〜') + '(写真)',
+      side.length + '個 ' + (side[0] ? side[0].slice(0, 4).map((v) => v.toFixed(3)).join('/') + '・柱' + (side[0][7] || 0) : ''));
     const okD = dws.length === 8 && dws.every((w) => { const d = REF.DOORX.reduce((a, b) => Math.abs(b - (w[0] + w[1]) / 2) < Math.abs(a - (w[0] + w[1]) / 2) ? b : a);
       const lo = Math.min(Math.abs(w[0] - d), Math.abs(w[1] - d)), hi = Math.max(Math.abs(w[0] - d), Math.abs(w[1] - d));
       return near(lo, REF.DWIN[0], t) && near(hi, REF.DWIN[1], t) && near(w[2], REF.DWIN_Z[0], t) && near(w[3], REF.DWIN_Z[1], t); });
@@ -125,7 +125,7 @@ const G = X.K9GEO;
     let badN = null;
     for (let i = 0; i < REF.DOORX.length - 1; i++) {
       const a = REF.DOORX[i] + REF.DOOR_W / 2, b = REF.DOORX[i + 1] - REF.DOOR_W / 2;
-      const n = W.filter((w) => w[6] === 0 && w[0] >= a && w[1] <= b).length;
+      const n = W.filter((w) => w[6] === 0 && w[0] >= a && w[1] <= b).reduce((s, w) => s + ((w[7] || 0) > 0 ? 2 : 1), 0);   // 柱で分かれた2枚を数える
       if (n !== REF.WIN_PER_GAP && !badN) badN = '扉 ' + REF.DOORX[i] + '〜' + REF.DOORX[i + 1] + ' に ' + n + '枚';
     }
     ok('扉間の窓(' + nm + ')', badN === null, REF.WIN_PER_GAP + '枚ずつ', badN || '全て' + REF.WIN_PER_GAP + '枚');
