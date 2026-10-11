@@ -18,7 +18,7 @@ const X = require('./stub_three')(path,
   'NOTCH_LAG:NOTCH_LAG,ATC_DISP_STEP:ATC_DISP_STEP,ATC_UP_LAG:ATC_UP_LAG,' +
   'ridePSDFor:ridePSDFor,mainOff:mainOff,' +
   'DOOR_OPEN_SEC:DOOR_OPEN_SEC,DOOR_STOP_TOL:DOOR_STOP_TOL,stopPosOf:stopPosOf,placeTrain:placeTrain,' +
-  'SWITCHES:SWITCHES,stepSwitches:stepSwitches');
+  'SWITCHES:SWITCHES,stepSwitches:stepSwitches,rideZf:rideZf,gapAhead:gapAhead');
 
 /* ---- 期待値(検証側が独立して持つ) ---------------------------------------- */
 const REF = {
@@ -44,6 +44,7 @@ const REF = {
   ATC_BRAKE: 'B7',         // 介入時に使う制動段
   ATC_DISP_STEP: 5,        // ATCの表示は5km/h刻み
   ATC_UP_LAG: 20,          // 現示アップ(制限が緩む)は20秒遅れ。ダウンは即時
+  ATC_LINE_TOL: 1.5,       // 前の列車が自列車と同じ線にいるとみなす横のずれ[m]
   NOTCH_LAG: 1.0,          // 力行・制動の応答遅れ[秒]
   DOOR_OPEN_SEC: 25,       // 停車中に扉を開けている時間[秒]
   // 戸閉灯は実物と同じ「扉が閉まっていれば点灯」。開いている間は消灯する
@@ -56,6 +57,9 @@ const REF = {
   // 下りの急行(利用者指示:各停を待避線で追い越す)。停車駅は京王の急行(2022年3月改正後)の区間内
   KYU_STOPS: ['笹塚', '明大前', '桜上水', '千歳烏山'],
   PASS_LOOP_STA: ['明大前', '桜上水', '八幡山', '千歳烏山'],   // 各停が待避線・停車線に入り、追い越される駅
+  // 運転モードの種別(利用者指示):特急=本線を走り、停車駅(EXP_STOPS)以外では停まってもホームドアを開けない
+  // (利用者が挙げた駅は代田橋・下高井戸・桜上水・上北沢・八幡山・仙川。芦花公園も特急の通過駅)/各停=待避線・停車線を走り、全駅で開ける
+  RIDE_EXP_NOOPEN: ['代田橋', '下高井戸', '桜上水', '上北沢', '八幡山', '芦花公園', '仙川'],
   SIM_T: 7200,             // いっしょに走らせる時間[秒]
   CAR_L: 19.5, CAR_W: 2.8, // 車体の長さ・幅(重なりの判定)
 };
@@ -627,10 +631,10 @@ ok('上限速度を超えない', vmax <= REF.VMAX_KMH + 0.5, '≤' + REF.VMAX_K
   {
     const st = X.STA.find((z) => z.n === '代田橋');
     const sp = X.stopPosOf(st, 1);
-    X.setRideState({ on: true, s: sp, v: 0, notch: X.NIDX_N, acc: 0, reset: true });
+    X.setRideState({ on: true, kind: '各停', s: sp, v: 0, notch: X.NIDX_N, acc: 0, reset: true });   // 各停は全駅で開ける
     X.stepRide(0.05);
     const a = X.getRideState();
-    // 自列車は本線(八幡山では通過線)を走る。開くのは本線側の扉列であること
+    // 開くのは自列車の線(代田橋は本線=各停の線)に面した扉列であること
     {
       const want = X.ridePSDFor(st), trackOff = -X.mainOff(st.x);
       ok('開くのは自列車側の扉列', a.psd === want && want &&
@@ -664,6 +668,7 @@ ok('上限速度を超えない', vmax <= REF.VMAX_KMH + 0.5, '≤' + REF.VMAX_K
   /* 9-2b 2面4線の駅:自列車は本線(内側)にいるので、待避線側ではなく
      本線側の扉列が開くこと(以前は待避線の方が開いていた)。 */
   {
+    X.setRideState({ kind: '特急' });            // 特急=本線(八幡山は外側の通過線)
     let bad = null;
     for (const n of REF.QUAD_STA.concat(['笹塚'])) {
       const st = X.STA.find((z) => z.n === n);
@@ -697,8 +702,147 @@ ok('上限速度を超えない', vmax <= REF.VMAX_KMH + 0.5, '≤' + REF.VMAX_K
     ok('0km/hでなければ開かない', X.getRideState().open === 0, '開かない',
       X.getRideState().v.toFixed(2) + 'km/hで ' + X.getRideState().open.toFixed(1) + '秒');
   }
-  X.setRideState({ on: false, reset: true });
+  /* 9-4 運転モードの種別(利用者指示:運転モードを選ぶときに特急/各停を選ぶ) */
+  const stopAt = (kind, n) => {                     // 停止位置に0km/hで停めて1歩進め、扉とホームドアを見る
+    const st = X.STA.find((z) => z.n === n);
+    for (const q of X.PSD) X.stepPSD(1);              // ほかの駅のホームドアを閉じ切っておく
+    X.setRideState({ on: true, kind: kind, s: X.stopPosOf(st, 1), v: 0, notch: X.NIDX_N, acc: 0, reset: true });
+    X.stepRide(0.05);
+    for (let i = 0; i < 60; i++) X.stepPSD(0.05);
+    return { st: st, a: X.getRideState(), open: X.PSD.filter((q) => q.st === st && q.r > 0.5) };
+  };
+  // (a) 特急:通過駅では停止位置に停まってもホームドアも扉も開かない(戸閉灯は点いたまま・力行できる)。停車駅は本線側が開く
+  {
+    let bad = null;
+    for (const n of REF.RIDE_EXP_NOOPEN) {
+      const r = stopAt('特急', n);
+      X.setNotch(X.NOTCHES.length - 1);
+      const pw = X.getRideState().notch === X.NOTCHES.length - 1; X.setNotch(X.NIDX_N);
+      if ((r.a.open !== 0 || r.open.length || !r.a.lamp || !pw) && !bad) bad = n + ' 扉' + r.a.open.toFixed(0) + '秒・ホームドア' + r.open.length + '列' + (pw ? '' : '・力行不可');
+    }
+    ok('特急:通過駅では開かない', bad === null, REF.RIDE_EXP_NOOPEN.join('・') + ' で扉・ホームドアとも閉', bad || REF.RIDE_EXP_NOOPEN.length + '駅とも閉');
+    let bad2 = null;
+    for (const n of REF.EXP_STOPS) {
+      const r = stopAt('特急', n), main = -X.mainOff(r.st.x);
+      if (!(r.a.open > 0 && r.a.psd && Math.abs(r.a.psd.off - main) < 2.5 && r.open.length === 1 && r.open[0] === r.a.psd) && !bad2)
+        bad2 = n + ' ' + (r.a.psd ? 'off=' + r.a.psd.off.toFixed(2) : '扉列なし') + '・開いた列' + r.open.length;
+    }
+    ok('特急:停車駅は本線側が開く', bad2 === null, REF.EXP_STOPS.join('・') + ' で本線側の1列', bad2 || REF.EXP_STOPS.join('・') + ' 本線側');
+  }
+  // (b) 各停:待避駅では待避線(2面4線の外側)・停車線(八幡山の内側)に面した列が開く。全駅で開く
+  {
+    let bad = null;
+    for (const n of REF.PASS_LOOP_STA) {
+      const r = stopAt('各停', n), want = -(n === '八幡山' ? REF.HACHI_STOP_OFF : REF.QUAD_LOOP_OFF);
+      // 扉列はホームの縁(線路の中心から約1.7m)にある。ほかの線(本線 ±2・通過線 ±8.35)とは 2.5m 以上離れる
+      if (!(r.a.open > 0 && r.a.psd && Math.abs(r.a.psd.off - want) < 2.5 && r.open.length === 1 && r.open[0] === r.a.psd) && !bad)
+        bad = n + ' ' + (r.a.psd ? 'off=' + r.a.psd.off.toFixed(2) : '扉列なし') + '(期待' + want + ')・開いた列' + r.open.length;
+    }
+    ok('各停:待避線・停車線の側が開く', bad === null, '待避線 ' + (-REF.QUAD_LOOP_OFF) + '・八幡山の停車線 ' + (-REF.HACHI_STOP_OFF), bad || REF.PASS_LOOP_STA.join('・') + ' 一致');
+    let bad3 = null;
+    for (const st of X.STA) { const r = stopAt('各停', st.n); if (!(r.a.open > 0 && r.open.length === 1) && !bad3) bad3 = st.n; }
+    ok('各停:全駅で開く', bad3 === null, X.STA.length + '駅', bad3 ? bad3 + ' で開かない' : X.STA.length + '駅とも開く');
+  }
+  // (c) 自列車の線:各停は待避駅で待避線・停車線、特急は本線(八幡山は外側の通過線)。値は検証側の定数
+  {
+    let bad = null;
+    for (const n of REF.PASS_LOOP_STA) {
+      const st = X.STA.find((z) => z.n === n), H = n === '八幡山';
+      X.setRideState({ kind: '各停' }); const zl = X.rideZf(st.x);
+      X.setRideState({ kind: '特急' }); const ze = X.rideZf(st.x);
+      const wl = -(H ? REF.HACHI_STOP_OFF : REF.QUAD_LOOP_OFF), we = -(H ? REF.HACHI_PASS_OFF : REF.QUAD_MAIN_OFF);
+      if ((Math.abs(zl - wl) > 0.05 || Math.abs(ze - we) > 0.05) && !bad) bad = n + ' 各停' + zl.toFixed(2) + '・特急' + ze.toFixed(2);
+    }
+    ok('自列車の線(各停=待避線・停車線/特急=本線)', bad === null, '各停 ' + (-REF.QUAD_LOOP_OFF) + '/' + (-REF.HACHI_STOP_OFF) + '・特急 ' + (-REF.QUAD_MAIN_OFF) + '/' + (-REF.HACHI_PASS_OFF), bad || REF.PASS_LOOP_STA.join('・') + ' 一致');
+  }
+  // (d) 分岐器:自列車を全線に通し、載っている間は進路どおり(各停=反位・特急=定位)で動かない。自動運転の列車は退ける
+  {
+    for (const t of T) { t.x = X.DOM.x1 + 3000; t.st = 'wait'; }
+    const LEN = 9 * X.K8.PITCH + X.K8.LEN, dn = X.SWITCHES.filter((W) => W.T.A.id.indexOf('下り') >= 0);
+    for (const kind of ['各停', '特急']) {
+      const want = kind === '各停' ? 1 : 0; let bad = null, n = 0;
+      for (const W of dn) { W.r = W.want = 1 - want; W.fill(); }   // 反対の進路にしておく(転換しなければ見つかる)
+      const inSw = new Set();
+      X.setRideState({ on: true, kind: kind, s: X.DOM.x0 + 100, v: 0, reset: true });
+      for (let s = X.DOM.x0 + 100; s < X.DOM.x1 - 100; s += 1.5) {   // 15m/s・0.1秒刻み
+        X.setRideState({ s: s }); X.stepSwitches(0.1);
+        for (const W of dn) {
+          const on = s >= W.lo && s - LEN <= W.hi;
+          if (on) { if (!inSw.has(W)) { inSw.add(W); n++; } if (W.r !== want && !bad) bad = kind + ' ' + W.T.B.id + ' s=' + W.T.s.toFixed(0) + ' r=' + W.r.toFixed(2); }
+          else inSw.delete(W);
+        }
+      }
+      ok('分岐器は自列車の進路へ(' + kind + ')', bad === null && n >= dn.length, (kind === '各停' ? '反位' : '定位') + 'で通る・下りの' + dn.length + '組すべて', bad || n + '回通過');
+    }
+  }
+  // (e) ATC:各停は待避線の前の列車を見て、駅の本線を通る優等列車は見ない。特急は逆(待避線の各停は見ない)
+  {
+    for (const t of T) { t.x = X.DOM.x1 - 5; t.st = 'run'; t.atSt = null; }
+    const lead = T[0], q = X.STA.find((z) => z.n === '桜上水'), k0 = lead.kind;
+    lead.x = q.x;                                      // 先行列車(各停)を待避線の一定区間へ
+    X.setRideState({ kind: '各停' }); const loopL = X.atcLimit(q.x - 300);
+    X.setRideState({ kind: '特急' }); const loopE = X.atcLimit(q.x - 300);
+    lead.kind = '急行';                                 // 同じ所に本線を通る優等列車
+    X.setRideState({ kind: '各停' }); const mainL = X.atcLimit(q.x - 300);
+    X.setRideState({ kind: '特急' }); const mainE = X.atcLimit(q.x - 300);
+    lead.kind = k0;
+    ok('ATC:同じ線の前の列車だけを見る', loopL !== null && loopE === null && mainL === null && mainE !== null,
+      '各停:待避線の各停=制限・本線の優等=なし/特急:その逆',
+      [loopL, loopE, mainL, mainE].map((v) => (v === null ? 'なし' : v.toFixed(0))).join('/'));
+  }
+  // (e2) ATC:待避線・停車線へ出入りする前の列車は、自列車の線に残っている最も後ろの所までで制限する。
+  //   入る所 …… 先頭は待避線(各停)/待避線の横の本線(急行)でも、最後尾が分岐の手前の共通の線に残る間は最後尾まで
+  //   出る所 …… 最後尾が待避線に残っていても、本線へ出た部分(合流の所)まで。先頭だけ・最後尾だけを見ると外れる
+  {
+    for (const t of T) { t.x = X.DOM.x1 - 5; t.st = 'run'; t.atSt = null; }
+    const q = X.STA.find((z) => z.n === '桜上水'), lead = T[0], k0 = lead.kind, LEN = 9 * X.K8.PITCH + X.K8.LEN;
+    const want = (d) => (d <= REF.ATC_NEAR) ? 0 : REF.ATC_VFAR * Math.sqrt((d - REF.ATC_NEAR) / (REF.ATC_FAR - REF.ATC_NEAR));
+    const dOf = (v) => REF.ATC_NEAR + (REF.ATC_FAR - REF.ATC_NEAR) * Math.pow(v / REF.ATC_VFAR, 2);   // 許容速度 → 距離
+    const dv = (x) => Math.abs(X.runOff(x) - X.mainOff(x));      // 待避線と本線の横の隔たり
+    const putHead = (hf) => { lead.x = hf - X.CAR_HALF; };        // 先頭の前端を hf に
+    const fmt = (v) => (v === null ? 'なし' : v.toFixed(1));
+    let div = null, mer = null;                                    // 分かれて3m離れた所/合流して1.5m以内に戻る所
+    for (let x = q.x - 400; x < q.x && div === null; x += 0.5) if (dv(x) > 3.0) div = x;
+    for (let x = q.x; x < q.x + 400 && mer === null; x += 0.5) if (dv(x) <= REF.ATC_LINE_TOL) mer = x;
+    const hIn = div + 20, rIn = hIn - LEN, sIn = rIn - 200;          // 入る所:最後尾の200m 手前に自列車
+    const rows = [];
+    putHead(hIn);
+    lead.kind = '各停'; X.setRideState({ kind: '特急' }); const a1 = X.atcLimit(sIn);
+    lead.kind = '急行'; X.setRideState({ kind: '各停' }); const a2 = X.atcLimit(sIn);
+    const okIn = dv(rIn) < 0.01 && a1 !== null && a2 !== null && Math.abs(a1 - want(200)) < 0.5 && Math.abs(a2 - want(200)) < 0.5;
+    rows.push('入る所(最後尾は本線・' + (rIn - q.x).toFixed(0) + 'm):特急の自列車の前の各停 ' + fmt(a1) + '・各停の自列車の前の急行 ' + fmt(a2) + '(期待 ' + want(200).toFixed(1) + ')');
+    const hOut = mer + 60, rOut = hOut - LEN, sOut = q.x - 50;       // 出る所:最後尾は待避線、先頭は合流の先
+    putHead(hOut); lead.kind = '各停'; X.setRideState({ kind: '特急' });
+    const a3 = X.atcLimit(sOut), p3 = a3 === null ? null : sOut + dOf(a3);
+    const okOut = dv(rOut) > 3.0 && p3 !== null && Math.abs(p3 - mer) <= 3;
+    rows.push('出る所(最後尾は待避線):制限の点 ' + (p3 === null ? 'なし' : (p3 - q.x).toFixed(1)) + 'm(合流 ' + (mer - q.x).toFixed(1) + 'm・最後尾 ' + (rOut - q.x).toFixed(1) + 'm)');
+    lead.kind = k0;
+    ok('ATC:待避線へ出入りする前の列車は自列車の線に残る所まで', div !== null && mer !== null && okIn && okOut,
+      '入る所=分岐の手前の最後尾まで/出る所=合流の所まで', rows.join('/'));
+  }
+  // (f) 自動運転の列車:各停の自列車が待避線に入っていれば、後ろの優等列車は塞がれない(後ろの各停は塞がれる)
+  {
+    const L = T.find((t) => t.kind === '各停' && t.dir === 1), E = T.find((t) => t.kind === '急行');
+    for (const t of T) { if (t !== L && t !== E) { t.x = X.DOM.x1 + 3000; t.st = 'wait'; } }
+    const st = X.STA.find((z) => z.n === '明大前'), RS = X.stopPosOf(st, 1), LEN = 9 * X.K8.PITCH + X.K8.LEN;
+    for (const t of [L, E]) { t.x = RS - LEN - 600; t.st = 'run'; t.v = 0; t.atSt = null; t.target = null; }
+    L.x = X.DOM.x1 + 3000; L.st = 'wait';
+    X.setRideState({ on: false }); const free = X.gapAhead(E);
+    X.setRideState({ on: true, kind: '各停', s: RS }); const withLoop = X.gapAhead(E);
+    X.setRideState({ kind: '特急' }); const withMain = X.gapAhead(E);
+    L.x = E.x; L.st = 'run'; E.x = X.DOM.x1 + 3000; E.st = 'wait';
+    for (const W of X.SWITCHES) if (W.T.A.id.indexOf('下り') >= 0) { W.r = W.want = 1; W.fill(); }   // 各停の進路へ(分岐器の防護を外して自列車だけを見る)
+    X.setRideState({ kind: '各停' }); const localBehind = X.gapAhead(L);
+    const hf = RS - LEN - (L.x + X.CAR_HALF);
+    X.setRideState({ on: false });
+    ok('各停の自列車は待避線で追い越される', withLoop === free && Math.abs(withMain - hf) < 1 && Math.abs(localBehind - hf) < 1,
+      '急行は塞がれない(各停の自列車が待避線)・本線なら塞がれる・後ろの各停は塞がれる',
+      '急行 ' + (withLoop === Infinity ? '∞' : withLoop.toFixed(0)) + '(なし ' + (free === Infinity ? '∞' : free.toFixed(0)) + ')・特急のとき ' + withMain.toFixed(0) + '・各停 ' + localBehind.toFixed(0) + 'm(期待 ' + hf.toFixed(0) + ')');
+  }
+  X.setRideState({ on: false, kind: '特急', reset: true });
   for (let i = 0; i < T.length; i++) Object.assign(T[i], save[i]);
+  for (const t of T) if (t.st === 'wait') t.st = 'run';
+  for (const W of X.SWITCHES) { W.r = W.want = 0; W.fill(); }
   for (const p of X.PSD) X.stepPSD(1);
 }
 

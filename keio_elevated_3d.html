@@ -79,6 +79,9 @@
   #tools .seg{display:flex;align-items:center;gap:3px}
   #tools .seg b{font:700 10.5px/1 inherit;color:var(--dim);min-width:27px}
   #tools .seg button{flex:1;min-width:26px;padding:6px 0;text-align:center}
+  /* 運転モードの種別(運転モードを押したときだけ出す) */
+  #tools #segRide{display:none}
+  #tools #segRide.show{display:flex}
   #tools button:focus-visible{outline:2px solid var(--keio-pink);outline-offset:1px}
   #nav{left:12px;right:196px;top:12px;padding:10px 14px 8px}   /* 上部固定・右のボタン群を回避 */
   #nav .cap{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px}
@@ -150,6 +153,7 @@
 <div class="panel" id="tools">
   <button id="btnHome">全体俯瞰(地図の向き)</button>
   <button id="btnRide" class="ride">運転モード OFF</button>
+  <div class="seg" id="segRide" role="group" aria-label="運転の種別"><b>種別</b><button data-k="特急">特急</button><button data-k="各停">各停</button></div>
   <button id="btnChase" class="ride">列車追尾 OFF</button>
   <button id="btnOrbit">自動旋回 OFF</button>
   <button id="btnTrain" class="on">列車走行 ON</button>
@@ -164,6 +168,7 @@
   <div class="dl" id="doorLamp"><i></i><b>戸閉</b></div>
   <div class="v"><span id="spdVal">0</span><i>km/h</i><b id="spdKm">—</b></div>
   <div class="nxt"><b id="nxtName">—</b><span id="nxtDist">—</span></div>
+  <div class="nxt"><b>種別</b><span id="rideKindInfo">—</span></div>
   <div class="nxt"><b>ATC</b><span id="atcInfo">—</span></div>
   <div class="ctl">
     <button id="btnUp" aria-label="制動側へ">▲<span>制動</span></button>
@@ -5811,7 +5816,8 @@ function dwellOf(st,t){ return (t&&!isLocal(t))?DRIVE.DWELL:((st&&DWELL_OF[st.n]
    ・待避線の各停は、すぐ後ろ(先頭どうしで HEAD.HOLD 以内)が優等列車なら、それが先へ出るまで扉を開けたまま待つ
      (急行が同じ駅に停まるときは緩急接続:急行の発車を待つ)。追い越された後は間隔を保って本線へ出る。
    ・線路の端の先で入り直すときは、入り直す所が空いてから(見えない所で待つ=st 'wait')。
-   ・運転モードの自列車(下りの本線)も前の列車として扱う(後ろから来る自動運転の列車が突っ込まない)。
+   ・運転モードの自列車(下り。特急=本線/各停=待避線・停車線)も前の列車として扱う(後ろから来る自動運転の列車が
+     突っ込まない)。各停の自列車が待避線・停車線に全体で入っていれば、優等列車は塞がない(追い越す)。
    検証の単独の列車(trains に無い)は間隔も待避も見ない(ほかの列車に止められずに全線を走る)。 */
 const HEAD={MARGIN:40, HOLD:1800, LANE:3.0, START:60};
 const trainLen=t=>((t.cars?t.cars.length:10)-1)*K8.PITCH+K8.LEN;     // 編成長(前の連結面から後ろの連結面まで)
@@ -5831,7 +5837,8 @@ function gapAhead(t){                     // 前の列車(この列車の線を�
     if(!isLocal(t)&&inLoop(q)) continue;                           // 待避線の各停は優等列車を塞がない
     g=Math.min(g,(tailRear(q)-f)*t.dir);
   }
-  if(t.dir>0&&rideOn&&trainsOn&&rideS>f) g=Math.min(g,rideS-trainLen(t)-f);   // 運転モードの自列車(rideS=先頭)
+  if(t.dir>0&&rideOn&&trainsOn&&rideS>f&&!(!isLocal(t)&&rideInLoop()))   // 運転モードの自列車(rideS=先頭)。各停で待避線・停車線に
+    g=Math.min(g,rideS-RIDE_LEN-f);                                       // 入っていれば、本線の優等列車は塞がない
   for(const W of SWITCHES){               // 進路へ転換し終わっていない分岐器の 5m 手前で止まる
     const rb=routeB(t,W); if(rb===null) continue;
     const d=((t.dir>0?W.lo:W.hi)-f)*t.dir;
@@ -5851,7 +5858,7 @@ function expressBehind(t){                // すぐ後ろ(または並び)の同
 }
 /* ---- 6c. 分岐器の転換(利用者指示:待避線へ入る列車に合わせて転換)。SWITCHES の r を動かす ----
    ・分岐器に向かう列車(先頭が SW.LOOK 以内。停車中の列車は発車の5秒前から)のうち最も近いものの進路へ転換する。
-     各停は待避線・停車線(反位)、急行・特急と運転モードの自列車は本線(定位)。
+     各停は待避線・停車線(反位)、急行・特急は本線(定位)。運転モードの自列車は選んだ種別のとおり(RIDE_T)。
    ・列車が分岐器(先端〜後端±2m)に載っている間は転換しない(鎖錠)。転換は SW.THROW 秒。
    ・列車は進路へ転換し終わっていない分岐器の手前で止まる(gapAhead)。撮影で列車を置き直したら syncSwitches */
 const SW={LOOK:600, THROW:3.0};
@@ -5874,9 +5881,10 @@ function stepSwitches(dt){
       const d=((t.dir>0?W.lo:W.hi)-headFront(t))*t.dir;
       if(d>=0&&d<=SW.LOOK&&d<bd){bd=d;want=rb?1:0;}
     }
-    if(!occ&&rideOn&&trainsOn&&Math.abs(zDown(W.T.s)-W.T.A.zf(W.T.s))<0.5){   // 運転モードの自列車(下りの本線)
+    const rr=(!occ&&rideOn&&trainsOn)?routeB(RIDE_T,W):null;           // 運転モードの自列車(下り。特急=本線/各停=待避線・停車線)
+    if(rr!==null){
       if(rideS>=W.lo&&rideS-RIDE_LEN<=W.hi) occ=true;
-      else{ const d=W.lo-rideS; if(d>=0&&d<=SW.LOOK&&d<bd){bd=d;want=0;} }
+      else{ const d=W.lo-rideS; if(d>=0&&d<=SW.LOOK&&d<bd){bd=d;want=rr?1:0;} }
     }
     if(!occ&&want!==null) W.want=want;
     if(W.r!==W.want){ const k=dt/SW.THROW; W.r=W.want>W.r?Math.min(W.want,W.r+k):Math.max(W.want,W.r-k); W.fill(); }
@@ -6491,6 +6499,23 @@ const cam=Object.assign({},OV);
 let autoOrbit=false,trainsOn=true,fly=null;   // 旋回は初期OFF=地図の向きを保持
 let rideOn=false,rideS=-200,preRide=null;
 let rideYaw=0, ridePitch=0;   // 運転モードの首振り(ドラッグで変更)
+/* 運転モードの種別(利用者指示。運転モードを選ぶときに選ぶ)。自列車はいつも下り。
+   特急 …… 本線(八幡山は外側の通過線)を走る。停車駅は発車標・自動運転と同じ表(DEP_STOP:笹塚・明大前・千歳烏山)で、
+            それ以外の駅(代田橋・下高井戸・桜上水・上北沢・八幡山・芦花公園・仙川)では停止位置に停まってもホームドア・扉を開けない
+   各停 …… 待避駅(DIVERT)では自動運転の各停と同じく待避線(明大前・桜上水・千歳烏山)・停車線(八幡山)へ入り、全駅で扉を開ける
+   自動運転の列車と同じ判定(isLocal・trainZf・stopsAt・routeB)を使えるよう、種別と向きを持つ擬似の列車 RIDE_T にする */
+let rideKind='特急';
+const RIDE_T={dir:1, kind:'特急'};
+const rideLocal=()=>rideKind==='各停';
+const rideOff=x=>rideLocal()?runOff(x):mainOff(x);       // 自列車が走る線の振れ(北が+。下りなので位置は −rideOff)
+const rideZf=x=>-rideOff(x);
+function setRideKind(k){ rideKind=(k==='各停')?'各停':'特急'; RIDE_T.kind=rideKind; }
+const rideStops=st=>stopsAt(RIDE_T,st);                   // 自列車の停車駅(特急は通過駅を除く)
+function rideInLoop(){                                     // 各停の自列車が待避線・停車線に全体で入っているか(優等列車に追い越される)
+  if(!rideLocal()) return false;
+  const a=rideS, b=rideS-RIDE_LEN;
+  return Math.abs(runOff(a)-mainOff(a))>HEAD.LANE&&Math.abs(runOff(b)-mainOff(b))>HEAD.LANE;
+}
 // --- ワンハンドルマスコン(運転モード) ---
 // notch: -1=非常, 0..7=制動7〜1/中立, ... 実装は index で管理
 // NOTCHES[i] = {n:表示名, a:加速度[km/h/s](+=力行/-=制動)}
@@ -6510,8 +6535,9 @@ let notch=NIDX_N, rideV=0;
      距離 ATC.FAR(600m) …… ATC.VFAR(120km/h)まで
      距離 ATC.NEAR(20m) …… 0km/h
    その間は制動距離の式 v=√(2ad) と同じ形(√)でなめらかにつなぐ。
-   前の列車が待避線へ入った/600mより先/エリア外/列車走行OFF なら解除。 */
-const ATC={FAR:600, NEAR:20, VFAR:120, OFFTOL:1.5};
+   距離は前の列車のうち自列車の線(特急=本線/各停=待避線・停車線)に載っている最も後ろの点まで(atcRear)。
+   前の列車の全体が別の線にある/600mより先/エリア外/列車走行OFF なら解除。 */
+const ATC={FAR:600, NEAR:20, VFAR:120, OFFTOL:1.5, STEP:2};
 let atcLim=null, atcOn=false;
 /* 現示(許容速度)の扱い。
    ・現示ダウン(制限が厳しくなる)…… 即座に効かせる
@@ -6533,11 +6559,10 @@ function rideStopAt(s){                      // 停止位置の前後1m以内に
   for(const st of STA) if(Math.abs(stopPosOf(st,1)-s)<=DOOR_STOP_TOL) return st;
   return null;
 }
-/* 自列車が停車したときに開くホームドアの列。
-   運転モードは本線(八幡山では外側の通過線)を走るので、待避線側ではなく
-   本線側の扉列を選ぶ。本線にホームが無ければ null(扉は開かない)。 */
+/* 自列車が停車したときに開くホームドアの列。自列車が走る線(特急=本線・八幡山は外側の通過線/各停=待避線・停車線)に
+   面した扉列を選ぶ。その線にホームが無ければ null(扉は開かない)。 */
 function ridePSDFor(st){
-  const trackOff=-mainOff(st.x);             // 運転モードは zDown=-mainOff の上を走る
+  const trackOff=rideZf(st.x);               // 自列車の線(下り=−rideOff)
   let best=null,bd=2.5;
   for(const q of PSD){
     if(q.st!==st) continue;
@@ -6546,14 +6571,24 @@ function ridePSDFor(st){
   }
   return best;
 }
+/* 前の列車(下り)のうち自列車の線に載っている最も後ろの点[s]。無ければ null(全体が別の線)。
+   待避線・停車線へ出入りする所では編成の一部だけが自列車の線にある:先頭は待避線へ入っても最後尾は分岐の手前の本線に
+   残る/本線へ出た先頭の後ろはまだ待避線。先頭の位置だけで線を見ると、線を塞いでいる最後尾を見落とす */
+function atcRear(t){
+  const a=tailRear(t), b=headFront(t);
+  for(let x=a;;x=Math.min(b,x+ATC.STEP)){
+    if(Math.abs(trainOff(t,x)-rideOff(x))<=ATC.OFFTOL) return x;
+    if(x>=b) return null;
+  }
+}
 function atcLimit(s){
   if(!trainsOn) return null;
   let lim=null;
   for(const t of trains){
     if(t.dir!==1) continue;                                  // 運転モードは下り線を走る
     if(t.x<DOM.x0||t.x>DOM.x1) continue;                     // エリア外(表示されていない)
-    if(Math.abs(trainOff(t,t.x)-mainOff(t.x))>ATC.OFFTOL) continue;   // 待避線に入っている
-    const rear=t.x-(t.cars.length-1)*K8.PITCH-K8.LEN/2;      // 前の列車の最後尾
+    const rear=atcRear(t);                                   // 自列車の線に載っている最も後ろの点
+    if(rear===null) continue;                                // 全体が別の線(特急:待避線の各停/各停:駅の本線の優等列車)
     const d=rear-s;
     if(d<=0||d>ATC.FAR) continue;                            // 後方/600mより先は対象外
     const v=(d<=ATC.NEAR)?0:ATC.VFAR*Math.sqrt((d-ATC.NEAR)/(ATC.FAR-ATC.NEAR));
@@ -6568,10 +6603,11 @@ function setRideState(o){
   if(o.acc!==undefined)accEff=o.acc;
   if(o.open!==undefined){doorOpenT=o.open;doorSt=o.openSt||null;doorArmed=o.openSt||null;}
   if(o.on!==undefined)rideOn=o.on;
+  if(o.kind!==undefined)setRideKind(o.kind);
   if(o.reset){atcLim=null;atcRaw=null;atcUpT=0;
     doorOpenT=0;doorSt=null;doorPSD=null;doorArmed=null;}
 }
-function getRideState(){return {s:rideS,v:rideV,notch:notch,acc:accEff,
+function getRideState(){return {s:rideS,v:rideV,notch:notch,acc:accEff,kind:rideKind,
   lim:atcLim,raw:atcRaw,atc:atcOn,
   open:doorOpenT,openSt:doorSt,lamp:doorLampOn(),psd:doorPSD};}
 // 運転モードの1ステップ(速度と位置)。ATCと扉扱いの判定もここで行う。
@@ -6591,7 +6627,7 @@ function stepRide(dt){
   }else{
     // 点灯条件:停止位置の前後1m以内、かつ速度が完全に0km/hであること
     const st=rideStopAt(rideS);
-    if(st&&rideV===0&&doorArmed!==st){
+    if(st&&rideV===0&&doorArmed!==st&&rideStops(st)){                 // 特急は通過駅では開けない(利用者指示)
       doorSt=st;doorPSD=ridePSDFor(st);doorOpenT=DOOR_OPEN_SEC;doorArmed=st;
     }
     if(doorArmed&&Math.abs(stopPosOf(doorArmed,1)-rideS)>DOOR_REARM) doorArmed=null;
@@ -6679,7 +6715,9 @@ function setXingShown(v){
 function setRide(v){
   if(v===rideOn)return;
   rideOn=v;
-  const b=$('btnRide');b.classList.toggle('on',v);b.textContent='運転モード '+(v?'ON':'OFF');
+  const b=$('btnRide');b.classList.toggle('on',v);b.textContent='運転モード '+(v?'ON('+rideKind+')':'OFF');
+  $('segRide').classList.remove('show');
+  for(const k of document.querySelectorAll('#segRide button')) k.classList.toggle('on',k.dataset.k===rideKind);
   if(typeof IS_MOBILE!=='undefined'&&IS_MOBILE){   // スマホ:運転中はラベル類を消し、操作も無効化
     const bl=$('btnLabel'), bx=$('btnXing');
     if(v){
@@ -6761,7 +6799,8 @@ const $=id=>document.getElementById(id);
 function setAuto(v){autoOrbit=v;const b=$('btnOrbit');b.classList.toggle('on',v);b.textContent='自動旋回 '+(v?'ON':'OFF');}
 $('btnOrbit').onclick=()=>{setRide(false);setAuto(!autoOrbit);};
 $('btnHome').onclick=()=>{setRide(false);setChase(false);setAuto(false);flyTo(OV,1600);};
-$('btnRide').onclick=()=>setRide(!rideOn);
+$('btnRide').onclick=()=>{ if(rideOn){setRide(false);return;} $('segRide').classList.toggle('show'); };   // 種別を選んでから走る
+for(const b of document.querySelectorAll('#segRide button')) b.onclick=()=>{ setRideKind(b.dataset.k); setRide(true); };
 
 // ---- マスコンの画面ボタン(タッチ操作用。PCでも使える) ----
 $('btnUp').onclick=()=>setNotch(notch-1);      // 上=制動側へ
@@ -6781,6 +6820,7 @@ $('toolTog').onclick=()=>togglePanel($('tools'),$('toolTog'),'right');
 // (ホームドアの開口位置の算出にも使うため)。
 function nextStop(s){
   for(const st of STA){
+    if(!rideStops(st)) continue;                  // 特急は通過駅を飛ばす
     if(s <= platRange(st)[1]) return {st:st, stop:stopPosOf(st,1)};
   }
   return null;
@@ -6804,6 +6844,7 @@ function updSpd(){
   // ATCが介入しているときは、操作段ではなく実際に効いている段を出す
   mn.textContent=atcOn?'B7\u00a0ATC':nd.s;   // P4 / N / B7 / EB のような短い段位表示
   mn.className='notch '+(atcOn?'e':nd.k);
+  const rk=$('rideKindInfo'); if(rk) rk.textContent=rideKind;
   const lb=$('atcInfo');
   // 表示は5km/h刻み。現示アップの遅れは atcLim 自体に入っている
   if(lb) lb.textContent=(atcLim===null)?'—'
@@ -6916,8 +6957,8 @@ function loop(now){
     updSpd();
     // 視線=線路の接線方向(勾配も含む)。同じ軌道オフセット上の前後2点から方向を作るため、
     // 曲線でも画面中央が線路の正面を向く。
-    const off=zDown(rideS), p=frame(rideS,off);   // 運転モードは本線(八幡山では外側の通過線)
-    const pa=frame(rideS-6,off), pb=frame(rideS+6,off);
+    const p=frame(rideS,rideZf(rideS));            // 自列車の線(特急=本線・八幡山は外側の通過線/各停=待避線・停車線)
+    const pa=frame(rideS-6,rideZf(rideS-6)), pb=frame(rideS+6,rideZf(rideS+6));   // 振り分けのS字でも線路の向きを見る
     let tx=pb.x-pa.x, tz=pb.z-pa.z, ty=railY(rideS+6)-railY(rideS-6);
     const tl=Math.hypot(tx,ty,tz)||1; tx/=tl; ty/=tl; tz/=tl;
     const EYE=3.2;                                   // 運転士の目線(レール面から)
