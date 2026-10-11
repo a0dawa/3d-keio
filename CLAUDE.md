@@ -13,6 +13,8 @@ keio-3d-viewer/
 ├── plateau_bldg.js          ← 沿線の建物データ(PLATEAU 2025年度。HTML の隣に置く。無ければ模式の街で描く)
 ├── plateau_land.js          ← 沿線の道路・緑地・水面(PLATEAU 2025年度。無ければ模式の道路と一様な地表で描く)
 ├── CREDITS.txt              ← クレジット・出典表記(PLATEAU=CC BY 4.0・three.js=MIT・写真とパースの権利の確認事項)
+├── LICENSE                  ← MIT License(プログラム)。データ・文書は CC BY 4.0(README.md の表)
+├── README.md                ← 公開用の説明(開き方・操作・ライセンスの表・非公式であること)
 ├── CLAUDE.md                ← このファイル(作業ルール・現状)
 ├── TEMPLATE.md              ← 制作テンプレート(設計思想・躓き集・鉄則)
 ├── reference/
@@ -888,6 +890,14 @@ node tools/capture.js --out /tmp/vid --w 480 --h 270 --fps 12 --workers 3 \
   書き換えて全コミットから消した**(main と作業ブランチを強制プッシュ。コミットの番号はすべて変わった)。
   ⑩の前面14項目の照合は写真があるときだけ走る(`ref/ftex.png` に置くか `K8_FTEX`。側面45項目とほかの検証は写真なしで動く)。
 - **写真・発表資料の画像は今後も同梱しない**(測った値と測り方だけを measured_*.md に残す)。出典と権利の一覧は `CREDITS.txt`。
+- **ライセンス**(2026-10-11 利用者が決定):プログラム=MIT(`LICENSE`)、データ・文書(寸法の表・説明の文書・Blender 用モデル v4 の
+  数値と形・見本の画像)=CC BY 4.0、`plateau_*.js`=PLATEAU と同じ CC BY 4.0。著作権者の表記は「a0とnonkyuruの駅攻略」。
+  対象外(京王電鉄の社名・ロゴ・車両や駅の意匠、three.js)と表示の例は `README.md`・`CREDITS.txt`。ファイルを足すときは
+  どちらに入るかを README の表に合わせる(コード=MIT/それ以外=CC BY 4.0)
+- **コミットの作成者のメールアドレス**:main の最初のコミット(Add Blender project files)の作成者・コミッタの Gmail を、
+  利用者指示で GitHub の noreply(`301413333+a0dawa@users.noreply.github.com`。アカウントに結び付いたまま)へ書き換えた
+  (2026-10-11。履歴を書き換えて main と作業ブランチを強制プッシュ。コミットの番号はまた全部変わった)。
+  GitHub は古いコミットを番号で引けば暫く見せることがある(消すには GitHub のサポートへ依頼するか、リポジトリを作り直す)
 
 ---
 
