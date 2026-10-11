@@ -17,7 +17,8 @@ const X = require('./stub_three')(path,
   'WEAVE:(typeof WEAVE!=="undefined"?WEAVE:[]),MAT:MAT,MAT_BRICK:MAT_BRICK,MAT_STONE:MAT_STONE,MAT_LOUVER:MAT_LOUVER,MAT_RIB:MAT_RIB,' +
   'platRange:platRange,deckHalf:deckHalf,' +
   'PSD:PSD,K8:K8,DECK_END:DECK_END,LODS:LODS,POLE_S:POLE_S,WIRE_CAT:WIRE_CAT,' +
-  'GUIDES:GUIDES,depList:depList,pidsSetTime:pidsSetTime');
+  'GUIDES:GUIDES,depList:depList,pidsSetTime:pidsSetTime,' +
+  'PEOPLE:(typeof PEOPLE!=="undefined"?PEOPLE:[]),scene:scene,STD:STD');
 
 /* ---- 検証側が独立に持つ寸法 -------------------------------------------- */
 const REF = {
@@ -494,6 +495,36 @@ ok('乗務員モニターを置かない', !X.STRUCT.some((q) => q.tag === '乗�
 /* ---- 出力 ---- */
 const w = (s, n) => String(s) + ' '.repeat(Math.max(0, n -
   [...String(s)].reduce((a, c) => a + (c.charCodeAt(0) > 0x2e80 ? 2 : 1), 0)));
+/* ---- ホームの人(利用者指示)。検証側の決まり:駅ごとに15人以上・ホームの縁から1.0m 以上内側(点字ブロックの後ろ)・
+   ホームの端から2m 以上・ホーム面の高さ(レール面の基準 railY+1.10)・床の上の物(柱・ベンチ・自販機・EV・階段の囲い・階段の井戸)
+   から 0.25m 以上離れる。描いたインスタンスの位置が登録簿と一致すること ---- */
+{
+  const P = X.PEOPLE, REF_P = { MIN: 15, EDGE: 1.0, END: 2.0, PLAT: 1.10, GAP: 0.25 };
+  const FLOOR = new Set(['ホームの柱', 'ベンチ', '自動販売機', 'エレベーター', '階段の囲い']);
+  const by = {}; for (const m of P) by[m.st.n] = (by[m.st.n] || 0) + 1;
+  const few = X.STA.filter((s) => (by[s.n] || 0) < REF_P.MIN).map((s) => s.n + (by[s.n] || 0));
+  ok('ホームの人(駅ごと)', P.length > 0 && few.length === 0, '各駅' + REF_P.MIN + '人以上', few.length ? few.join(' ') : P.length + '人(' + X.STA.map((s) => by[s.n]).join('/') + ')');
+  let bad = null;
+  const OB = X.STRUCT.filter((o) => FLOOR.has(o.tag));
+  for (const m of P) {
+    const q = m.q;
+    if (m.s < q.x0 + REF_P.END || m.s > q.x1 - REF_P.END || Math.abs(m.o - q.off) > q.hw - REF_P.EDGE) { bad = m.st.n + ' s=' + m.s.toFixed(1) + ' ホームの縁/端に近い'; break; }
+    if (Math.abs(m.y - (X.railY(m.s) + REF_P.PLAT)) > 0.05) { bad = m.st.n + ' 高さ ' + m.y.toFixed(2); break; }
+    const hit = OB.find((o) => m.s > o.s0 - REF_P.GAP && m.s < o.s1 + REF_P.GAP && m.o > o.o0 - REF_P.GAP && m.o < o.o1 + REF_P.GAP && o.y0 < m.y + 1.7 && o.y1 > m.y);
+    if (hit) { bad = m.st.n + ' ' + hit.tag + 'に重なる s=' + m.s.toFixed(1); break; }
+    const w = X.STAIRS.find((w) => m.s > w.s0 - REF_P.GAP && m.s < w.s1 + REF_P.GAP && m.o > w.o0 - REF_P.GAP && m.o < w.o1 + REF_P.GAP);
+    if (w) { bad = m.st.n + ' ' + w.kind + 'の中 s=' + m.s.toFixed(1); break; }
+  }
+  ok('ホームの人の立つ所', bad === null && P.length > 0, '縁から' + REF_P.EDGE + 'm・端から' + REF_P.END + 'm 以上内側、床の上の物から' + REF_P.GAP + 'm', bad || '全員');
+  // 描いたインスタンス(駅ごと)の位置が登録簿と一致
+  let nI = 0, badI = null;
+  X.scene.traverse((o) => { if (!o.name || o.name.indexOf('ホームの人 ') !== 0 || !o.mats) return;
+    const L = P.filter((m) => 'ホームの人 ' + m.st.n === o.name);
+    if (L.length !== o.mats.length && !badI) badI = o.name + ' ' + o.mats.length + '/' + L.length;
+    L.forEach((m, i) => { const f = X.frame(m.s, m.o), q = o.mats[i]; nI++;
+      if ((!q || Math.hypot(q.p.x - f.x, q.p.z - f.z) > 0.01 || Math.abs(q.p.y - m.y) > 0.01) && !badI) badI = o.name + ' ' + i; }); });
+  ok('ホームの人を描いた位置', badI === null && nI === P.length, '登録簿と同じ(全員)', badI || nI + '人');
+}
 console.log('=== 駅の構造の検証 ===');
 console.log('');
 console.log(w('項目', 34) + w('要件', 24) + w('実測', 40) + '判定');

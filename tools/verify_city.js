@@ -19,7 +19,9 @@ const X = require('./stub_three')(path,
   'SETA_LO:SETA_LO,SETA_HI:SETA_HI,SETA_CARS:SETA_CARS,SETA_PITCH:SETA_PITCH,' +
   'XCAR:XCAR,K8GEO:K8GEO,XM_WHL:XM_WHL,' +
   'GAUGE_INO:GAUGE_INO,GAUGE_SETA:GAUGE_SETA,RAIL_W:RAIL_W,prjXY:prjXY,frame:frame,' +
-  'VIA_COLS:VIA_COLS,EXPY:EXPY,railY:railY,DECK_END:DECK_END,ROADS_PL:ROADS_PL,CITY_LODS:CITY_LODS');
+  'VIA_COLS:VIA_COLS,EXPY:EXPY,railY:railY,DECK_END:DECK_END,ROADS_PL:ROADS_PL,CITY_LODS:CITY_LODS,' +
+  'RD_CARS:(typeof RD_CARS!=="undefined"?RD_CARS:[]),RD_LANES:(typeof RD_LANES!=="undefined"?RD_LANES:[]),' +
+  'stepRoadCars:(typeof stepRoadCars!=="undefined"?stepRoadCars:()=>{})');
 
 /* ---- 期待値(検証側が独立して持つ) ----------------------------------------
    道路の幅は4章の描画寸法(box の第1引数)。ここでは"路面の半幅"だけを持ち、
@@ -548,6 +550,41 @@ if (LAND) {
 }
 
 /* ---- 出力 ---------------------------------------------------------------- */
+/* ---- 自動車(利用者指示):線路を横切る実際の道路を走る。検証側の決まり:2分間、描いたインスタンスの位置が
+   いつも道路の面(PLATEAU の道路区域。自動車専用の橋梁は除く)の上・高架の柱から2.5m 以上・自動車道の橋脚から2m 以上、
+   2車線の道では進行方向の左を走る(日本は左側通行)。車は40台以上・動いている ---- */
+if (X.ROADS_PL.length) {
+  const C = X.RD_CARS, im = C.mesh;
+  ok('自動車の台数', C.length >= 40 && X.RD_LANES.length >= 20, '40台以上・20車線以上', C.length + '台・' + X.RD_LANES.length + '車線');
+  const inPoly = (P, x, z) => { let c = false; for (let i = 0, j = P.length - 1; i < P.length; j = i++) {
+    const a = P[i], b = P[j]; if ((a[1] > z) !== (b[1] > z) && x < (b[0] - a[0]) * (z - a[1]) / (b[1] - a[1]) + a[0]) c = !c; } return c; };
+  const ground = X.ROADS_PL.filter((R) => !(R.k === 2 && R.sec === 2));
+  const onRoad = (x, z) => ground.some((R) => x >= R.bb[0] && x <= R.bb[1] && z >= R.bb[2] && z <= R.bb[3] && inPoly(R.P, x, z));
+  const cols = []; for (const c of X.VIA_COLS) for (const o of c.offs) { const f = X.frame(c.s, o); cols.push([f.x, f.z]); }
+  let bad = null, left = 0, right = 0, moved = 0;
+  const prev = C.map((c, i) => im.mats[i] ? { x: im.mats[i].p.x, z: im.mats[i].p.z } : null);
+  for (let k = 0; k < 240 && !bad; k++) {
+    X.stepRoadCars(0.5);
+    C.forEach((c, i) => {
+      if (bad) return;
+      const q = im.mats[i]; if (!q) { bad = '位置が無い ' + i; return; }
+      const x = q.p.x, z = q.p.z;
+      if (!onRoad(x, z)) bad = '道路の外 x=' + x.toFixed(0) + ' z=' + z.toFixed(0);
+      else if (cols.some((p) => Math.hypot(p[0] - x, p[1] - z) < 2.5)) bad = '高架の柱に近い x=' + x.toFixed(0);
+      else if (X.EXPY.piers.some((p) => Math.hypot(p[0] - x, p[1] - z) < 2.0)) bad = '自動車道の橋脚に近い';
+      const pv = prev[i], dx = x - pv.x, dz = z - pv.z, d = Math.hypot(dx, dz);
+      if (d > 0.5 && d < 20 && c.lane.off > 0) {                     // 端での入り直し(大きく跳ぶ)は除く
+        moved++;
+        // 車線の中心線から車への横の向き。進行方向の左 = (dz,−dx)
+        const L = c.lane, t = (x - L.cx) * L.dx + (z - L.cz) * L.dz, px = x - (L.cx + L.dx * t), pz = z - (L.cz + L.dz * t);
+        if (px * (dz / d) + pz * (-dx / d) > 0) left++; else right++;
+      }
+      prev[i] = { x: x, z: z };
+    });
+  }
+  ok('自動車は道路の上を走る', bad === null, '2分間:道路の面の上・柱から2.5m・橋脚から2m', bad || C.length + '台×240回');
+  ok('自動車は左側通行', left > 0 && right === 0 && moved > 1000, '2車線の道で進行方向の左', '左' + left + '・右' + right);
+}
 console.log('=== 街並みと交差鉄道の検証 ===');
 console.log('(置かれた1件ずつの世界座標を測り、道路・河川・鉄道・高架下と突き合わせ)\n');
 const w = [0, 0, 0].map((_, i) => Math.max.apply(null, rows.map((r) => [...r[i]].length).concat([8])));
