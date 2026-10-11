@@ -5934,6 +5934,32 @@ const K9GEO=(function(){
   return G;
 })();
 
+/* ---- 9-11b. 1両の部品をまとめる(2026-10-11 利用者指示:描画を軽く) -------------------
+   同じ材質で同じ近さの段(LOD)にある静止した部品を1つの形にまとめ、1両あたりの描画の呼び出しを減らす
+   (中間車 15→12・パンタ付き 19→15・先頭車 26→22)。まとめるのは
+     ・頂点カラーの細部(近く):側面の小物・前面のケース・幌
+     ・車内(近く):内装と乗客
+     ・頂点カラーの床下(遠く以外):床下機器・冷房装置・パンタの台座の小物
+   灯火・表示器・車番の画像・ガラス・車体・台車・パンタの枠は、車両ごとに状態や材質が違うか動くのでまとめない。
+   部品の形はどれも同じ属性(位置・法線・色・UV、添字なし)なので、変換(y 回りの180°と x の平行移動)を掛けて
+   並べるだけ。形は組み合わせ(形式・運転台・向き・乗客・パンタ)ごとに1つ作って全車で使い回す(K8_MERGED) */
+const K8_MERGED=new Map();
+function k8Merge(key,parts){                      // parts=[[形, 180°回すか, x の平行移動]]
+  let g=K8_MERGED.get(key); if(g) return g;
+  const A={position:[],normal:[],color:[],uv:[]};
+  for(const [geo,rot,dx] of parts){
+    const at=geo.attributes, P=at.position.array, N=at.normal.array, c=rot?-1:1;   // y 回りの180°:(x,z)→(−x,−z)
+    for(let i=0;i<P.length;i+=3){ A.position.push(c*P[i]+dx,P[i+1],c*P[i+2]); A.normal.push(c*N[i],N[i+1],c*N[i+2]); }
+    for(const k of['color','uv']) for(const v of at[k].array) A[k].push(v);
+  }
+  g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.Float32BufferAttribute(A.position,3));
+  g.setAttribute('normal',new THREE.Float32BufferAttribute(A.normal,3));
+  g.setAttribute('color',new THREE.Float32BufferAttribute(A.color,3));
+  g.setAttribute('uv',new THREE.Float32BufferAttribute(A.uv,2));
+  K8_MERGED.set(key,g); return g;
+}
+
 /* ---- 9-12. 1両を組み立てる ------------------------------------------------------
    opt: cabF/cabR=運転台が+x側/−x側 / panto=パンタあり / motor=電動車(軸距2.2)
         hachi=京王八王子方の向き(車体ローカルx の符号) / num=車番
@@ -5955,15 +5981,19 @@ function makeCar(opt){
   const bodyMat=S9?k9BodyMat(cab):k8BodyMat(cab);
   const body=add(cab?GEO.shellCab:GEO.shell,bodyMat,sh);
   addFine(cab?GEO.detailCab:GEO.detail,TRIMMAT,sh);
-  addFine(GEO.sideFit,K8M.vc,sh);
+  const SK=S9?'9':'8';
+  // 頂点カラーの細部:側面の小物・前面のケース(シェルと一緒に回す)・幌(新宿方の妻。最後尾の運転台の側には無い)を1つの形に
+  { const parts=[[GEO.sideFit,tail,0]];
+    if(cab) parts.push([GEO.front.case,tail,0]);
+    if(!o.cabR) parts.push([GEO.gang,false,-(SP.LEN/2+.25)]);
+    addFine(k8Merge(SK+'|vc|'+(cab?'c':'m')+(tail?'t':'')+(o.cabR?'':'g'),parts),K8M.vc); }
   addFine(cab?GEO.glassCab:GEO.glass,K8M.glass,sh);
   addFine(GEO.doorGlass,k8DoorGlassMat(bodyMat.userData.k8.uni),sh);
-  addFine(cab?GEO.roomCab:GEO.room,K8M.room,sh);
+  // 車内:内装と乗客を1つの形に
+  { const pp=cab?GEO.peopleCab:GEO.people, ci=o.crowd===null?-1:(o.crowd|0)%pp.length;
+    const parts=[[cab?GEO.roomCab:GEO.room,false,0]]; if(ci>=0) parts.push([pp[ci],false,0]);
+    addFine(k8Merge(SK+'|room|'+(cab?'c':'m')+ci,parts),K8M.room,sh); }
   addFine(cab?GEO.lightCab:GEO.light,K8M.cabinLight,sh);
-  if(o.crowd!==null){
-    const pp=cab?GEO.peopleCab:GEO.people;
-    addFine(pp[(o.crowd|0)%pp.length],K8M.room,sh);
-  }
   // 側面の表示器(どの車にもある。表示は点いている編成だけ)
   { const f=(S9?K9_SIDEFIT:K8_SIDEFIT).SLED_FACE;            // 画像の縦横比=表示面(1m=640px)
     addFine(GEO.sideLed, o.sign?k8SideLed(o.sign.kind,o.sign.dest,Math.round((f[1]-f[0])*640),Math.round((f[3]-f[2])*640)):K8M.ledOff, sh); }
@@ -5977,7 +6007,7 @@ function makeCar(opt){
   if(cab&&S9){                                              // 9000系の前頭部
     addFine(GEO.cabLogo,k8Logo(384,96),sh);
     const F=GEO.front;
-    addFine(F.case,K8M.vc,sh); add(F.vc,K8M.vc,sh);
+    add(F.vc,K8M.vc,sh);                                    // 前面のケースは頂点カラーの細部にまとめた(上)
     addFine(F.hl,o.lights==='head'?M_HL:M_HL_OFF,sh);
     addFine(F.tl,o.lights==='tail'?M_TL:M_TL_OFF,sh);
     if(o.lights==='head') addFine(F.hlGlow,K8M.hlGlow,sh);
@@ -5995,7 +6025,7 @@ function makeCar(opt){
   if(cab&&!S9){
     addFine(K8GEO.cabLogo,k8Logo(384,96),sh);
     const F=K8GEO.front;
-    addFine(F.case,K8M.vc,sh); add(F.vc,K8M.vc,sh);
+    add(F.vc,K8M.vc,sh);                                    // 前面のケースは頂点カラーの細部にまとめた(上)
     addFine(F.hl,o.lights==='head'?M_HL:M_HL_OFF,sh);
     addFine(F.tl,o.lights==='tail'?M_TL:M_TL_OFF,sh);
     if(o.lights==='head') addFine(F.hlGlow,K8M.hlGlow,sh);
@@ -6012,15 +6042,15 @@ function makeCar(opt){
   // 1.5km 先では数画素にしかならない。全体俯瞰で50両ぶん効く)
   const mid=[], addMid=(geo,mat,parent)=>{const m=add(geo,mat,parent);mid.push(m);return m;};
   addMid(o.motor?GEO.bogieM:GEO.bogieT,M_BOG);
-  addMid(GEO.under,K8M.vc);
-  addMid(GEO.ac,K8M.vc);
-  if(!o.cabR) addFine(GEO.gang,K8M.vc).position.x=-(SP.LEN/2+.25);
+  // 床下機器・冷房装置・パンタの台座の小物(京王八王子方へ 5.1m)を1つの形に(幌は頂点カラーの細部にまとめた)
+  { const parts=[[GEO.under,false,0],[GEO.ac,false,0]];
+    if(o.panto) parts.push([GEO.pantoBits,false,o.hachi*5.1]);
+    addMid(k8Merge(SK+'|mid|'+(o.panto?o.hachi:0),parts),K8M.vc); }
   // パンタグラフ:京王八王子方の台車の上(台座の中心が車両中心から 6.88m)、ひじも八王子方
   if(o.panto){
     const pg=new THREE.Group(); pg.position.x=o.hachi*SP.BOGIE_X; if(o.hachi<0) pg.rotation.y=Math.PI;
     g.add(pg); mid.push(pg);
     add(GEO.panto.base,M_PANS,pg); add(GEO.panto.frame,M_PN,pg); add(GEO.panto.shoe,M_SH,pg);
-    addMid(GEO.pantoBits,K8M.vc).position.x=o.hachi*5.1;
     g.userData.panto=pg;
   }
   g.userData.body=body; g.userData.bodyMat=bodyMat; g.userData.tail=tail;

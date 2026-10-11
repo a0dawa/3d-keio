@@ -19,7 +19,7 @@ const X = require('./stub_three')(path,
   'WIRE_TRO:WIRE_TRO,RAIL_OFF:RAIL_OFF,GAUGE:GAUGE,RAIL_W:RAIL_W,RAIL_TOP:RAIL_TOP,' +
   'seatCar:seatCar,frame:frame,railY:railY,zRunDown:zRunDown,M_HL:M_HL,M_TL:M_TL,' +
   'M_HL_OFF:M_HL_OFF,M_TL_OFF:M_TL_OFF,K8M:K8M,M_PASS:M_PASS,M_PASS_OFF:M_PASS_OFF,' +
-  'lodCar:lodCar,camera:camera');
+  'lodCar:lodCar,camera:camera,K9GEO:K9GEO');
 
 /* ---- 基準値(ref/keio8000_measured_v4.md から。検証側が独立して持つ)---------- */
 const REF = {
@@ -294,6 +294,50 @@ const range = (pts, k) => { let lo = 1e9, hi = -1e9; for (const p of pts) { if (
     '台車' + (far.bog ? 'あり' : 'なし') + '・パンタ' + (far.pan ? 'あり' : 'なし') + '・車体' + (far.body ? 'あり' : 'なし'));
   ok('近づけば台車・パンタが戻る', near.bog && near.pan && near.body, '300m=すべてあり',
     '台車' + (near.bog ? 'あり' : 'なし') + '・パンタ' + (near.pan ? 'あり' : 'なし'));
+}
+
+/* ---- 5c. 部品のまとめ(2026-10-11 利用者指示:描画を軽く) -------------------------------------
+   1両の中で、同じ材質・同じ近さの段の静止した部品を1つの形にまとめた。基準(検証側が持つ):
+   ・1両の Mesh の数の上限(まとめる前の 中間車15・パンタ付き19・先頭車26〜27 から 3〜4 減らした数。先頭車は前照灯と
+     識別灯の暈けを含む)
+   ・頂点カラーの部品と車内の頂点の集まりが、部品の形(K8GEO/K9GEO)を v4 の組み立て方で置いたものと同じ
+     (まとめで部品が欠けた・向きや位置がずれた、を見る)。組み立て方:シェルに付く物(側面の小物・前面のケースと
+     頂点カラー・内装・乗客)は最後尾の運転台の車両で y 回りに180°、幌は新宿方の妻(−(車体長/2+0.25))で最後尾の
+     運転台の車両には無い、床下・冷房は車体の中心、パンタの台座の小物は京王八王子方へ 5.1m */
+{
+  const MAXM = { mid: 12, panto: 15, cab: 23 };
+  const key = (x, y, z) => x.toFixed(3) + ',' + y.toFixed(3) + ',' + z.toFixed(3);
+  const pts = (geo, rot, dx) => { const P = geo.attributes.position.array, L = [], c = rot ? -1 : 1;
+    for (let i = 0; i < P.length; i += 3) L.push(key(c * P[i] + dx, P[i + 1], c * P[i + 2])); return L; };
+  // 車両の中の頂点を車体ローカルへ(親をたどる。回転は y 回りの180°だけ)
+  const local = (c, mat) => { const L = [];
+    c.traverse((o) => { if (!o.isMesh || o.material !== mat) return;
+      const chain = []; for (let q = o; q && q !== c; q = q.parent) chain.push(q);
+      const P = o.geometry.attributes.position.array;
+      for (let i = 0; i < P.length; i += 3) { let x = P[i], y = P[i + 1], z = P[i + 2];
+        for (const n of chain) { if (n.rotation && Math.abs(n.rotation.y) > 1e-9) { x = -x; z = -z; } x += n.position.x; y += n.position.y; z += n.position.z; }
+        L.push(key(x, y, z)); } });
+    return L; };
+  const same = (a, b) => { if (a.length !== b.length) return false; a.sort(); b.sort(); for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false; return true; };
+  const cars = []; for (const t of X.trains) cars.push(...t.cars); cars.push(...X.parkedCars);
+  let badN = null, badG = null, n = 0;
+  for (const c of cars) {
+    const o = c.userData.k8, G = o.series === '9000' ? X.K9GEO : X.K8GEO, cab = !!(o.cabF || o.cabR), tail = !!o.cabR;
+    let m = 0; c.traverse((q) => { if (q.isMesh) m++; });
+    const lim = cab ? MAXM.cab : o.panto ? MAXM.panto : MAXM.mid;
+    if (m > lim && !badN) badN = [o.num, m + '>' + lim];
+    const ev = [].concat(pts(G.sideFit, tail, 0), cab ? pts(G.front.case, tail, 0).concat(pts(G.front.vc, tail, 0)) : [],
+      o.cabR ? [] : pts(G.gang, false, -(REF.LEN / 2 + 0.25)), pts(G.under, false, 0), pts(G.ac, false, 0),
+      o.panto ? pts(G.pantoBits, false, o.hachi * 5.1) : []);
+    const pp = cab ? G.peopleCab : G.people;
+    const er = [].concat(pts(cab ? G.roomCab : G.room, tail, 0), o.crowd === null ? [] : pts(pp[(o.crowd | 0) % pp.length], tail, 0));
+    n++;
+    const av = local(c, X.K8M.vc), ar = local(c, X.K8M.room);
+    if (!same(ev, av) && !badG) badG = [o.num, '頂点カラー ' + av.length + '/' + ev.length + '頂点'];
+    if (!same(er, ar) && !badG) badG = [o.num, '車内 ' + ar.length + '/' + er.length + '頂点'];
+  }
+  ok('1両の描画の呼び出し(部品のまとめ)', badN === null && n > 0, '中間車≤' + MAXM.mid + '・パンタ付き≤' + MAXM.panto + '・先頭車≤' + MAXM.cab, badN ? badN.join(' ') : n + '両');
+  ok('部品をまとめても形は同じ', badG === null && n > 0, '頂点カラーの部品・車内=部品の形を組み立て方どおりに置いたもの', badG ? badG.join(' ') : n + '両');
 }
 
 /* ---- 6. 車両の置き方(レール面・連結面間) -------------------------------------- */
