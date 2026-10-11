@@ -6202,10 +6202,11 @@ const PARKS=[];
   { const T=TRACKS.find(t=>t.id==='笹塚留置線南'), L=9*K8.PITCH+K8.LEN;
     parkSet('笹塚 留置線(西側・南)','9732F',10,T.x1-3.0-L,-2,null); }
   /* ホームで待っている編成:上りの列車と同じ向き(j=0 が東端=新宿方の先頭)で、駅の上りの停止位置に着ける
-     (扉がホームドアの開口に合う)。前照灯・尾灯・表示器を点け、乗客も乗せる。扉とホームドアは閉めたまま */
+     (扉がホームドアの開口に合う)。前照灯・尾灯・表示器を点け、乗客も乗せる。扉とホームドアは開けたまま
+     (利用者指示。ホームドアの列ができてから開ける=10章の setPSD の後) */
   const standSet=(name,form,st,off,kind,dest)=>{
     const n=10, e0=stopPosOf(st,-1);
-    const P={name:name, form:form, off:off, e0:e0, e1:e0+(n-1)*K8.PITCH+K8.LEN, cars:[], lit:true};
+    const P={name:name, form:form, st:st, off:off, e0:e0, e1:e0+(n-1)*K8.PITCH+K8.LEN, cars:[], lit:true};
     for(let j=0;j<n;j++){const sp=k8CarSpec(form,j+1);
       const c=makeCar({cabF:j===0, cabR:j===n-1, panto:sp.panto, motor:sp.motor, num:sp.num, series:sp.series,
         hachi:-1, lights:j===0?'head':(j===n-1?'tail':'off'), sign:{kind:kind,dest:dest}, crowd:j%3});
@@ -6215,7 +6216,7 @@ const PARKS=[];
   };
   /* 笹塚の3番線(内側の北 +2m。番線は南から数える。新宿方面のホーム):9000系10両(利用者指示)。この線は西で車止めに
      終わる線(本線は外側)なので、走行列車とは交わらない。西端は本線へ渡る分岐の手前(⑥が分岐との離れを見る) */
-  standSet('笹塚 3番線','9734F',STA[0],2,'各停','新宿');
+  standSet('笹塚 3番線','9734F',STA[0],2,'各停','本八幡');
 }
 
 /* ---- ホームドア(可動式ホーム柵) ------------------------------------------
@@ -6263,7 +6264,10 @@ for(const d of PSD_DEF){
     // その扉列から見て、列車のどちらの"面"(車体ローカルzの符号)がホーム側か。
     // ローカル+zが±offのどちらを向くかは線形の向き(この路線はsが西へ増える)と
     // 進行方向で決まる。符号を推論で決めると間違えるので、実際の姿勢から求める。
-    const trackOff=openable?(dir>0?-ro:ro):(dir>0?-mainOff(st.x):mainOff(st.x));   // 面している線(各停の線/本線)
+    // 面している線は、駅の中心で列に最も近い線路(以前は各停の線/本線と決めていたので、笹塚の内側の列=留置線に
+    // 面する列を外側の本線に対して求めていた。ホームで待たせる編成の扉を開けて分かった)
+    const near=TRACKS.filter(t=>st.x>=t.x0&&st.x<=t.x1).map(t=>t.zf(st.x)).reduce((b,o)=>Math.abs(o-off)<Math.abs(b-off)?o:b,Infinity);
+    const trackOff=isFinite(near)?near:(openable?(dir>0?-ro:ro):(dir>0?-mainOff(st.x):mainOff(st.x)));
     const side=(off>trackOff?1:-1)*localZSign(st.x,dir);
     CUR=st.kk?KOUKU[st.kk-1].VGs:null;
     // 開口と開口の間の固定部(戸袋)。駅の結合ジオメトリへ積む
@@ -6306,6 +6310,15 @@ function setPSD(p,r){
   p.r=r;
 }
 for(const p of PSD) setPSD(p,0);
+/* ホームで待たせる編成(standSet。笹塚の3番線)は扉とホームドアを開けたままにする(利用者指示)。
+   列は編成の線に面したもの、開く面はその列の side(列と編成の線の位置関係から。走行列車の stepCarDoors と同じ) */
+for(const P of PARKS){
+  if(!P.lit) continue;
+  const row=PSD.find(q=>q.st===P.st&&Math.abs(q.off-P.off)<2.5);
+  if(!row) continue;
+  P.psd=row; row.hold=true; setPSD(row,1);
+  for(const c of P.cars) setCarDoors(c,1,row.side);
+}
 
 /* ---- ホームの人(利用者指示)--------------------------------------------------------
    ホームドアの開口(PSD の open=扉の位置)の後ろに1〜3人の列、ほかに数人がまばらに立つ。ホームの縁から 1.1m 以上内側
@@ -6509,8 +6522,9 @@ function stepCarDoors(t,dt){
 function stepPSD(dt){
   for(const p of PSD){
     let want=0;
+    if(p.hold) want=1;                                   // ホームで待たせる編成の列(笹塚の3番線)は開けたまま
     // 運転モードの自列車が停車して扉を開けている間は、自列車の面する列が開く
-    if(rideOn&&doorOpenT>0&&doorPSD===p) want=1;
+    else if(rideOn&&doorOpenT>0&&doorPSD===p) want=1;
     else for(const t of trains){
       if(t.dwell>3&&trainPSD(t)===p){want=1;break;}
     }

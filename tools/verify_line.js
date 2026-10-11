@@ -25,7 +25,7 @@ const X = require('./stub_three')(path,
   'ROAD_SKIP:ROAD_SKIP,PS0:PS0,PLATS:PLATS,VIA_CH:VIA_CH,' +
   'CHAINS:(typeof CHAINS!=="undefined"?CHAINS:[]),SUPS:(typeof SUPS!=="undefined"?SUPS:[]),' +
   'POLES:(typeof POLES!=="undefined"?POLES:[]),BEAMS:(typeof BEAMS!=="undefined"?BEAMS:[]),' +
-  'POLE_LAMPS:(typeof POLE_LAMPS!=="undefined"?POLE_LAMPS:[]),PSD:(typeof PSD!=="undefined"?PSD:[])');
+  'POLE_LAMPS:(typeof POLE_LAMPS!=="undefined"?POLE_LAMPS:[]),PSD:(typeof PSD!=="undefined"?PSD:[]),stepPSD:stepPSD');
 
 /* ---- 設計上の要件(検証側が独立して持つ) ---------------------------------- */
 const REQ = {
@@ -261,7 +261,8 @@ if (X.TRACKS && X.WIRES) {
        編成 9734F(新宿方から 9734・9034・9084・9534・9134・9584・9684・9234・9284・9784)、
        3番線=笹塚のホームに面する線路を南から数えて3番目(京王の番線の数え方)。
      守ること:①その線路の上 ②ホームの範囲に収まる ③ほかの線路(本線へ渡る分岐)が車体の幅に入ってこない
-     ④上りの向き(新宿方=東端が先頭で前照灯、西端が尾灯)・表示器が点いている ⑤40か所の扉がホームドアの開口に合う */
+     ④上りの向き(新宿方=東端が先頭で前照灯、西端が尾灯)・表示器が点いている(各停 本八幡=利用者指示)
+     ⑤40か所の扉がホームドアの開口に合う ⑥扉とホームドアはホーム側が開いている(利用者指示) */
   {
     const REF_9734F = ['9734', '9034', '9084', '9534', '9134', '9584', '9684', '9234', '9284', '9784'];
     const DOORX = [-7.05, -2.35, 2.35, 7.05];                 // 扉の中心(車両中心から。8000系・9000系とも)
@@ -301,9 +302,9 @@ if (X.TRACKS && X.WIRES) {
       // 向き:東端(s の小さい側)の車両が先頭(運転台・前照灯)、西端が最後尾(尾灯)。表示は全車で点く
       const byS = P.cars.slice().sort((a, b) => a.userData.s - b.userData.s), E = byS[0].userData.k8, W = byS[9].userData.k8;
       const head = (E.cabF || E.cabR) && E.lights === 'head' && (W.cabF || W.cabR) && W.lights === 'tail';
-      const signs = P.cars.filter((c) => c.userData.k8.sign && c.userData.k8.sign.dest).length;
-      ok('笹塚の3番線:新宿方が先頭・表示が点く', head && signs === 10 && E.num === REF_9734F[0],
-        '東端 ' + REF_9734F[0] + '=前照灯・西端=尾灯・表示10両', (head ? '東端 ' + E.num + ' 前照灯' : '向き違い') + '・表示' + signs + '両');
+      const signs = P.cars.filter((c) => c.userData.k8.sign && c.userData.k8.sign.kind === '各停' && c.userData.k8.sign.dest === '本八幡').length;
+      ok('笹塚の3番線:新宿方が先頭・各停 本八幡', head && signs === 10 && E.num === REF_9734F[0],
+        '東端 ' + REF_9734F[0] + '=前照灯・西端=尾灯・各停 本八幡10両', (head ? '東端 ' + E.num + ' 前照灯' : '向き違い') + '・各停 本八幡' + signs + '両');
       // 扉:その線に面したホームドアの列の開口に、40か所の扉が合う
       const row = X.PSD.find((q) => q.st === sasa && Math.abs(q.off - off3) < 2.5);
       let worst = 0, nd = 0;
@@ -313,6 +314,16 @@ if (X.TRACKS && X.WIRES) {
       }
       ok('笹塚の3番線:扉がホームドアの開口に合う', !!row && nd === 40 && worst < 0.3, '40か所・ずれ0.3m 未満',
         row ? nd + 'か所・最大のずれ ' + worst.toFixed(2) + 'm' : 'ホームドアの列なし');
+      // 扉とホームドアが開いている。開く面は検証側で求める:上りの向き(東へ)の前 F と上 UP から R=F×UP、
+      // 車体ローカル+z が +off(北)を向くか(seatCar と同じ式)。ホーム(列)が線路のどちら側かで正しい面が決まる
+      const s = sasa.x, pA = X.frame(s - 1, 0), pB = X.frame(s + 1, 0), pO = X.frame(s, 0), pN = X.frame(s, 1);
+      const fx = -(pB.x - pA.x), fz = -(pB.z - pA.z), lz = ((-fz) * (pN.x - pO.x) + fx * (pN.z - pO.z)) > 0 ? 1 : -1;
+      const wantSide = row ? (row.off > off3 ? 1 : -1) * lz : 0;
+      for (let i = 0; i < 100; i++) X.stepPSD(0.05);          // 5秒動かしても開いたまま(列車が停まらない列は閉じようとする)
+      const doorsOK = P.cars.filter((c) => c.userData.doors && c.userData.doors.r === 1 && c.userData.doors.side === wantSide).length;
+      ok('笹塚の3番線:扉とホームドアがホーム側で開く', !!row && row.r === 1 && doorsOK === 10,
+        'ホームドア開・10両の扉がホーム側(' + (row && row.off > off3 ? '北' : '南') + ')で開く',
+        row ? 'ホームドア ' + row.r + '・扉 ' + doorsOK + '両' : 'ホームドアの列なし');
     }
   }
   // 2-5 架線の高さの順序:トロリ線 < ちょう架線 < ビーム下弦(部材と干渉しない)

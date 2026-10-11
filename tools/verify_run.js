@@ -163,7 +163,7 @@ ok('上限速度を超えない', vmax <= REF.VMAX_KMH + 0.5, '≤' + REF.VMAX_K
     const others = X.trains.filter((q) => q !== tr).map((q) => ({ q: q, st: q.st, atSt: q.atSt }));
     for (const o of others) { o.q.st = 'run'; o.q.atSt = null; }
     for (let i = 0; i < 120; i++) X.stepPSD(0.05);
-    const op = X.PSD.filter((q) => q.r > 0.95);
+    const op = X.PSD.filter((q) => q.r > 0.95 && !q.hold);   // hold=ホームで待たせる編成の列(笹塚の3番線。いつも開いている)
     const okRow = op.length === 1 && op[0].st === st && Math.abs(op[0].off - REF.QUAD_MAIN_OFF) < 2.5;
     ok('特急の停車で本線側のホームドアが開く', okRow, '明大前の本線側(off≈+' + REF.QUAD_MAIN_OFF + ')の1列',
       op.map((q) => q.st.n + ' off' + q.off.toFixed(2)).join(' ') || '開かない');
@@ -395,9 +395,9 @@ ok('上限速度を超えない', vmax <= REF.VMAX_KMH + 0.5, '≤' + REF.VMAX_K
       if (q.dir < 0) { fx = -fx; fz = -fz; }
       const rx = -fz, rz = fx;                       // R = F × (0,1,0)
       const lz = (rx * (pN.x - pO.x) + rz * (pN.z - pO.z)) > 0 ? 1 : -1;
-      // その列が面している線:その方向の線(各停の線 ±runOff/本線 ±mainOff)のうち列に近い方
-      const ro = X.runOff(s), mo = X.mainOff(s), lines = q.dir > 0 ? [-ro, -mo] : [ro, mo];
-      const trackOff = Math.abs(q.off - lines[0]) <= Math.abs(q.off - lines[1]) ? lines[0] : lines[1];
+      // その列が面している線:駅の中心で列に最も近い線路(各停の線・本線のほか、笹塚の内側の列は留置線=2・3番線に面する)
+      const offs = X.TRACKS.filter((t) => s >= t.x0 && s <= t.x1).map((t) => t.zf(s));
+      const trackOff = offs.reduce((b, o) => (Math.abs(o - q.off) < Math.abs(b - q.off) ? o : b), Infinity);
       const want = (q.off > trackOff ? 1 : -1) * lz;
       if (want !== q.side && !bad) bad = [q.st.n, q.dir > 0 ? '下り' : '上り',
         'モデル' + (q.side > 0 ? '+z' : '-z') + '/正解' + (want > 0 ? '+z' : '-z')];
@@ -709,7 +709,7 @@ ok('上限速度を超えない', vmax <= REF.VMAX_KMH + 0.5, '≤' + REF.VMAX_K
     X.setRideState({ on: true, kind: kind, s: X.stopPosOf(st, 1), v: 0, notch: X.NIDX_N, acc: 0, reset: true });
     X.stepRide(0.05);
     for (let i = 0; i < 60; i++) X.stepPSD(0.05);
-    return { st: st, a: X.getRideState(), open: X.PSD.filter((q) => q.st === st && q.r > 0.5) };
+    return { st: st, a: X.getRideState(), open: X.PSD.filter((q) => q.st === st && q.r > 0.5 && !q.hold) };   // hold は笹塚の3番線の待たせる編成
   };
   // (a) 特急:通過駅では停止位置に停まってもホームドアも扉も開かない(戸閉灯は点いたまま・力行できる)。停車駅は本線側が開く
   {
