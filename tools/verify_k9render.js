@@ -10,6 +10,7 @@
 //   使い方: node tools/verify_k9render.js [--html keio_elevated_3d.html] [--out 出力フォルダ]
 const fs = require('fs');
 const path = require('path');
+const { spawnSync } = require('child_process');
 const A = process.argv.slice(2);
 const opt = (k, d) => { const i = A.indexOf('--' + k); return i < 0 ? d : A[i + 1]; };
 const HTML = opt('html', 'keio_elevated_3d.html');
@@ -36,6 +37,9 @@ const REF = {
   PASS: [[-1.03, -0.97], [0.97, 1.03], 3.16, 3.32],   // 識別灯(種別の左・車号の右。白の縦長。写真の灰の縦長の灯。中心線に対称)
   LOGO: [0.72, 0.99, 1.81, 1.92],               // KEIO ロゴ(向かって右の赤帯の上に白)
   BODY_W: 2.768,                                // 車体幅(公表 2,768mm。8000系は 2,770mm)
+  // 側面の実測の道具(reference/keio9000/measure_side9.py)を描画に当てたとき戻るべき値(measured_9000.md の推定値)
+  WIN_SPAN: [0.025, 0.985], END_WIN: [8.45, 9.38],              // 扉間の窓(扉間の中心から)・車端の窓
+  DOORS: [-7.05, -2.35, 2.35, 7.05], DWIN: [0.135, 0.546], DWIN_Z1: 2.885,   // 客用扉の中心(8000系と同じ)・扉窓(扉中心から)・扉窓の上端
 };
 
 fs.mkdirSync(OUT, { recursive: true });
@@ -97,6 +101,10 @@ function findChromium() {
     let cam = new T.OrthographicCamera(-20, 20, 2.5, -2.5, 0.3, 200);
     cam.position.set(-9, 2.5, -30); cam.up.set(0, 1, 0); cam.lookAt(-9, 2.5, 0);
     renderer.render(sc, cam); const side = grab(2400, 300);
+    // 写真の縮尺は揃っていないので、45px/m に縮めた写しも作る(側面の実測の道具が縮尺を直して測れるか)
+    const sideS = (() => { const c2 = document.createElement('canvas'); c2.width = 1800; c2.height = 225; const x = c2.getContext('2d');
+      x.imageSmoothingEnabled = true; x.imageSmoothingQuality = 'high'; x.drawImage(cv, 0, 0, 2400, 300, 0, 0, 1800, 225);
+      return { url: c2.toDataURL('image/png') }; })();
     renderer.setSize(480, 630, false);
     cam = new T.OrthographicCamera(-1.6, 1.6, 2.1, -2.1, 0.3, 200);
     cam.position.set(30, 2.1, 0); cam.up.set(0, 1, 0); cam.lookAt(0, 2.1, 0);
@@ -104,10 +112,10 @@ function findChromium() {
     lead.visible = false; lead2.visible = true;
     renderer.render(sc, cam); const front2 = grab(480, 630);
     renderer.toneMapping = save.tm; renderer.shadowMap.enabled = save.sh; renderer.setPixelRatio(save.pr);
-    return { side: side, front: front, front2: front2 };
+    return { side: side, sideS: sideS, front: front, front2: front2 };
   });
   await b.close();
-  for (const k of ['side', 'front', 'front2']) fs.writeFileSync(path.join(OUT, k + '.png'), Buffer.from(res[k].url.split(',')[1], 'base64'));
+  for (const k of ['side', 'sideS', 'front', 'front2']) fs.writeFileSync(path.join(OUT, k + '.png'), Buffer.from(res[k].url.split(',')[1], 'base64'));
   if (errs.length) console.log('ページのエラー:\n  ' + errs.slice(0, 5).join('\n  '));
 
   const rows = []; let ng = errs.length ? 1 : 0;
@@ -141,6 +149,40 @@ function findChromium() {
     const iv = S(REF.IVORY_X + REF.IVORY_PROBE, 3.1), mid = S(-20 + REF.IVORY_X + REF.IVORY_PROBE, 3.1);
     ok('側面:前頭部はアイボリー', isIvory(iv) && isSteel(mid), '先頭車=アイボリー/中間車=ステンレス', fmt(iv) + ' / ' + fmt(mid));
     ok('側面:帯はアイボリーの上も通る', isRed(S(REF.IVORY_X + REF.IVORY_PROBE, zr(REF.RED))), '京王レッド', fmt(S(REF.IVORY_X + REF.IVORY_PROBE, zr(REF.RED))));
+  }
+  // ---- 側面の実測の道具(reference/keio9000/measure_side9.py)を自分の描画に当てる ----
+  // 9000系の編成写真が手に入ったときに使う道具。60px/m の描画と 45px/m に縮めた写しで、帯・窓・扉・アイボリーの後端が
+  // measured_9000.md の値(=描いた値)に戻ること、つまり道具が壊れていないことを毎回確かめる(u は運転台の側が+)
+  {
+    // 許容は元の画像の1.5画素(60px/m で 0.025m・45px/m で 0.033m。縮めた写しは境が1画素ぶんぼける)
+    const tool = path.join(__dirname, '..', 'reference', 'keio9000', 'measure_side9.py');
+    let T = 0.025;
+    const near = (a, b) => typeof a === 'number' && Math.abs(a - b) <= T + 1e-9;
+    const nearR = (q, r) => Array.isArray(q) && near(q[0], r[0]) && near(q[1], r[1]);
+    const f2 = (q) => Array.isArray(q) ? q.map((v) => Array.isArray(v) ? f2(v) : (+v).toFixed(3)).join(Array.isArray(q[0]) ? ' ' : '〜') : String(q);
+    const expSide = [[-REF.END_WIN[1], -REF.END_WIN[0]]];          // 運転台と反対の端の窓
+    for (const g of REF.GAPS) expSide.push([g - REF.WIN_SPAN[1], g - REF.WIN_SPAN[0]], [g + REF.WIN_SPAN[0], g + REF.WIN_SPAN[1]]);
+    const expDw = [];
+    for (const d of REF.DOORS) expDw.push([d - REF.DWIN[1], d - REF.DWIN[0]], [d + REF.DWIN[0], d + REF.DWIN[1]]);
+    expSide.sort((a, b) => a[0] - b[0]); expDw.sort((a, b) => a[0] - b[0]);
+    const list = (got, exp) => Array.isArray(got) && got.length === exp.length && exp.every((e, i) => nearR(got[i], e));
+    for (const [file, k, tag] of [['side.png', 1, '60px/m'], ['sideS.png', 0.75, '45px/m']]) {
+      T = 1.5 / (60 * k);
+      const r = spawnSync('python3', ['-I', tool, path.join(OUT, file), '--ends', String(75 * k), String(1245 * k),
+        '--rail', String(300 * k), '--cab', 'left', '--json'], { encoding: 'utf8' });
+      let m = null; try { m = JSON.parse(r.stdout); } catch (e) { m = null; }
+      if (!m) { ok('側面の実測の道具(' + tag + ')', false, 'JSON を出す', ((r.stderr || '') + (r.stdout || '')).trim().slice(-160)); continue; }
+      ok('道具(' + tag + '):帯の高さ', nearR(m.red_z, REF.RED) && nearR(m.blue_z, REF.BLUE), '赤 ' + REF.RED.join('〜') + '・青 ' + REF.BLUE.join('〜'),
+        f2(m.red_z) + '・' + f2(m.blue_z));
+      ok('道具(' + tag + '):窓の上下', nearR(m.win_z, REF.WIN) && nearR(m.dwin_z, [REF.WIN[0], REF.DWIN_Z1]),
+        REF.WIN.join('〜') + '・扉窓〜' + REF.DWIN_Z1, f2(m.win_z) + '・' + f2(m.dwin_z));
+      ok('道具(' + tag + '):窓と扉窓の並び', list(m.side_windows_u, expSide) && list(m.door_windows_u, expDw),
+        '側窓' + expSide.length + '枚・扉窓' + expDw.length + '枚 ±' + T.toFixed(3), (m.side_windows_u || []).length + '枚・' + (m.door_windows_u || []).length + '枚 ' +
+        (list(m.side_windows_u, expSide) ? '' : '側窓 ' + f2(m.side_windows_u)) + (list(m.door_windows_u, expDw) ? '' : ' 扉窓 ' + f2(m.door_windows_u)));
+      ok('道具(' + tag + '):扉の中心・アイボリーの後端', Array.isArray(m.doors_u) && m.doors_u.length === REF.DOORS.length &&
+        REF.DOORS.every((d, i) => near(m.doors_u[i], d)) && near(m.ivory_u, REF.IVORY_X), REF.DOORS.join('/') + '・' + REF.IVORY_X,
+        f2(m.doors_u) + '・' + m.ivory_u);
+    }
   }
   // ---- 前面 ----
   {
@@ -248,7 +290,7 @@ function findChromium() {
     let g = 0; for (let y = cm - 0.1 * w; y <= cm + 0.1 * w; y += 1 / 150) for (let z = REF.DEST[2]; z <= REF.DEST[3]; z += 1 / 150) if (isOr(F2(y, z))) g++;
     ok('前面:行先「新  宿」の字間', w > 0.15 && g === 0, '中央の2割は空き', '幅' + w.toFixed(3) + 'm・中央' + g + '画素');
   }
-  console.log('=== 京王9000系の描画(塗り分け) ⇄ 公表の説明・推定値 ===\n描画: ' + OUT + '/side.png front.png front2.png');
+  console.log('=== 京王9000系の描画(塗り分け) ⇄ 公表の説明・推定値 ===\n描画: ' + OUT + '/side.png sideS.png front.png front2.png');
   const pad = (s, n) => s + ' '.repeat(Math.max(1, n - [...s].reduce((a, ch) => a + (ch.charCodeAt(0) > 0x2000 ? 2 : 1), 0)));
   for (const r of rows) console.log(pad(r[0], 34) + pad(r[1], 34) + pad(r[2], 40) + r[3]);
   console.log(ng ? '\nRESULT: FAIL(' + ng + '項目NG)' : '\nRESULT: PASS');
