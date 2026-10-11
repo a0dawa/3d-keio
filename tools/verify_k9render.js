@@ -30,15 +30,18 @@ const REF = {
   IVORY_PROBE: 0.21,                            // 塗りを見る点は IVORY_X からこれだけ前(u8.61=乗務員扉の上。後ろの手すり u8.467 を避ける)
   WRAP_X: 9.48,                                 // 前面窓は角の曲面に沿って側面へ回り込み、側面の X 9.48 で終わる(写真2枚)
   CAB_LOGO: [7.82, 8.38, 2.64, 2.79],           // 運転台側の KEIO(写真)
-  FDOOR_HW: 0.305,                              // 中央の非常扉の半幅(公表610mm)
-  // 以下は前面写真の実測(ftex9.png)の高さを、屋根 3.62 基準で 1.06 倍に直した値(measured_9000.md 3b)
-  WIN_IN: 0.35, WIN_BOTTOM: [1.99, 2.07],       // 左右の前面窓の内縁 |y|・下端(2.030)
-  DOOR_EDGE: [0.26, 0.35],                      // 扉の戸の縁と枠の外縁(縦の暗い線)
-  HL: [0.695, 1.52], TL: [0.91, 1.52],          // 前照灯・尾灯の中心 [|y|, z](前面の青帯の中)
-  DEST: [-0.20, 0.20, 3.18, 3.34],              // 行先表示器(扉の上)の範囲 [y0,y1,z0,z1]
+  // 以下は前面写真の実測(ftex9.png)の高さを、屋根 3.62 基準で 1.06 倍に直した値(measured_9000.md 3b)。
+  // 横の位置は利用者指示で直した(2026-10-11:扉の幅+10cm・行先表示器+15cm・前照灯の間隔+20cm・識別灯の間隔+40cm。同 3b)
+  WIN_IN: 0.40, WIN_BOTTOM: [1.99, 2.07],       // 左右の前面窓の内縁 |y|(扉の枠の外縁と同じ)・下端(2.030)
+  DOOR_EDGE: [0.31, 0.40],                      // 扉の戸の縁と枠の外縁(縦の暗い線)。間の枠はアイボリーで、帯もここで切れる
+  FDWIN: 0.24,                                  // 中央扉の窓の半幅(ゴムの外縁)
+  HL: [0.795, 1.52], TL: [1.01, 1.52],          // 前照灯・尾灯の中心 [|y|, z](前面の青帯の中)
+  HL_Y: [0.71, 0.88],                           // 前照灯(点いた白)の |y|
+  DEST: [-0.3165, 0.3165, 3.18, 3.34],          // 行先表示器(扉の上)の範囲 [y0,y1,z0,z1]。半幅 0.3165=写真 0.21×1.15+0.075
+  DEST_Z: 3.2596,                               // 行先表示器の中心の高さ(表示板の幅はここで測る)
   KIND: [-0.88, -0.52, 3.12, 3.31],             // 種別表示器(向かって左の窓の上部)
-  NUM: [0.58, 0.958, 3.12, 3.31],               // 車号(向かって右の窓の上部。種別と同じ高さへ上げた=利用者指示。右の識別灯 0.97〜 は含めない)
-  PASS: [[-1.03, -0.97], [0.97, 1.03], 3.132, 3.302],   // 識別灯(種別の左・車号の右。白の縦長。写真の灰の縦長の灯。中心線に対称)
+  NUM: [0.58, 0.958, 3.12, 3.31],               // 車号(向かって右の窓の上部。種別と同じ高さへ上げた=利用者指示)
+  PASS: [[-1.23, -1.17], [1.17, 1.23], 3.132, 3.302],   // 識別灯(種別の左・車号の右。白の縦長。写真の灰の縦長の灯から中心線に対称、間隔+40cm)
   LOGO: [0.72, 0.99, 1.70, 1.82],               // KEIO ロゴ(向かって右の赤帯の上に白)
   BODY_W: 2.768,                                // 車体幅(公表 2,768mm。8000系は 2,770mm)
   // 側面の実測の道具(reference/keio9000/measure_side9.py)を描画に当てたとき戻るべき値(measured_9000.md 3c)
@@ -207,7 +210,9 @@ function findChromium() {
     // 窓は3つ(左右の前面窓と扉の窓)が暗く、その間(扉の戸・枠)はアイボリー。1枚の黒いガラス域ではない(写真)
     const isDark = (c) => c[0] + c[1] + c[2] < 180;
     const gl = [F(-1.0, 2.6), F(0, 2.6), F(1.0, 2.6)], badG = gl.find((c) => !isDark(c));
-    const between = [F(-0.225, 2.6), F(0.225, 2.6), F(-0.305, 2.6), F(0.305, 2.6)], badI = between.find((c) => !isIvory(c));
+    // 間=扉の戸(扉の窓と戸の縁の間)と枠(戸の縁と枠の外縁の間)
+    const E = REF.DOOR_EDGE, FL = (REF.FDWIN + E[0]) / 2, FC = (E[0] + E[1]) / 2;
+    const between = [F(-FL, 2.6), F(FL, 2.6), F(-FC, 2.6), F(FC, 2.6)], badI = between.find((c) => !isIvory(c));
     ok('前面:窓は3つ(間はアイボリー)', !badG && !badI, '窓=暗い・扉の戸と枠=アイボリー', badG ? '窓 ' + fmt(badG) : (badI ? '間 ' + fmt(badI) : '7点'));
     // 前面窓の下端:y=±1.0 で z=2.6 から下へ暗さが切れる所(左右とも)
     let zb = null;
@@ -218,22 +223,40 @@ function findChromium() {
     ok('前面:腰部の帯が正面へ回る', st.every(isRed) && sb.every(isBlue), '赤と青(左右)', st.map(fmt).join(' ') + ' / ' + sb.map(fmt).join(' '));
     const iv = [F(-0.45, 1.40), F(0.45, 1.40), F(-0.45, 1.93)];
     ok('前面:アイボリー', iv.every(isIvory), '帯の上下', iv.map(fmt).join(' '));
-    // 中央の非常扉の縁(幅610mm):y=±0.305 の付近に暗い線(青帯の下、扉の下端との間 z1.30 で見る)
+    // 中央の非常扉の縁:戸の縁と枠の外縁に暗い線(青帯の下、扉の下端との間 z1.30 で見る)。戸の中央と枠の中ほど(FC)は無地
     const line = (y) => { let m = 999; for (let d = -3; d <= 3; d++) { const c = px(res.front, 480, Math.round((y + 1.6) * 150) + d, Math.round((4.2 - 1.30) * 150)); m = Math.min(m, c[0] + c[1] + c[2]); } return m; };
-    const E = REF.DOOR_EDGE, lines = [-E[1], -E[0], E[0], E[1]].map(line);
-    ok('前面:中央の非常扉の縁', lines.every((v) => v < 200) && line(0) > 500 && line(REF.FDOOR_HW) > 500,
-      'y=±' + E.join('・±') + ' に線・中央と枠(±' + REF.FDOOR_HW + ')は無地', lines.join('/') + ' / ' + line(0) + '/' + line(REF.FDOOR_HW));
-    // 帯は扉の枠(±0.26〜0.35)のアイボリーで切れる
-    const gap = [F(-REF.FDOOR_HW, zr(REF.RED)), F(REF.FDOOR_HW, zr(REF.FBLUE))];
+    const lines = [-E[1], -E[0], E[0], E[1]].map(line);
+    ok('前面:中央の非常扉の縁', lines.every((v) => v < 200) && line(0) > 500 && line(FC) > 500 && line(-FC) > 500,
+      'y=±' + E.join('・±') + ' に線・中央と枠(±' + FC.toFixed(3) + ')は無地', lines.join('/') + ' / ' + line(0) + '/' + line(FC) + '/' + line(-FC));
+    // 扉の窓と左右の前面窓の内縁(利用者指示:扉の幅+10cm、その分だけ窓を狭く):z2.6 の行で、中心から外へ
+    // 暗い扉の窓が切れる所と、枠の中ほど(FC)から外へ暗い前面窓が始まる所。左右とも
+    { const edge = (sg, from, wantDark) => { for (let y = from; Math.abs(y) < 0.8; y += sg / 150) if (isDark(F(y, 2.6)) === wantDark) return Math.abs(y); return null; };
+      // 境の画素は混ざった色なので、読みは ±1画素ほど揺れる(左右で半画素ずつ逆に寄る)。許容は ±2画素
+      const dw = [-1, 1].map((sg) => edge(sg, 0, false)), wi = [-1, 1].map((sg) => edge(sg, sg * FC, true)), t = 2.01 / 150;
+      ok('前面:扉の窓と前面窓の内縁', dw.every((v) => v !== null && Math.abs(v - REF.FDWIN) <= t) && wi.every((v) => v !== null && Math.abs(v - REF.WIN_IN) <= t),
+        '扉の窓の半幅 ' + REF.FDWIN + '・窓の内縁 ' + REF.WIN_IN + ' ±2画素', '左 ' + [dw[0], wi[0]].map((v) => v === null ? '-' : v.toFixed(3)).join('・') +
+        ' 右 ' + [dw[1], wi[1]].map((v) => v === null ? '-' : v.toFixed(3)).join('・')); }
+    // 帯は扉の枠(戸の縁〜枠の外縁)のアイボリーで切れる
+    const gap = [F(-FC, zr(REF.RED)), F(FC, zr(REF.FBLUE))];
     ok('前面:帯は扉の枠で切れる', gap.every(isIvory), 'アイボリー', gap.map(fmt).join(' '));
     const hl = [F(-REF.HL[0], REF.HL[1]), F(REF.HL[0], REF.HL[1])];
     ok('前面:前照灯が点く(青帯の中)', hl.every((c) => c[0] + c[1] + c[2] > 600) && zb !== null && zb > REF.HL[1] && REF.HL[1] > REF.FBLUE[0] && REF.HL[1] < REF.FBLUE[1],
       '明るい・窓より下', hl.map(fmt).join(' '));
+    // 点いた前照灯の白の範囲(利用者指示:前照灯の間隔+20cm)。z=HL の行で左右とも
+    { const sp = (sg) => { let a = 1e9, b = -1e9; for (let y = sg * 0.5; Math.abs(y) <= 1.25; y += sg / 150) if (F(y, REF.HL[1]).every((v) => v > 240)) { a = Math.min(a, Math.abs(y)); b = Math.max(b, Math.abs(y)); } return [a, b]; };
+      const s = [sp(-1), sp(1)], t = 2.01 / 150;
+      ok('前面:前照灯の位置', s.every((r) => Math.abs(r[0] - REF.HL_Y[0]) <= t && Math.abs(r[1] - REF.HL_Y[1]) <= t), '|y| ' + REF.HL_Y.join('〜') + ' ±2画素(左右とも)',
+        s.map((r, i) => (i ? '右 ' : '左 ') + r.map((v) => v.toFixed(3)).join('〜')).join(' ')); }
     const tl = [F(-REF.TL[0], REF.TL[1]), F(REF.TL[0], REF.TL[1])];
     ok('前面:尾灯は消えている(先頭)', tl.every((c) => c[0] < 150 && c[0] > c[1]), '暗い赤', tl.map(fmt).join(' '));
     const count = (r, test) => { let n = 0; for (let y = r[0]; y <= r[1]; y += 1 / 150) for (let z = r[2]; z <= r[3]; z += 1 / 150) if (test(F(y, z))) n++; return n; };
     const nd = count(REF.DEST, (c) => c[0] > 150 && c[0] > c[2] + 60);
     ok('前面:行先表示器は扉の上', nd > 30, '橙の文字>30画素', nd + '画素');
+    // 表示板の幅(利用者指示:+15cm):中心の高さの行で、中心から外へアイボリーになる所(左右とも)
+    { const ed = (sg) => { for (let y = 0; Math.abs(y) < 0.6; y += sg / 150) if (isIvory(F(y, REF.DEST_Z))) return Math.abs(y); return null; };
+      const w = [ed(-1), ed(1)], t = 2.01 / 150;
+      ok('前面:行先表示器の幅', w.every((v) => v !== null && Math.abs(v - REF.DEST[1]) <= t), '半幅 ' + REF.DEST[1] + ' ±2画素(左右とも)',
+        w.map((v) => v === null ? '-' : v.toFixed(3)).join('・')); }
     // 種別は黒地に明るい文字(各停は白)。黒地が半分以上で、明るい文字が30画素以上
     const nk = count(REF.KIND, (c) => Math.max(...c) > 150), nkD = count(REF.KIND, (c) => c[0] + c[1] + c[2] < 40);
     ok('前面:種別表示器は向かって左の窓の上部', nk > 30 && nkD > nk, '黒地に明るい文字>30画素', nk + '画素(黒地' + nkD + ')');
@@ -294,11 +317,13 @@ function findChromium() {
     const ar = REF.PASS.slice(0, 2).map(box);
     ok('前面:識別灯は白の縦長', ar.every((a) => a > 1.8 && a < 6), '高さ/幅 1.8〜6', ar.map((a) => a.toFixed(2)).join(' / '));
     // 左右の灯の白い画素の列の範囲が、画像の中心列(y=0)について対称(1画素以内)
-    const cols = (sg) => { let a = 1e9, b = -1e9; for (let y = sg * 0.958; sg > 0 ? y <= 1.25 : y >= -1.25; y += sg / 150)
+    // 車号・種別の文字(|y|≤0.95)の外から、窓の中(|y|≤1.30)を探す
+    const cols = (sg) => { let a = 1e9, b = -1e9; for (let y = sg * 0.97; sg > 0 ? y <= 1.30 : y >= -1.30; y += sg / 150)
       for (let z = REF.PASS[2]; z <= REF.PASS[3]; z += 1 / 150) if (white(F2(y, z))) { a = Math.min(a, Math.abs(y)); b = Math.max(b, Math.abs(y)); } return [a, b]; };
-    const cl = cols(-1), cr = cols(1);
-    ok('前面:識別灯は中心線に対称', Math.abs(cl[0] - cr[0]) <= 1.01 / 150 && Math.abs(cl[1] - cr[1]) <= 1.01 / 150,
-      '左右の |y| の差 ≤1画素', '左 ' + cl.map((v) => v.toFixed(3)).join('〜') + '・右 ' + cr.map((v) => v.toFixed(3)).join('〜'));
+    const cl = cols(-1), cr = cols(1), PY = REF.PASS[1], t2 = 2.01 / 150;
+    ok('前面:識別灯は中心線に対称', Math.abs(cl[0] - cr[0]) <= 1.01 / 150 && Math.abs(cl[1] - cr[1]) <= 1.01 / 150 &&
+       [cl, cr].every((c) => Math.abs(c[0] - PY[0]) <= t2 && Math.abs(c[1] - PY[1]) <= t2),
+      '左右の |y| の差 ≤1画素・|y| ' + PY.join('〜') + ' ±2画素', '左 ' + cl.map((v) => v.toFixed(3)).join('〜') + '・右 ' + cr.map((v) => v.toFixed(3)).join('〜'));
     // 「新  宿」(2文字の間を空ける。利用者指示):橙の文字の外接矩形の中央2割に文字が無い
     const isOr = (c) => c[0] > 150 && c[0] > c[2] + 60;
     let y0 = 1e9, y1 = -1e9;

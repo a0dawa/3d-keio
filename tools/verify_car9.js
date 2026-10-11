@@ -24,7 +24,13 @@ const REF = {
   // 前面(写真の実測 ftex9.png の高さを、屋根 3.62 基準で 1.06 倍に直した値。measured_9000.md 3b)
   LAMP_Z: [1.43, 1.624],                     // 前照灯・尾灯は前面の青帯の中
   SKIRT_OUT: 0.93 * 1.225,                   // スカートの外端 |y|(写真の実測0.93 の1.225倍。利用者指示)
-  DEST_HALF: [0.21 * 1.15, 0.0795 * 1.15],   // 行先表示板の半幅・半高(写真の実測を表示板ごと1.15倍。利用者指示)
+  // 前面の横の位置(利用者指示 2026-10-11:写真の実測から 扉の幅+10cm・行先表示器+15cm・前照灯の間隔+20cm・識別灯の間隔+40cm。
+  // measured_9000.md 3b の「利用者指示の微修正」)
+  DEST_HALF: [0.21 * 1.15 + 0.075, 0.0795 * 1.15],   // 行先表示板の半幅・半高(写真の実測を表示板ごと1.15倍、さらに幅+15cm)
+  FDOOR_EDGE: [0.31, 0.40],                  // 中央扉の戸の縁・枠の外縁の縦の線 |y|(写真の実測 0.26・0.35 から扉の幅+10cm)
+  FDOOR_W_TOL: 0.015,                        // 戸の幅(2×戸の縁)と公表 610mm の差の許容
+  LAMP_CASE: [0.67, 1.10], HL_Y: [0.71, 0.88], TL_Y: [0.93, 1.09],   // 灯火のケース・前照灯・尾灯の |y|(写真の実測から外へ0.10ずつ)
+  PASS_Y: [1.17, 1.23],                      // 識別灯の |y|(写真の灰の縦長の灯から中心線に対称、間隔+40cm)
   KIND_Z: [3.111, 3.323],                    // 種別表示器の高さ(写真の実測)。車号はこれと同じ高さ(中心)へ(利用者指示)
   // 側面(写真 9736・9036 の実測。measured_9000.md 3c)
   WIN: [0.035, 0.938], WIN_Z: [1.924, 2.845],   // 2枚1組の窓(扉間の中心から)・上下
@@ -143,15 +149,19 @@ const G = X.K9GEO;
     const t = [all[i], all[i + 1], all[i + 2]], zz = t.map((p) => p[2]);
     if (Math.max(...zz) - Math.min(...zz) > 1.0 && t.every((p) => p[0] > 9 && p[2] > 1.5)) vc.push(...t);
   }
-  const ys = [...new Set(vc.map((p) => Math.abs(p[1]).toFixed(4)))].map(Number);
-  const c = ys.length ? (Math.min(...ys) + Math.max(...ys)) / 2 : 0;
-  ok('中央の非常扉の幅', near(2 * c, REF.FDOOR_W, 0.01), REF.FDOOR_W + 'm(公表610mm)', (2 * c).toFixed(3) + 'm');
+  // 縦の線は幅1.2cm の帯なので、|y| の4つの値(戸の縁の線の内と外・枠の外縁の線の内と外)から線の中心を出す
+  const ys = [...new Set(vc.map((p) => Math.abs(p[1]).toFixed(4)))].map(Number).sort((a, b) => a - b);
+  const e0 = ys.length === 4 ? (ys[0] + ys[1]) / 2 : 0, e1 = ys.length === 4 ? (ys[2] + ys[3]) / 2 : 0, E = REF.FDOOR_EDGE;
+  ok('中央の非常扉の縁と幅', near(e0, E[0], 0.003) && near(e1, E[1], 0.003) && Math.abs(2 * e0 - REF.FDOOR_W) <= REF.FDOOR_W_TOL,
+    '戸の縁 ±' + E[0] + '・枠の外縁 ±' + E[1] + '・戸の幅≈公表' + REF.FDOOR_W + 'm',
+    ys.length === 4 ? '±' + e0.toFixed(3) + '・±' + e1.toFixed(3) + '・戸の幅' + (2 * e0).toFixed(3) + 'm' : '線が' + ys.length + '本');
   const dest = v4pts(F.dest), num = v4pts(F.num);
   const dy = range(dest, 1), dz = range(dest, 2), ny = range(num, 1), nz = range(num, 2);
-  ok('行先表示器は中央扉の上', dy[0] >= -REF.FDOOR_W / 2 && dy[1] <= REF.FDOOR_W / 2 && dz[0] >= 3.0,
-    '|y|≤' + REF.FDOOR_W / 2 + '・z≥3.0', 'y ' + dy[0].toFixed(2) + '〜' + dy[1].toFixed(2) + '・z ' + dz[0].toFixed(2));
-  ok('車号は向かって右の窓の上部', ny[0] > REF.FDOOR_W / 2 && nz[0] >= 3.0,
-    'y>' + REF.FDOOR_W / 2 + '(向かって右=+y)・z≥3.0', 'y ' + ny[0].toFixed(2) + '〜' + ny[1].toFixed(2) + '・z ' + nz[0].toFixed(2));
+  // 扉の列=左右の前面窓の間(枠の外縁 E[1] より内)
+  ok('行先表示器は中央扉の上', dy[0] >= -E[1] && dy[1] <= E[1] && dz[0] >= 3.0,
+    '|y|≤' + E[1] + '(扉の枠の内)・z≥3.0', 'y ' + dy[0].toFixed(2) + '〜' + dy[1].toFixed(2) + '・z ' + dz[0].toFixed(2));
+  ok('車号は向かって右の窓の上部', ny[0] > E[1] && nz[0] >= 3.0,
+    'y>' + E[1] + '(向かって右=+y)・z≥3.0', 'y ' + ny[0].toFixed(2) + '〜' + ny[1].toFixed(2) + '・z ' + nz[0].toFixed(2));
   const kd = v4pts(F.kind), ky = range(kd, 1), kz = range(kd, 2);
   { const kc = (REF.KIND_Z[0] + REF.KIND_Z[1]) / 2, nc = (nz[0] + nz[1]) / 2;
     ok('車号は種別と同じ高さ', Math.abs(nc - kc) <= 0.01 && ny[0] >= 0.60,
@@ -162,9 +172,11 @@ const G = X.K9GEO;
     const tall = (b) => (b[1][1] - b[1][0]) / Math.max(1e-6, b[0][1] - b[0][0]);
     ok('識別灯:中心線に対称', L.length > 0 && R.length > 0 && Math.abs(bl[0][0] + br[0][1]) < 0.003 && Math.abs(bl[0][1] + br[0][0]) < 0.003,
       '左 [−a,−b]・右 [b,a](3mm以内)', L.length && R.length ? '左 ' + bl[0].map((v) => v.toFixed(3)).join('〜') + '・右 ' + br[0].map((v) => v.toFixed(3)).join('〜') : '-');
-    ok('識別灯:種別の左・車号の右', L.length > 0 && R.length > 0 && bl[0][1] < ky[0] && bl[0][1] > ky[0] - 0.10 && br[0][0] > ny[1] && br[0][0] < ny[1] + 0.08,
-      '左の灯の右端 < 種別の左端(10cm以内)・右の灯の左端 > 車号の右端(8cm以内)',
-      L.length && R.length ? bl[0][1].toFixed(3) + '<' + ky[0].toFixed(3) + ' / ' + br[0][0].toFixed(3) + '>' + ny[1].toFixed(3) : '灯が無い');
+    const PY = REF.PASS_Y;
+    ok('識別灯:種別の左・車号の右', L.length > 0 && R.length > 0 && bl[0][1] < ky[0] && br[0][0] > ny[1] &&
+       near(-bl[0][1], PY[0], 0.003) && near(-bl[0][0], PY[1], 0.003) && near(br[0][0], PY[0], 0.003) && near(br[0][1], PY[1], 0.003),
+      '|y| ' + PY.join('〜') + '(間隔+40cm)・左の灯 < 種別・右の灯 > 車号',
+      L.length && R.length ? '左 ' + bl[0].map((v) => v.toFixed(3)).join('〜') + '・右 ' + br[0].map((v) => v.toFixed(3)).join('〜') + '(種別の左端' + ky[0].toFixed(2) + '・車号の右端' + ny[1].toFixed(2) + ')' : '灯が無い');
     ok('識別灯:縦長・種別と同じ段', L.length > 0 && R.length > 0 && tall(bl) > 2 && tall(br) > 2 &&
        [bl, br].every((b) => b[1][0] >= REF.KIND_Z[0] - 0.01 && b[1][1] <= REF.KIND_Z[1] + 0.01),
       '高さ/幅 > 2・z ' + REF.KIND_Z.join('〜'), L.length && R.length ? tall(bl).toFixed(1) + '/' + tall(br).toFixed(1) : '-');
@@ -175,8 +187,8 @@ const G = X.K9GEO;
       if (m !== (want ? X.M_PASS : X.M_PASS_OFF) && !bad) bad = kind + '・' + lights + ' → ' + (m === X.M_PASS ? '点灯' : m === X.M_PASS_OFF ? '消灯' : '灯が無い');
     }
     ok('識別灯:各停以外で点く(先頭のみ)', !bad, '特急・快速=点灯/各停・最後尾=消灯', bad || '4通りとも'); }
-  ok('種別表示器は向かって左の窓の上部', ky[1] < -REF.FDOOR_W / 2 && kz[0] >= 3.0,
-    'y<−' + REF.FDOOR_W / 2 + '・z≥3.0', 'y ' + ky[0].toFixed(2) + '〜' + ky[1].toFixed(2) + '・z ' + kz[0].toFixed(2));
+  ok('種別表示器は向かって左の窓の上部', ky[1] < -E[1] && kz[0] >= 3.0,
+    'y<−' + E[1] + '・z≥3.0', 'y ' + ky[0].toFixed(2) + '〜' + ky[1].toFixed(2) + '・z ' + kz[0].toFixed(2));
   const hl = v4pts(F.hl), tl = v4pts(F.tl), lz = REF.LAMP_Z;
   const inBand = (P) => range(P, 2)[0] >= lz[0] - 1e-6 && range(P, 2)[1] <= lz[1] + 1e-6;
   ok('前照灯・尾灯は青帯の中', inBand(hl) && inBand(tl) && range(hl, 0)[0] > 9,
@@ -184,6 +196,13 @@ const G = X.K9GEO;
   // 灯火は内=前照灯・外=尾灯(8000系と同じ並び)
   ok('前照灯が内・尾灯が外', range(hl.map((p) => [Math.abs(p[1])]), 0)[1] <= range(tl.map((p) => [Math.abs(p[1])]), 0)[0] + 1e-6,
     '前照灯の外端≤尾灯の内端', range(hl.map((p) => [Math.abs(p[1])]), 0)[1].toFixed(2) + ' ≤ ' + range(tl.map((p) => [Math.abs(p[1])]), 0)[0].toFixed(2));
+  // 左右それぞれの |y| の範囲(利用者指示:前照灯の間隔+20cm。ケースごと外へ)
+  { const ay = (P, sg) => range(P.filter((p) => Math.sign(p[1]) === sg).map((p) => [Math.abs(p[1])]), 0);
+    const cs = v4pts(F.case), C = REF.LAMP_CASE, H = REF.HL_Y, T = REF.TL_Y, t = 0.003;
+    const okL = [-1, 1].every((sg) => { const a = ay(hl, sg), b = ay(tl, sg), c = ay(cs, sg);
+      return near(a[0], H[0], t) && near(a[1], H[1], t) && near(b[0], T[0], t) && near(b[1], T[1], t) && near(c[0], C[0], t) && near(c[1], C[1], t); });
+    ok('前照灯・尾灯の位置', okL, '前照灯 |y| ' + H.join('〜') + '・尾灯 ' + T.join('〜') + '・ケース ' + C.join('〜') + '(左右とも)',
+      [-1, 1].map((sg) => (sg < 0 ? '左 ' : '右 ') + ay(hl, sg).map((v) => v.toFixed(3)).join('〜') + '/' + ay(tl, sg).map((v) => v.toFixed(3)).join('〜')).join(' ')); }
 }
 
 /* ---- 3b. 乗務員扉の手すりは埋め込み式(利用者指示:正面から見えない)。運転台の細部に車体幅の外へ出る頂点が無く、
