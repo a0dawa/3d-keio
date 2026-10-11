@@ -457,7 +457,7 @@ if (X.TRACKS && X.WIRES) {
         const dx = Math.abs(st[0][0] - st[1][0]), dy = st[0][1] - st[1][1];
         if ((dx < 0.3 || dy / dx < CATREF.STEADY_SLOPE) && !bad) bad = [u.mount, 's=' + u.s.toFixed(0), '振止めの勾配 ' + (dy / Math.max(dx, 1e-6)).toFixed(3)];
       }
-      if (u.mount === 'ビーム' || u.mount === '屋根' || u.mount === '柱') {
+      if (u.mount === 'ビーム' || u.mount === '屋根' || u.mount === '床版' || u.mount === '柱') {
         if (u.h1 === undefined && !bad) bad = [u.mount, 's=' + u.s.toFixed(0), 'ブラケットの記録なし'];
       }
     }
@@ -599,6 +599,84 @@ if (X.TRACKS && X.WIRES) {
     }
   }
   ok('高架の部品が車両に当たらない', bC === null, '0件(' + n + '部品)', bC ? bC.join(' ') : '0件(' + n + '部品)');
+}
+
+/* ---- 4. 仙川の掘割(利用者指示 2026-10-11:仙川駅は左右の土地より7m 程度低い掘割の中の駅) ----------------
+   擁壁・底・渡る床版・架線柱は登録簿(STRUCT の '擁壁'・'掘割の底'・'掘割を渡る床版'・'橋上駅舎'、POLES)で測る。
+   要件は検証側が持つ:深さ・擁壁の内面の余裕(高架の高欄の内面と同じ=最外軌道+2.21m・ホームの外縁+0.36m)・
+   床版の下端(き電ちょう架線 5.9m の上) */
+{
+  const CUT = { DEPTH: [6.0, 8.0], CLEAR: 2.21, PLAT: 0.36, DECK: 6.2, BASE: 0.49, TOL: 0.03 };
+  const st = X.STA.find((s) => s.n === '仙川');
+  const depth = -(X.railY(st.x) + X.RAIL_TOP);
+  ok('仙川は掘割の駅', depth >= CUT.DEPTH[0] && depth <= CUT.DEPTH[1], '地表からレール面まで' + CUT.DEPTH.join('〜') + 'm', depth.toFixed(2) + 'm');
+  const W = X.STRUCT.filter((q) => q.tag === '擁壁'), F = X.STRUCT.filter((q) => q.tag === '掘割の底');
+  const tracksAt = (s) => X.TRACKS.filter((t) => s >= t.x0 && s <= t.x1).map((t) => t.zf(s));
+  // 擁壁の内面:登録簿の区間(6m 以下)ごとに、両端の必要な幅の小さい方より外。上端は地表より上・下端は道床より下
+  const needAt = (s, sg) => { let n = Math.max(...tracksAt(s).map((o) => sg * o)) + CUT.CLEAR;
+    for (const p of X.PLATS) if (s >= p.x0 && s <= p.x1 && sg * p.off > 0) n = Math.max(n, sg * p.off + p.hw + CUT.PLAT);
+    return n; };
+  let bW = null;
+  for (const q of W) {
+    const sg = (q.o0 + q.o1) > 0 ? 1 : -1, inner = sg > 0 ? q.o0 : -q.o1;
+    const need = Math.min(needAt(q.s0, sg), needAt(q.s1, sg));
+    if (inner < need - CUT.TOL && !bW) bW = ['s=' + q.s0.toFixed(0), sg > 0 ? '北' : '南', '内面' + inner.toFixed(2) + '<' + need.toFixed(2)];
+    if (q.y1 < 0 && !bW) bW = ['s=' + q.s0.toFixed(0), '上端' + q.y1.toFixed(2)];
+    if (q.y0 > Math.min(X.railY(q.s0), X.railY(q.s1)) - 0.5 && !bW) bW = ['s=' + q.s0.toFixed(0), '下端' + q.y0.toFixed(2)];
+  }
+  // 掘割(道床が地表より 1m 以上低い所)は 5m ごとに両側の擁壁と底がある
+  let bC = null, nS = 0;
+  for (let s = X.DECK_END + 2; s < X.DOM.x1 - 2; s += 5) {
+    const y = X.railY(s); if (y > -1) continue; nS++;
+    const offs = tracksAt(s), at = (L) => L.filter((q) => q.s0 <= s + 1e-6 && q.s1 >= s - 1e-6);
+    for (const sg of [-1, 1]) if (!at(W).some((q) => sg * (q.o0 + q.o1) > 0) && !bC) bC = ['s=' + s.toFixed(0), (sg > 0 ? '北' : '南') + 'の擁壁が無い'];
+    if (!at(F).some((q) => q.y1 < y && q.o0 < Math.min(...offs) - 1 && q.o1 > Math.max(...offs) + 1) && !bC) bC = ['s=' + s.toFixed(0), '底が無い'];
+  }
+  ok('掘割の擁壁が線路とホームを囲む', bW === null && W.length > 50, '内面が最外軌道+' + CUT.CLEAR + 'm・ホーム外縁+' + CUT.PLAT + 'm 以上・上端は地表より上', bW ? bW.join(' ') : W.length + '区間');
+  ok('掘割の擁壁と底が続く', bC === null && nS > 50, '5m ごとに両側の擁壁と底', bC ? bC.join(' ') : nS + '断面');
+  // 渡る床版(道路橋・西端の覆い・橋上駅舎)の下端はき電ちょう架線の上
+  const D = X.STRUCT.filter((q) => q.tag === '掘割を渡る床版' || (q.tag === '橋上駅舎' && X.railY((q.s0 + q.s1) / 2) < -1));
+  let bD = null;
+  for (const q of D) for (const s of [q.s0, q.s1]) { const c = q.y0 - (X.railY(s) + X.RAIL_TOP); if (c < CUT.DECK && !bD) bD = [q.tag, 's=' + s.toFixed(0), c.toFixed(2) + 'm']; }
+  ok('掘割を渡る床版はき電ちょう架線の上', bD === null && D.length > 0, 'レール面+' + CUT.DECK + 'm 以上', bD ? bD.join(' ') : D.length + '件');
+  // 架線柱:根元は掘割の底(登録簿の底の高さ)・床版の下に立たない
+  let bP = null, nP = 0;
+  for (const p of X.POLES) {
+    if (p.s < X.DECK_END + 1) continue;
+    const f = F.find((q) => q.s0 <= p.s + 1e-6 && q.s1 >= p.s - 1e-6); if (!f) continue;
+    nP++;
+    // 底は西へ下る(区間の東端が上端 y1・西端が下端 y0)ので、柱の位置で補間する
+    const fy = f.y1 + (f.y0 - f.y1) * (p.s - f.s0) / Math.max(1e-6, f.s1 - f.s0);
+    if (Math.abs(p.y0 - CUT.BASE - fy) > 0.05 && !bP) bP = ['s=' + p.s.toFixed(1), '根元' + (p.y0 - CUT.BASE).toFixed(2) + '≠底' + fy.toFixed(2)];
+    for (const q of D) if (p.s > q.s0 - 0.3 && p.s < q.s1 + 0.3 && q.y0 < p.y1 && !bP) bP = ['s=' + p.s.toFixed(1), q.tag + 'の下'];
+  }
+  ok('掘割の架線柱', bP === null && nP > 10, '根元=掘割の底・床版の下に無い', bP ? bP.join(' ') : nP + '本');
+  // 床版の下の支持点は床版から吊る(床版の外は柱・ビーム)。床版の範囲は登録簿の s の範囲
+  let bU = null, nU = 0;
+  for (const u of X.SUPS) {
+    if (u.s < X.DECK_END) continue;
+    const under = D.some((q) => u.s > q.s0 && u.s < q.s1), deck = u.mount.indexOf('床版') === 0;
+    if (deck) nU++;
+    if (under !== deck && !bU) bU = ['s=' + u.s.toFixed(1), u.mount + (under ? '(床版の下)' : '(床版の外)')];
+  }
+  ok('床版の下の架線は床版から吊る', bU === null && nU > 0, '床版の下=床版から・外=柱/ビーム', bU ? bU.join(' ') : nU + 'か所');
+  // 架空地線(柱の頂部どうし)は床版をはさむ柱の間に張らない(床版を突き抜ける)
+  let bG = null, nG = 0;
+  const segs = []; for (const C of X.VIA_CH) for (let i = 0; i + 5 < C.wl.length; i += 6) segs.push(C.wl.slice(i, i + 6));
+  const topOf = (p) => { const f = X.frame(p.s, p.o); return [f.x, p.y1 + 0.06, f.z]; };
+  const near = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) < 0.02;
+  for (const sg of [-1, 1]) {
+    const L = X.POLES.filter((p) => p.sg === sg && p.s > X.DECK_END).sort((a, b) => a.s - b.s);
+    for (let i = 1; i < L.length; i++) {
+      const a = L[i - 1], b = L[i];
+      if (!D.some((q) => q.s1 > a.s && q.s0 < b.s && q.y0 < Math.max(a.y1, b.y1))) continue;
+      nG++;
+      const A = topOf(a), B = topOf(b);
+      if (segs.some((g) => (near(g.slice(0, 3), A) && near(g.slice(3), B)) || (near(g.slice(0, 3), B) && near(g.slice(3), A))) && !bG)
+        bG = ['s=' + a.s.toFixed(0) + '〜' + b.s.toFixed(0)];
+    }
+  }
+  ok('架空地線は床版の下を通らない', bG === null && nG > 0, '床版をはさむ柱の間に張らない', bG ? bG.join(' ') : nG + 'か所');
 }
 
 /* ---- 出力 ---- */

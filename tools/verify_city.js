@@ -21,7 +21,8 @@ const X = require('./stub_three')(path,
   'GAUGE_INO:GAUGE_INO,GAUGE_SETA:GAUGE_SETA,RAIL_W:RAIL_W,prjXY:prjXY,frame:frame,' +
   'VIA_COLS:VIA_COLS,EXPY:EXPY,railY:railY,DECK_END:DECK_END,ROADS_PL:ROADS_PL,CITY_LODS:CITY_LODS,' +
   'RD_CARS:(typeof RD_CARS!=="undefined"?RD_CARS:[]),RD_LANES:(typeof RD_LANES!=="undefined"?RD_LANES:[]),' +
-  'stepRoadCars:(typeof stepRoadCars!=="undefined"?stepRoadCars:()=>{})');
+  'stepRoadCars:(typeof stepRoadCars!=="undefined"?stepRoadCars:()=>{}),' +
+  'STRUCT:STRUCT,groundMesh:groundMesh,scene:scene,ROAD_LAMPS:(typeof ROAD_LAMPS!=="undefined"?ROAD_LAMPS:[])');
 
 /* ---- 期待値(検証側が独立して持つ) ----------------------------------------
    道路の幅は4章の描画寸法(box の第1引数)。ここでは"路面の半幅"だけを持ち、
@@ -309,6 +310,74 @@ if (LAND) {
   ok('自動車道の高架が京王線と当たらない', be === null && X.EXPY.deck.length === LAND.elev.filter((R) => R.P.some((v) => { const q = X.prjXY(v[0], v[1]); return q.s > X.DOM.x0 - 150 && q.s < X.DOM.x1 + 150 && Math.abs(q.off) < X.DOM.z + 60; })).length,
     '下面≥レール面+' + REF.EXPY_CLEAR + 'm・橋脚は側道の外',
     be ? be.join(' ') : '床版' + X.EXPY.deck.length + '面・重なる点' + ne + '・橋脚' + X.EXPY.piers.length + '基');
+}
+
+/* ---- 4e. 仙川の掘割(利用者指示 2026-10-11)----------------------------------------
+   ・地表(groundMesh)は掘割の上に穴があり、擁壁の外は覆う(擁壁の位置は登録簿 STRUCT '擁壁')
+   ・地表に敷いた面(道路・緑地・駐車場・水面=userData.flat)の三角形が掘割の中に無い。ただし渡る道路橋の上
+     (登録簿 '掘割を渡る床版' の s の範囲)は道路の面が続いてよい
+   ・PLATEAU の道路の橋梁(検証側が plateau_land.js から読んだもの)が掘割の中心線の上にある所には、床版がある
+   ・幹線の街灯が掘割の中に無い */
+{
+  const WL = X.STRUCT.filter((q) => q.tag === '擁壁'), DK = X.STRUCT.filter((q) => q.tag === '掘割を渡る床版' || q.tag === '橋上駅舎');
+  const s0 = Math.min(...WL.map((q) => q.s0)), s1 = Math.max(...WL.map((q) => q.s1));
+  const inner = (s, sg) => { const L = WL.filter((q) => q.s0 <= s + 1e-6 && q.s1 >= s - 1e-6 && sg * (q.o0 + q.o1) > 0);
+    return L.length ? Math.max(...L.map((q) => sg > 0 ? q.o0 : -q.o1)) : null; };   // 内面(区間の中で最も外=控えめ)
+  const outer = (s, sg) => { const L = WL.filter((q) => q.s0 <= s + 1e-6 && q.s1 >= s - 1e-6 && sg * (q.o0 + q.o1) > 0);
+    return L.length ? Math.max(...L.map((q) => sg > 0 ? q.o1 : -q.o0)) : null; };
+  const inCut = (s, o, m) => { if (s < s0 + 0.5 || s > s1 - 0.5) return false; const n = inner(s, 1), so = inner(s, -1);
+    return n !== null && so !== null && o < n - m && o > -so + m; };
+  const underDeck = (s) => DK.some((q) => s > q.s0 - 0.6 && s < q.s1 + 0.6);
+  // 地表の三角形
+  // 頂点の配列が無い形(箱など)は穴を測れない=NG
+  const g = X.groundMesh.geometry, ga = g && g.attributes && g.attributes.position, gi = g && g.index;
+  const P = ga && ga.array ? ga.array : [], I = gi && gi.array ? gi.array : [], T = [];
+  for (let i = 0; i < I.length; i += 3) T.push([[P[I[i] * 3], P[I[i] * 3 + 2]], [P[I[i + 1] * 3], P[I[i + 1] * 3 + 2]], [P[I[i + 2] * 3], P[I[i + 2] * 3 + 2]]]);
+  const cr = (a, b, c) => (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+  const covered = (x, z) => T.some((t) => { const p = [x, z], d1 = cr(t[0], t[1], p), d2 = cr(t[1], t[2], p), d3 = cr(t[2], t[0], p);
+    return !((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0)); });
+  let bG = null, nG = 0;
+  for (let s = s0 + 3; s < s1 - 3; s += 10) {
+    if (inner(s, 1) === null) continue; nG++;
+    const c = X.frame(s, 0);
+    if (covered(c.x, c.z) && !bG) bG = ['s=' + s.toFixed(0), '掘割の中に地表'];
+    for (const sg of [-1, 1]) { const f = X.frame(s, sg * (outer(s, sg) + 2.0)); if (!covered(f.x, f.z) && !bG) bG = ['s=' + s.toFixed(0), (sg > 0 ? '北' : '南') + 'の擁壁の外に地表が無い']; }
+  }
+  ok('地表に掘割の穴', bG === null && nG > 30 && T.length > 0, '掘割の中は穴・擁壁の外 2m は地表', T.length === 0 ? '地表の頂点が測れない' : bG ? bG.join(' ') : nG + '断面');
+  // 地表に敷いた面の三角形(掘割の外接矩形の中だけ射影する)
+  let bx0 = 1e9, bx1 = -1e9, bz0 = 1e9, bz1 = -1e9;
+  for (const q of WL) for (const s of [q.s0, q.s1]) for (const o of [q.o0, q.o1]) { const f = X.frame(s, o); bx0 = Math.min(bx0, f.x); bx1 = Math.max(bx1, f.x); bz0 = Math.min(bz0, f.z); bz1 = Math.max(bz1, f.z); }
+  let bF = null, nF = 0, nB = 0;
+  X.scene.traverse((o) => {
+    if (!o.isMesh || !o.userData || !o.userData.flat || o === X.groundMesh || !o.geometry || !o.geometry.attributes || !o.geometry.attributes.position) return;
+    const A = o.geometry.attributes.position.array, J = o.geometry.index ? o.geometry.index.array : null, n = J ? J.length : A.length / 3;
+    for (let i = 0; i < n; i += 3) {
+      const v = [0, 1, 2].map((k) => (J ? J[i + k] : i + k) * 3), x = (A[v[0]] + A[v[1]] + A[v[2]]) / 3, z = (A[v[0] + 2] + A[v[1] + 2] + A[v[2] + 2]) / 3;
+      if (x < bx0 || x > bx1 || z < bz0 || z > bz1) continue;
+      const q = X.prjXY(x, z);
+      if (!inCut(q.s, q.off, 0.4)) continue;
+      if (underDeck(q.s)) { nB++; continue; }
+      nF++;
+      if (!bF) bF = ['s=' + q.s.toFixed(1), 'off=' + q.off.toFixed(2), 'y=' + ((A[v[0] + 1] + A[v[1] + 1] + A[v[2] + 1]) / 3).toFixed(2)];
+    }
+  });
+  ok('掘割の中に地表の面が無い', bF === null, '道路・緑地の面は擁壁の外(渡る道路橋の上を除く)', bF ? nF + '面 例 ' + bF.join(' ') : '0面(道路橋の上 ' + nB + '面)');
+  // PLATEAU の道路の橋梁が掘割の中心線の上にある所には床版
+  if (LAND) {
+    let bD = null, nD = 0;
+    const br = LAND.roads.filter((R) => R.sec === 2 && R.k !== 2);
+    for (let s = s0 + 1; s < s1 - 1; s += 0.5) {
+      const c = X.frame(s, 0);
+      if (!br.some((R) => c.x > R.bb[0] && c.x < R.bb[1] && c.z > R.bb[2] && c.z < R.bb[3] && polyDist(R.P, c.x, c.z) < 0)) continue;
+      nD++;
+      if (!DK.some((q) => s >= q.s0 - 1e-6 && s <= q.s1 + 1e-6) && !bD) bD = 's=' + s.toFixed(1);
+    }
+    ok('道路橋の下に床版', bD === null && nD > 0, 'PLATEAU の橋梁が掘割を渡る所は床版がある', bD ? bD + ' に床版が無い' : '橋梁の上 ' + nD + '点');
+  }
+  // 幹線の街灯は掘割の中・擁壁の上に無い
+  const bL = X.ROAD_LAMPS.find((L) => { const q = X.prjXY(L[0], L[1]); if (q.s < s0 || q.s > s1) return false;
+    const n = outer(q.s, 1), so = outer(q.s, -1); return n !== null && so !== null && q.off < n + 0.3 && q.off > -so - 0.3; });
+  ok('街灯が掘割の中に無い', !bL, '擁壁の外', bL ? '(' + bL[0].toFixed(0) + ',' + bL[1].toFixed(0) + ')' : X.ROAD_LAMPS.length + '基すべて');
 }
 
 /* ---- 4c. LOD2(屋根の形) ----------------------------------------------------

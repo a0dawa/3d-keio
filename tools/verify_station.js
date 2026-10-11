@@ -18,7 +18,7 @@ const X = require('./stub_three')(path,
   'platRange:platRange,deckHalf:deckHalf,' +
   'PSD:PSD,K8:K8,DECK_END:DECK_END,LODS:LODS,POLE_S:POLE_S,WIRE_CAT:WIRE_CAT,' +
   'GUIDES:GUIDES,depList:depList,pidsSetTime:pidsSetTime,' +
-  'PEOPLE:(typeof PEOPLE!=="undefined"?PEOPLE:[]),scene:scene,STD:STD');
+  'PEOPLE:(typeof PEOPLE!=="undefined"?PEOPLE:[]),scene:scene,STD:STD,POLES:(typeof POLES!=="undefined"?POLES:[])');
 
 /* ---- 検証側が独立に持つ寸法 -------------------------------------------- */
 const REF = {
@@ -253,6 +253,11 @@ const STA_TAGS = new Set(['ホーム', '点字ブロック', 'ホーム端の柵
       if (q.s1 > w.s0 && q.s0 < w.s1 && q.o1 > w.o0 && q.o0 < w.o1 && !bad) bad = [w.st.n, w.kind, q.tag, 's=' + q.s0.toFixed(1)];
   }
   ok('柱・ベンチ等が井戸・EVに立たない', bad === null, '0件', bad ? bad.join(' ') : '0件(' + n + '個)');
+  // 架線柱も階段・エレベーターの中に立たない(仙川は道路橋・橋上駅舎の間に階段があり、柱の位置が寄せられる)
+  let bp = null;
+  for (const q of X.POLES) for (const w of X.STAIRS)
+    if (q.s + q.r > w.s0 && q.s - q.r < w.s1 && q.o + q.r > w.o0 && q.o - q.r < w.o1 && !bp) bp = [w.st.n, w.kind, 's=' + q.s.toFixed(1), 'off=' + q.o.toFixed(2)];
+  ok('架線柱が階段・EVに立たない', bp === null && X.POLES.length > 0, '0本', bp ? bp.join(' ') : '0本(' + X.POLES.length + '本)');
 }
 
 // 2c. 乗務員用のホームモニターは置かない(利用者指示:車上の車内モニター式とする)

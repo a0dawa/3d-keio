@@ -424,8 +424,16 @@ const KAN7_X=prj(...RAW.roads.kan7).s, NAKANO_X=prj(...RAW.roads.nakano).s, KYU_
       H215_X=prj(...RAW.roads.h215).s, KANPACHI_X=prj(...RAW.roads.kan8).s,
       H216_X=prj(...RAW.roads.h216).s, H217_X=prj(...RAW.roads.h217).s;
 const PS0=prj(...RAW.profile.ps).s;                // 事業起点(笹塚第3架道橋付近)
-const RAMP_T=prj(...RAW.profile.rt).s, RAMP_G=prj(...RAW.profile.rg).s;
-const DECK_END=Math.round(RAMP_G);                 // 高架端部=地上到達点
+const RAMP_T=prj(...RAW.profile.rt).s;             // 取付部の下り始め(測った点)
+/* 仙川の掘割(利用者指示 2026-10-11):仙川駅は左右の土地より約7m 低い掘割の中の駅。
+   取付部の下り勾配をそのまま掘割の底まで続ける(道床の高さ CUT.Y=−7.0m。地表は 0)。底に着くのは駅の中心の
+   262m 手前(CUT.S1)で、掘割を渡る道路橋(PLATEAU の道路の橋梁。最も東は駅の中心の 260m 手前)の下は全部が底の深さ。
+   勾配は両端に CUT.VC の縦曲線を付けた台形で、最急 約48‰(従来の取付部の最急 47‰ と同程度)。
+   地上の高さ(道床 0.8m)を通る所が地上到達点 RAMP_G で、測った点(RAW.profile.rg)より約60m 東になる
+   (掘割へ続けて下りるので、地上を走る区間は無い)。DECK_END(高架・取付部の西端)より西が掘割(5c章) */
+const CUT={Y:-7.0, S1:STA[9].x-262, VC:40};
+const RAMP_G=(function(){let a=RAMP_T,b=CUT.S1;for(let k=0;k<50;k++){const m=(a+b)/2;if(railY(m)>0.8)a=m;else b=m;}return (a+b)/2;})();
+const DECK_END=Math.round(RAMP_G);                 // 高架端部=地上到達点。これより西は掘割
 const OLD_B0=prj(...RAW.reuse.e).s, OLD_B1=prj(...RAW.reuse.w).s;   // 八幡山既存流用範囲
 const YEa=prj(...RAW.yards[0].a).s, YEb=prj(...RAW.yards[0].b).s;
 const YE0=Math.min(YEa,YEb), YE1=Math.max(YEa,YEb);
@@ -445,9 +453,20 @@ const DOM={x0:Math.max(CTS0+20,-560), x1:Math.min(CTS1-20,STA[9].x+280), z:470};
 // --- 縦断・断面(位置sは上で確定した実測値) ---
 function railY(x){
   if(x<RAMP_T)return RAIL_H;
-  if(x<RAMP_G)return RAIL_H-(RAIL_H-.8)*sstep((x-RAMP_T)/(RAMP_G-RAMP_T));
-  return .8;
+  if(x<CUT.S1)return RAIL_H-(RAIL_H-CUT.Y)*rampF((x-RAMP_T)/(CUT.S1-RAMP_T),CUT.VC/(CUT.S1-RAMP_T));
+  return CUT.Y;
 }
+// 0→1 の台形の勾配:両端の長さ c(u の割合)で勾配を 0 から一定へ(縦曲線)。中ほどの勾配は 1/(1-c)
+function rampF(u,c){
+  const m=1/(1-c);
+  if(u<=0) return 0;
+  if(u>=1) return 1;
+  if(u<c) return m*u*u/(2*c);
+  if(u>1-c) return 1-m*(1-u)*(1-u)/(2*c);
+  return m*(u-c/2);
+}
+// 地表の高さ。掘割(DECK_END より西)では底=道床の 0.8m 下(地上の区間の道床と地表の差と同じ)
+const floorY=x=>x<DECK_END?0:Math.min(0,railY(x)-0.8);
 // 軌間(ゲージ)。京王線は1372mm(馬車軌間)。レールの内面間距離がこれに等しい。
 // 軌道の敷設(track)も車両の車輪位置も、必ずこの定数から導く(両者がずれないように)。
 const GAUGE=1.372;                       // レール内面間距離[m]
@@ -504,6 +523,40 @@ const DECK_MIN=2.0+2.45;                  // 複線区間の標準半幅(≒4.45
 function deckHalf(x){
   return Math.max(DECK_MIN, outerOff(x)+2.45, platOuter(x)+0.6);
 }
+/* ---- 仙川の掘割(5c章)の寸法 ----
+   幅(片側。sg=+1:北/-1:南)は桁幅と同じ決め方を側ごとに:最外軌道+2.45m・その側のホームの外縁+0.6m・複線の標準
+   4.45m の最大(仙川は北に単式ホームがあるので北が広い)。擁壁の内面は高架の高欄と同じく幅−0.24m(取付部の高欄から
+   段差なく続く)、外面は幅+0.06m。上端は地表+0.15m(取付部に近い所は高欄の高さ=レール面+2.1m から下げる) */
+const PLAT_EDGE_SN={gnd:[3.00,9.55]};       // 掘割の駅のホーム外縁[m] [南, 北](7章の PLT_OF.gnd と同じ値。片方だけ変えないこと)
+const CUT_W={T:0.24, OUT:0.06, TOP:0.15, MID:0.09, FENCE:1.2};
+const CUT_END=DOM.x1;                        // 掘割の西端(区間の端。その手前は覆い=道路橋の下で終える)
+function cutHalf(x,sg){
+  let e=0;
+  for(const st of STA){ const E=PLAT_EDGE_SN[st.t]; if(!E) continue;
+    const r=platRange(st), c=(r[0]+r[1])/2, h=(r[1]-r[0])/2+8;
+    e=Math.max(e,E[sg>0?1:0]*plateau(x,c,h,60)); }
+  return Math.max(DECK_MIN, outerOff(x)+2.45, e+0.6);
+}
+const cutWallTop=x=>Math.max(CUT_W.TOP,railY(x)+2.1);       // 擁壁の上端(取付部の近くは高欄の高さから下げる)
+// (s,off) が掘割の中か。m=幅からの余裕(+:擁壁の外へ広げる/-:内へ狭める)
+const cutIn=(s,off,m)=>s>DECK_END&&s<CUT_END&&off>-(cutHalf(s,-1)+m)&&off<cutHalf(s,1)+m;
+// 掘割(擁壁の外面まで)のワールドの外接矩形[x0,x1,z0,z1](1m の余裕)。遠くの物を prjXY なしで外す
+const CUT_BB=(function(){const b=[1e9,-1e9,1e9,-1e9];
+  for(let s=DECK_END;s<=CUT_END+1e-6;s+=2) for(const sg of[-1,1]){const f=frame(s,sg*(cutHalf(s,sg)+CUT_W.OUT));
+    b[0]=Math.min(b[0],f.x);b[1]=Math.max(b[1],f.x);b[2]=Math.min(b[2],f.z);b[3]=Math.max(b[3],f.z);}
+  return [b[0]-1,b[1]+1,b[2]-1,b[3]+1];})();
+// 点(ワールド。半径 r)が掘割(擁壁の外面まで)に掛かるか
+function cutHit(px,pz,r){
+  r=r||0;
+  if(px<CUT_BB[0]-r||px>CUT_BB[1]+r||pz<CUT_BB[2]-r||pz>CUT_BB[3]+r) return false;
+  const q=prjXY(px,pz);
+  return q.s>DECK_END-r&&q.s<CUT_END+r&&cutIn(q.s,q.off,CUT_W.OUT+r);
+}
+/* 掘割を渡る物(床版)の登録簿。aS〜bS=南の擁壁の上・aN〜bN=北の擁壁の上で渡る s の範囲、bot=下端。
+   道路橋(PLATEAU の道路の橋梁。4章)・橋上駅舎(7章。CONC_AT)・西端の覆い。擁壁の上のフェンスはここで切り、
+   架線柱はこの下に立てない(poleOffDecks) */
+const CUT_DECKS=[];
+const DECK_BOT=-0.70;                        // 道路橋・覆いの床版の下端(き電ちょう架線=レール面+5.9m より 0.3m 以上上)
 // 曲率[1/m]:曲線部では架線柱スパンを詰める(直線50m / 曲線25m)
 function curvAt(x){
   const i=clamp(Math.round((x-CTS0)/10),1,CT.a.length-1);
@@ -534,6 +587,29 @@ const bldgSpan=st=>{const r=BLDG_AT[st.n]||[-STA_BLDG_HALF,STA_BLDG_HALF];return
 /* 階段とエレベーターの位置(ホームの中ほど pm からの s [m])。既定は「両側の入口から中ほどの駅舎へ降りる」2か所。
    駅舎が中心に無い駅は、階段の下が駅舎の中に入るように置き直す:[入口側の端, 下の端, 向き(+1=s の増す向きへ降りる)] */
 const STAIR_AT={'下高井戸':{wells:[[34,50,1],[86,102,-1]], ev:68}};
+/* 橋上駅舎(地上駅・掘割の駅=仙川)の中心(ホームの中ほど pm からの s [m])と半長。仙川は道路橋(PLATEAU の道路の橋梁)が
+   ホームの上を2か所で渡る(中心の −26〜−14m と +61〜+67m)ので、駅舎とその両側の階段(±18〜34m)は2本の橋の間に置く */
+const CONC_AT={'仙川':23}, CONC_HALF=18;
+const CONC_CUT=7.02;                         // 掘割の駅の橋上駅舎の床の下端(道床から。線路の上の屋根・梁は 7m 以上=⑪)
+const concMid=st=>{const r=platRange(st);return (r[0]+r[1])/2+(CONC_AT[st.n]||0);};
+for(const st of STA) if(st.t==='gnd'){
+  const m=concMid(st);
+  CUT_DECKS.push({kind:'橋上駅舎',st:st,aS:m-CONC_HALF,bS:m+CONC_HALF,aN:m-CONC_HALF,bN:m+CONC_HALF,bot:railY(st.x)+CONC_CUT});
+}
+CUT_DECKS.push({kind:'覆い',aS:CUT_END-20,bS:CUT_END,aN:CUT_END-20,bN:CUT_END,bot:DECK_BOT,top:0.10});
+/* 掘割を渡る物の下には架線柱を立てない(柱の頂部とビームはレール面+7.4m=地表の上へ出る)。その下の支持点は大屋根と
+   同じく床版の下面から吊る(6b章 cutDeckRoof)。床版の端から 2m 以内の支持点は床版の下(全幅で覆う所)へ寄せる
+   (柱が床版の縁に接して立たないように)。寄せた先が隣と 12m 以内なら抜く。4章(道路橋が分かった後)と6章(refinePoles の後)で呼ぶ */
+function poleOffDecks(){
+  for(let i=0;i<POLE_S.length;i++){
+    const s=POLE_S[i]; if(s<DECK_END) continue;
+    const D=CUT_DECKS.find(d=>s>Math.min(d.aS,d.aN)-2&&s<Math.max(d.bS,d.bN)+2); if(!D) continue;
+    const lo=Math.max(D.aS,D.aN)+0.3, hi=Math.min(D.bS,D.bN)-0.3;
+    POLE_S[i]=lo<=hi?clamp(s,lo,hi):(lo+hi)/2;
+  }
+  POLE_S.sort((p,q)=>p-q);
+  for(let i=POLE_S.length-1;i>0;i--) if(POLE_S[i]>DECK_END&&POLE_S[i]-POLE_S[i-1]<12) POLE_S.splice(i,1);
+}
 /* 公表デザイン(2019.5.30)の7駅は大屋根+側面の外装(7章)。既存駅(笹塚・八幡山・仙川)は片持ちの上屋。
    大屋根の下には架線柱を建てず、架線は屋根の梁から可動ブラケットで吊る(6b章 buildCatenary)。
    架線の吊り点(POLE_S)は変えない(柱の真下=梁の真下)。 */
@@ -1086,9 +1162,35 @@ function lodStruct(){
 
 /* ============ 4. 地表・道路・水緑・施設(平面図準拠) ============ */
 // 地表面(ワールド絶対座標で配置する数少ない要素。線形を動かしたらここも確認)
+/* 地表は 11000m×5200m の上面(y=0)。仙川の掘割(5c章)の所に穴を開ける:擁壁の芯の線で囲んだ穴(ワールドの x の向きに
+   単調)を、穴の頂点の x で短冊に切り、各短冊の穴の北と南を埋める。以前は箱の上面だった(穴を開けられない) */
 const groundMesh=(function(){
- const g=new THREE.Mesh(new THREE.BoxGeometry(11000,1,5200),MAT.ground);
- g.position.set(-3600,-.5,650);scene.add(g);return g;})();
+ const X0=-9100,X1=1900,Z0=-1950,Z1=3250, H=[], P=[], I=[];
+ for(let s=DECK_END;s<CUT_END+1e-6;s+=2) H.push(frame(s,-(cutHalf(s,-1)-CUT_W.MID)));
+ H.push(frame(CUT_END,-(cutHalf(CUT_END,-1)-CUT_W.MID)));
+ const HN=[]; for(let s=DECK_END;s<CUT_END+1e-6;s+=2) HN.push(frame(s,cutHalf(s,1)-CUT_W.MID));
+ HN.push(frame(CUT_END,cutHalf(CUT_END,1)-CUT_W.MID));
+ const poly=H.concat(HN.reverse()).map(f=>[f.x,f.z]), n=poly.length;
+ const quad=(a,b,c,d)=>{const o=P.length/3; for(const q of[a,b,c,d]) P.push(q[0],0,q[1]);
+   const up=(b[1]-a[1])*(c[0]-a[0])-(b[0]-a[0])*(c[1]-a[1]);           // 上向き(+y)の巻き順に
+   if(up>=0) I.push(o,o+1,o+2,o,o+2,o+3); else I.push(o,o+2,o+1,o,o+3,o+2);};
+ const xs=[...new Set(poly.map(q=>q[0]))].sort((a,b)=>b-a);
+ quad([X1,Z0],[X1,Z1],[xs[0],Z1],[xs[0],Z0]);                            // 穴より東
+ quad([xs[xs.length-1],Z0],[xs[xs.length-1],Z1],[X0,Z1],[X0,Z0]);       // 穴より西
+ for(let k=0;k<xs.length-1;k++){
+   const xa=xs[k], xb=xs[k+1]; if(xa-xb<1e-7) continue;
+   const xm=(xa+xb)/2, hit=[];
+   for(let i=0;i<n;i++){const a=poly[i], b=poly[(i+1)%n], lo=Math.min(a[0],b[0]), hi=Math.max(a[0],b[0]);
+     if(hi-lo<1e-9||lo>xb+1e-9||hi<xa-1e-9) continue;
+     const zAt=x=>a[1]+(b[1]-a[1])*(x-a[0])/(b[0]-a[0]); hit.push([zAt(xm),zAt(xa),zAt(xb)]);}
+   if(hit.length!==2){quad([xa,Z0],[xa,Z1],[xb,Z1],[xb,Z0]); continue;}   // (起こらない)
+   hit.sort((u,v)=>u[0]-v[0]);
+   quad([xa,Z0],[xa,hit[0][1]],[xb,hit[0][2]],[xb,Z0]);                  // 穴の北
+   quad([xa,hit[1][1]],[xa,Z1],[xb,Z1],[xb,hit[1][2]]);                  // 穴の南
+ }
+ const N=[]; for(let i=0;i<P.length/3;i++) N.push(0,1,0);
+ const g=new THREE.Mesh(facesGeo(P,N,I),MAT.ground);
+ g.name='地表'; scene.add(g); return g;})();
 /* ---- 道路:PLATEAU の実データ(別ファイル plateau_land.js があるとき) -----------------------
    国土交通省 3D都市モデル(Project PLATEAU)2025年度の道路(tran:Road の lod1MultiSurface=道路区域の平面形)。
    tools/plateau_land.py が作る。ファイルが無ければ下の模式の道路(甲州街道・交差道路の帯)で描く。
@@ -1168,15 +1270,42 @@ if(PLL){
      if(on){ if(a===null) a=s; }
      else if(a!==null){ if(s-a>=3){ROAD_SKIP.push([(a+s-1)/2,(s-a)/2+4]); ROAD_XING.push([a,s-1]);} a=null; }
    }}
+  /* 仙川の掘割を渡る道路橋:道路の橋梁(sec 2)のうち掘割の中ほど(中心と南北の幅の 2/3)を覆うもの(PLATEAU の
+     橋梁の面は擁壁の手前で終わることがある)。掘割の幅を7本の線で横切って道路の面に入る s の範囲を測り、東西の縁を
+     覆う線の端を通る直線(最小二乗)を全部の線の外へずらして決め、床版は擁壁から擁壁まで渡す(5c章) */
+  {const OL=[-1,-2/3,-1/3,0,1/3,2/3,1];
+   for(const R of ROADS_PL){
+     if(R.sec!==2||elev(R)) continue;
+     if(R.bb[1]<CUT_BB[0]||R.bb[0]>CUT_BB[1]||R.bb[3]<CUT_BB[2]||R.bb[2]>CUT_BB[3]) continue;
+     const L=[];
+     for(const u of OL){
+       let a=null,b=null;
+       for(let s=DECK_END;s<=CUT_END;s+=0.25){
+         const o=u<0?u*(cutHalf(s,-1)-CUT_W.MID):u*(cutHalf(s,1)-CUT_W.MID), f=frame(s,o);
+         if(f.x<R.bb[0]||f.x>R.bb[1]||f.z<R.bb[2]||f.z>R.bb[3]) continue;
+         if(polyDist(R.P,f.x,f.z)<0){ if(a===null) a=s; b=s; }
+       }
+       L.push(a===null?null:[a,b,u]);
+     }
+     if(!L[1]||!L[3]||!L[5]) continue;                      // 掘割の中ほどを覆わない(掘割を渡らない)
+     const K=L.filter(q=>q);
+     const fit=k=>{let n=0,su=0,sv=0,suu=0,suv=0; for(const q of K){n++;su+=q[2];sv+=q[k];suu+=q[2]*q[2];suv+=q[2]*q[k];}
+       const b=(n*suu-su*su)>1e-9?(n*suv-su*sv)/(n*suu-su*su):0, a=(sv-b*su)/n; return u=>a+b*u;};
+     const fA=fit(0), fB=fit(1);
+     let dA=0,dB=0; for(const q of K){dA=Math.max(dA,fA(q[2])-q[0]); dB=Math.max(dB,q[1]-fB(q[2]));}
+     CUT_DECKS.push({kind:'道路橋',R:R,aS:fA(-1)-dA-0.25,bS:fB(-1)+dB+0.25,aN:fA(1)-dA-0.25,bN:fB(1)+dB+0.25,bot:DECK_BOT,top:ROAD_Y[R.k]});
+   }}
   // 地表の道路:まとまり×材質ごとに上面だけの面
   for(const R of ROADS_PL){
     if(elev(R)) continue;
     const key=Math.floor((R.bb[0]+R.bb[1])/2/CHS)+','+Math.floor((R.bb[2]+R.bb[3])/2/CHS);
     let c=CH.get(key); if(!c){c={P:[],N:[],I:[],C:[]}; CH.set(key,c);}
     const o=c.P.length/3, y=ROAD_Y[R.k], cl=RD_COL[R.k];
-    for(const p of R.P){c.P.push(p[0],y,p[1]); c.N.push(0,1,0); c.C.push(cl.r,cl.g,cl.b);}
-    for(const t of earTri(R.P)){
-      const A=R.P[t[0]],B=R.P[t[1]],C=R.P[t[2]], up=(B[1]-A[1])*(C[0]-A[0])-(B[0]-A[0])*(C[1]-A[1]);
+    // 掘割の中は除く(掘割を渡る道路橋はそのまま。下に床版を作る=5c章)
+    const GT=CUT_DECKS.some(D=>D.R===R)?{V:R.P,T:earTri(R.P)}:cutTris(R.P);
+    for(const p of GT.V){c.P.push(p[0],y,p[1]); c.N.push(0,1,0); c.C.push(cl.r,cl.g,cl.b);}
+    for(const t of GT.T){
+      const A=GT.V[t[0]],B=GT.V[t[1]],C=GT.V[t[2]], up=(B[1]-A[1])*(C[0]-A[0])-(B[0]-A[0])*(C[1]-A[1]);
       if(up>=0) c.I.push(o+t[0],o+t[1],o+t[2]); else c.I.push(o+t[0],o+t[2],o+t[1]);
     }
   }
@@ -1202,10 +1331,11 @@ if(PLL){
         c=CH.get(key); if(!c){c={P:[],N:[],I:[],C:[]}; CH.set(key,c);}
       }
       const o=c.P.length/3, y=R.k===3?0.07:(R.k===4?0.06:0.05);
-      if(R.k<3){ if(!c.G) c.G=[]; c.G.push([o,R.P.length,R.k]); }
-      for(const p of R.P){c.P.push(p[0],y,p[1]); c.N.push(0,1,0); if(c.C) c.C.push(PK.r,PK.g,PK.b);}
-      for(const t of earTri(R.P)){
-        const A=R.P[t[0]],B=R.P[t[1]],C=R.P[t[2]], up=(B[1]-A[1])*(C[0]-A[0])-(B[0]-A[0])*(C[1]-A[1]);
+      const GT=cutTris(R.P);                                // 掘割の中は除く
+      if(R.k<3){ if(!c.G) c.G=[]; c.G.push([o,GT.V.length,R.k]); }
+      for(const p of GT.V){c.P.push(p[0],y,p[1]); c.N.push(0,1,0); if(c.C) c.C.push(PK.r,PK.g,PK.b);}
+      for(const t of GT.T){
+        const A=GT.V[t[0]],B=GT.V[t[1]],C=GT.V[t[2]], up=(B[1]-A[1])*(C[0]-A[0])-(B[0]-A[0])*(C[1]-A[1]);
         if(up>=0) c.I.push(o+t[0],o+t[1],o+t[2]); else c.I.push(o+t[0],o+t[2],o+t[1]);
       }
     }
@@ -1295,12 +1425,14 @@ if(PLL){
         const ox=x+(x-ix)/0.8*1.5, oz=z+(z-iz)/0.8*1.5;
         if(roadHit(ox,oz,0)) continue;
         const qq=prjXY(ix,iz); if(qq.s<DOM.x0||qq.s>DOM.x1||Math.abs(qq.off)>DOM.z) continue;
+        if(cutHit(ix,iz,0.5)) continue;                   // 掘割の中・擁壁の上には立てない
         ROAD_LAMPS.push([ix,iz]);
       }
       acc-=L;
     }
   }
 }
+poleOffDecks();             // 掘割を渡る物(道路橋・橋上駅舎・覆い)の下に架線柱を立てない(床版から吊る)
 // 幹線(線路と並走:甲州街道・旧甲州街道・首都高4号)。実データがあるときは描かない
 if(!PLL){
 strip(DOM.x0-300,DOM.x1+300,60,x=>[x,.12,145],x=>[x,.12,171],MAT.roadMajor);      // 甲州街道
@@ -1482,6 +1614,93 @@ function parSect(s,sg){
     for(const sg of[-1,1]) C.md.col(0x5c6066).box(VD,s,sg*(E+0.055),yT-0.30,y+VIA.PAR+0.005,0.03,0.03,{skip:'-y'});
   }
 }
+/* ============ 5c. 仙川の掘割(利用者指示 2026-10-11) ============
+   仙川駅は左右の土地より約7m 低い掘割の中の駅。DECK_END(取付部の西端=地上の高さ)から区間の西端(CUT_END)まで:
+     擁壁   … 両側。内面は桁幅と同じ式の幅(cutHalf)−0.24m(取付部の高欄から段差なく続く)。上端は地表+0.15m(取付部に
+              近い所は高欄の高さ=レール面+2.1m から下げる)。内面の下に濃い帯、10m ごとに目地、水抜き穴(近くだけ)
+     底     … 擁壁の間の平らな底(道床の 0.8m 下=floorY)、両側に側溝。バラストは底の上に敷く(6a章)
+     フェンス … 擁壁の上(高さ CUT_W.FENCE)。掘割を渡る物(CUT_DECKS)の所は切る(近くだけ)
+     道路橋 … PLATEAU の道路の橋梁で掘割を渡るもの(4章で登録)。床版の下面・上面・側面と高欄。上面の道路は4章の面
+     西端   … 区間の端は覆い(道路橋と同じ床版)の下で終え、妻壁で閉じる(その先は描かない。列車は覆いの下で消える)
+   地表には掘割の穴を開け(4章 groundMesh)、地表の道路・緑地の面は掘割の中を除く(4章 cutTris)。架線柱は渡る物の下に
+   立てない(poleOffDecks)。部品は高架橋と同じ 240m の区画(VIA_CH)の結合ジオメトリに積む */
+const CUT_FENCE=[];       // フェンスの区間 [s0,s1,sg](検証用)
+// 金網:向こうが透ける暗い緑の面(両面)。影は落とさない(applyShadows の flat。viaFlush の後で印を付ける)
+const MAT_FENCE=M(0xffffff,{vertexColors:true,transparent:true,opacity:0.32,side:THREE.DoubleSide,depthWrite:false});
+{
+  const T=CUT_W.T, O=CUT_W.OUT;
+  const chunkOf=s=>VIA_CH.find(q=>s>=q.s0&&s<=q.s1)||VIA_CH[VIA_CH.length-1];
+  const P=(s,o,y)=>{const f=frame(s,o);return [f.x,y,f.z];};
+  for(const sg of[-1,1]){
+    // 擁壁(内面の下0.6m は濃い帯)
+    viaEach(DECK_END,CUT_END,function(C,a,b){
+      C.mg.loft(VD,a,b,s=>{const E=cutHalf(s,sg), f=floorY(s), yt=cutWallTop(s);
+        return [[sg*(E-T),f],[sg*(E-T),f+0.6],[sg*(E-T),yt],[sg*(E+O),yt],[sg*(E+O),f]];},
+        {closed:true,cols:[0x7b7f83,0xb3b7bb,0xcfd2d5,0xb3b7bb,0xb3b7bb],tag:'擁壁'});
+    });
+    // 目地(10m ごと)と水抜き穴(3m ごとに2段)。近くだけ
+    for(let s=Math.ceil(DECK_END/10)*10;s<CUT_END;s+=10){
+      const C=chunkOf(s), f=floorY(s), yt=cutWallTop(s), o=sg*(cutHalf(s,sg)-T-0.004);
+      if(yt-f<1.0) continue;
+      C.md.col(0x6d7175).box(VD,s,o,f,yt,0.03,0.008,{skip:'-y+y'});
+    }
+    for(let s=Math.ceil(DECK_END/3)*3+1.5;s<CUT_END;s+=3){
+      const C=chunkOf(s), f=floorY(s), yt=cutWallTop(s), o=sg*(cutHalf(s,sg)-T-0.004);
+      for(const h of[1.4,3.9]) if(f+h+0.5<yt) C.md.col(0x3d4246).box(VD,s,o,f+h,f+h+0.10,0.10,0.008,{skip:'-y+y'});
+    }
+    // フェンス:擁壁の上(高欄ほど高い所は除く)。渡る物の所は切る
+    const cuts=[];
+    for(const D of CUT_DECKS){const a=sg>0?D.aN:D.aS, b=sg>0?D.bN:D.bS; cuts.push([a-0.3,b+0.3]);}
+    cuts.sort((u,v)=>u[0]-v[0]);
+    let a=DECK_END; while(a<CUT_END&&cutWallTop(a)>CUT_W.TOP+0.6) a+=1;
+    const runs=[]; for(const c of cuts){ if(c[1]<=a) continue; if(c[0]>a+0.5) runs.push([a,Math.min(c[0],CUT_END)]); a=Math.max(a,c[1]); }
+    if(CUT_END-a>0.5) runs.push([a,CUT_END]);
+    for(const r of runs){
+      CUT_FENCE.push([r[0],r[1],sg]);
+      viaEach(r[0],r[1],function(C,s0,s1){
+        const oc=s=>sg*(cutHalf(s,sg)-T/2+O/2);
+        for(const yy of[0.10,CUT_W.FENCE/2,CUT_W.FENCE-0.04])            // 横桟(下・中・上)
+          C.md.col(0x4d5a52).loft(VD,s0,s1,s=>{const o=oc(s), y=cutWallTop(s)+yy;return [[o-0.02,y],[o+0.02,y],[o+0.02,y+0.04],[o-0.02,y+0.04]];},{closed:true});
+        // 金網(下の横桟と上の横桟の間。両面の材質)
+        C.md.col(0x56635b).loft(MAT_FENCE,s0,s1,s=>{const o=oc(s), y=cutWallTop(s);return [[o,y+0.14],[o,y+CUT_W.FENCE-0.04]];},{side:sg});
+      });
+      for(let s=r[0];s<=r[1]+1e-6;s+=2.5){                                 // 支柱
+        const C=chunkOf(s), o=sg*(cutHalf(s,sg)-T/2+O/2), y=cutWallTop(s);
+        C.md.col(0x4d5a52).box(VD,s,o,y,y+CUT_W.FENCE,0.06,0.06,{skip:'-y'});
+      }
+    }
+    // 底(擁壁の内面の間)。両側に側溝(濃い帯)
+    if(sg>0) viaEach(DECK_END,CUT_END,function(C,a,b){
+      C.mg.loft(VD,a,b,s=>{const f=floorY(s), n=cutHalf(s,1)-T, so=-(cutHalf(s,-1)-T);
+        return [[so,f],[so+0.45,f],[n-0.45,f],[n,f]];},{side:-1,cols:[0x6c7074,0x8d9195,0x6c7074],tag:'掘割の底'});
+    });
+  }
+  // 西端の妻壁(覆いの下。暗い)
+  {const C=chunkOf(CUT_END), f=floorY(CUT_END), A=C.mg.axes(CUT_END,0);
+   C.mg.col(0x3c4044).face(VD,[P(CUT_END,-(cutHalf(CUT_END,-1)-T),f),P(CUT_END,cutHalf(CUT_END,1)-T,f),
+     P(CUT_END,cutHalf(CUT_END,1)-T,DECK_BOT),P(CUT_END,-(cutHalf(CUT_END,-1)-T),DECK_BOT)],v3sc(A.t,-1));}
+  // 渡る物の床版(道路橋・西端の覆い)。下面・上面・東西の側面と、東西の縁の高欄(擁壁の外 1m まで)
+  for(const D of CUT_DECKS){
+    if(D.kind==='橋上駅舎') continue;                                    // 橋上駅舎は7章が作る
+    const C=chunkOf((D.aS+D.bN)/2), top=D.top-0.03, bot=D.bot;
+    const wS=s=>-(cutHalf(s,-1)+O), wN=s=>cutHalf(s,1)+O;
+    const cA=[D.aS,wS(D.aS)], cB=[D.bS,wS(D.bS)], cC=[D.bN,wN(D.bN)], cD=[D.aN,wN(D.aN)];
+    const Q=(c,y)=>P(c[0],c[1],y);
+    C.mg.col(0x9fa4a9).face(VD,[Q(cA,bot),Q(cB,bot),Q(cC,bot),Q(cD,bot)],[0,-1,0]);
+    C.mg.col(D.kind==='覆い'?0x7c8187:0xb1b5b9).face(VD,[Q(cA,top),Q(cB,top),Q(cC,top),Q(cD,top)],[0,1,0]);
+    const tE=C.mg.axes(D.aS,0).t;
+    C.mg.col(0xc4c8cc).face(VD,[Q(cA,bot),Q(cD,bot),Q(cD,top),Q(cA,top)],v3sc(tE,-1))
+                  .face(VD,[Q(cB,bot),Q(cC,bot),Q(cC,top),Q(cB,top)],tE);
+    // 高欄:東の縁(覆いは東だけ)と西の縁。縁の線を擁壁の外へ 1m 延ばし、床版の内側に厚さ 0.2m
+    for(const [p0,p1,dir] of D.kind==='覆い'?[[cA,cD,-1]]:[[cA,cD,-1],[cB,cC,1]]){
+      const A=Q(p0,0), B=Q(p1,0), ex=B[0]-A[0], ez=B[2]-A[2], L=Math.hypot(ex,ez), ux=ex/L, uz=ez/L;
+      let nx=-uz, nz=ux; if((nx*tE[0]+nz*tE[2])*dir>0){nx=-nx;nz=-nz;}            // 床版の内側へ
+      const cx=(A[0]+B[0])/2+nx*0.1, cz=(A[2]+B[2])/2+nz*0.1, h=1.1, yb=D.top;
+      C.mg.col(0xd5d8db).boxA(VD,[cx,yb+h/2,cz],[ux*(L/2+1),0,uz*(L/2+1)],[0,h/2,0],[nx*0.1,0,nz*0.1]);
+    }
+    STRUCT.push({tag:'掘割を渡る床版',s0:Math.min(D.aS,D.aN),s1:Math.max(D.bS,D.bN),o0:-cutHalf(D.aS,-1),o1:cutHalf(D.aN,1),y0:bot,y1:D.top});
+  }
+}
 const TIE_LOD=280;                 // まくらぎを描く距離[m](それより遠くでは1画素未満)。形は6a章
 function viaFlush(){
   const m4=new THREE.Matrix4(),q=new THREE.Quaternion(),e=new THREE.Euler(),v=new THREE.Vector3(),one=new THREE.Vector3(1,1,1);
@@ -1660,6 +1879,7 @@ function trackBulge(t,a,b){          // 線路 t の a〜b が、両端を結ぶ
     if(!add.length) break;
     POLE_S.push.apply(POLE_S,add); POLE_S.sort((p,q)=>p-q);
   }
+  poleOffDecks();          // 足した支持点も掘割を渡る物の縁には立てない
 })();
 /* ============ 6a. 軌道:道床・まくらぎ・締結装置・レール・分岐器(2026-10 作り込み) ============
    【設計方針】
@@ -1781,8 +2001,9 @@ function buildTrack(){
       const hw=ground?TRK.BAL:TRK.BED;
       C.mg.loft(ground?MAT_BALLAST:VD,a,b,s=>{
         const y=railY(s), sp=bedSpan(i,s,hw), c=t.zf(s);
-        if(!sp) return ground?[[c,0],[c,y+TRK.BAL_Y],[c,y+TRK.BAL_Y],[c,0]]:[[c,y-DECK_DROP],[c,y+TRK.BED_Y],[c,y+TRK.BED_Y],[c,y-DECK_DROP]];
-        if(ground) return [[sp[0]-(sp[2][0]?0:1.0),0],[sp[0],y+TRK.BAL_Y],[sp[1],y+TRK.BAL_Y],[sp[1]+(sp[2][1]?0:1.0),0]];
+        const g0=floorY(s);                                   // バラストの裾=地表(掘割では底)
+        if(!sp) return ground?[[c,g0],[c,y+TRK.BAL_Y],[c,y+TRK.BAL_Y],[c,g0]]:[[c,y-DECK_DROP],[c,y+TRK.BED_Y],[c,y+TRK.BED_Y],[c,y-DECK_DROP]];
+        if(ground) return [[sp[0]-(sp[2][0]?0:1.0),g0],[sp[0],y+TRK.BAL_Y],[sp[1],y+TRK.BAL_Y],[sp[1]+(sp[2][1]?0:1.0),g0]];
         const bt=y>3?y-DECK_DROP:-0.05;
         return [[sp[0],bt],[sp[0]+(sp[2][0]?0:0.1),y+TRK.BED_Y],[sp[1]-(sp[2][1]?0:0.1),y+TRK.BED_Y],[sp[1],bt]];
       },{side:-1,cols:ground?[0x8c877f,0x9a958c,0x8c877f]:[0x7d8288,0x8a8f94,0x7d8288],
@@ -2568,7 +2789,7 @@ const nearAny=(s,list,m)=>list.some(q=>s>q.s0-m&&s<q.s1+m);
    (実物のホーム下の退避空間)。線路の無い縁(相対式の背面など)は垂直に落とす。
    wells の範囲は床を抜いて井戸にする(その区間は井戸の左右に分けて作る)。 */
 function platBody(S,x0,x1,pc,hw,y,wells){
-  const mg=S.mg, yb=y-DECK_DROP, yt=y+STD.PLAT, yl=yt-STD.LIP, mid=(x0+x1)/2;
+  const mid=(x0+x1)/2, mg=S.mg, yb=y<3?Math.min(y-DECK_DROP,floorY(mid)):y-DECK_DROP, yt=y+STD.PLAT, yl=yt-STD.LIP;   // 地上・掘割の駅は躯体を地表(底)まで
   const tL=trackNear(mid,pc-hw-TACTILE_TOL/2,TACTILE_TOL/2);
   const tR=trackNear(mid,pc+hw+TACTILE_TOL/2,TACTILE_TOL/2);
   const cuts=[x0,x1];
@@ -2670,7 +2891,7 @@ function stairUp(S,w,y,yF){
 /* 橋上駅舎:線路の上を渡る駅舎。床の下端はレール面+7.6m(架線柱の頂部・ビームより上)。
    ガラスの帯の壁・屋根・柱(ホームの中心線と線路の外)。看板は南北の面に */
 function concourse(S,st,s0,s1,o0,o1,y,yF,cols){
-  const mg=S.mg, yB=y+RAIL_TOP+7.6, i=STA.indexOf(st), c=(o0+o1)/2, hw=(o1-o0)/2;
+  const mg=S.mg, yB=yF-0.34, i=STA.indexOf(st), c=(o0+o1)/2, hw=(o1-o0)/2;           // 床の厚さ 0.34m
   mg.col(0xc9ccd0).cbox(SV,s0,s1,c,hw,yB,yF,{tag:'橋上駅舎'});                              // 床
   mg.col(0xe8e9e6).cbox(SV,s0,s1,c,hw+0.6,yF+3.3,yF+3.55,{tag:'橋上駅舎'});                // 屋根
   for(const o of[o0,o1]){
@@ -3132,7 +3353,10 @@ for(const s of STA){
   const pr=platRange(s), x0=pr[0], x1=pr[1], pm=(x0+x1)/2, big=BIGROOF(s);
   const lampY=big?y+STD.RAIL0-0.06:y+STD.CAN0-0.08;
   const lifts=[];                    // 井戸とエレベーター(柱・ベンチを避ける)
-  const up=(s.t==='gnd'), yF=y+RAIL_TOP+7.6+0.34;   // 地上駅は橋上駅舎へ上がる。その床の上面
+  /* 地上駅は橋上駅舎へ上がる。yF=その床の上面:地上の駅は架線柱・ビームより上(レール面+7.6m が床の下端)、
+     掘割の駅(仙川)はほぼ地表の高さ(床の下端=道床+CONC_CUT。下の架線柱は poleOffDecks が外へずらす)。
+     駅舎と階段は pq(ホームの中ほど+CONC_AT)を中心に置く */
+  const up=(s.t==='gnd'), cutSta=floorY(c0)<-1, yF=cutSta?y+CONC_CUT+0.34:y+RAIL_TOP+7.6+0.34, pq=up?concMid(s):pm;
   const TRK_ST=staTracks(s,pm);                     // 番線(南から1,2,…)。階段口の案内と発車標が使う
   PLT_OF[s.t].forEach(function(pp,pi){
     const pc=pp[0], hw=pp[1];
@@ -3143,16 +3367,16 @@ for(const s of STA){
     // 階段は1面に2か所(利用者指示)。両側の入口から中ほど(駅舎)へ向かう。
     // 高架駅は高架下の駅舎へ降り、地上駅(仙川)は線路の上の橋上駅舎へ上がる(利用者指示)
     const SA=STAIR_AT[s.n];                                   // 駅舎が中心に無い駅(下高井戸=西端部)は置き直す
-    const wells=narrow?(up?[{s0:pm-34,s1:pm-18,o0:wc-ww/2,o1:wc+ww/2,dir:1}]:[]):
+    const wells=narrow?(up?[{s0:pq-34,s1:pq-18,o0:wc-ww/2,o1:wc+ww/2,dir:1}]:[]):
                 SA?SA.wells.map(q=>({s0:pm+Math.min(q[0],q[1]),s1:pm+Math.max(q[0],q[1]),o0:wc-ww/2,o1:wc+ww/2,dir:q[2]})):
-                       [{s0:pm-34,s1:pm-18,o0:wc-ww/2,o1:wc+ww/2,dir:1},{s0:pm+18,s1:pm+34,o0:wc-ww/2,o1:wc+ww/2,dir:-1}];
+                       [{s0:pq-34,s1:pq-18,o0:wc-ww/2,o1:wc+ww/2,dir:1},{s0:pq+18,s1:pq+34,o0:wc-ww/2,o1:wc+ww/2,dir:-1}];
     for(const w of wells) Object.assign(w,{st:s,pc:pc,hw:hw,trk:TRK_ST.filter(q=>q.plats.indexOf(pi)>=0),
       yTop:big?y+STD.CEIL:y+STD.CAN0});
     platBody(S,x0,x1,pc,hw,y,up?[]:wells);
     platDetail(S,x0,x1,pc,hw,y,{lampY:lampY});
     for(const w of wells){(up?stairUp(S,w,y,yF):stairWell(S,w,y));lifts.push(w);STAIRS.push({st:s,kind:'階段',up:up,dir:w.dir,s0:w.s0,s1:w.s1,o0:w.o0,o1:w.o1});}
     if(!narrow){                                     // エレベーターは2つの階段の間(柱と柱の間)
-      const es=SA?pm+SA.ev:pm+STD.COLP/2;
+      const es=SA?pm+SA.ev:pq+STD.COLP/2;
       elevator(S,es,wc,y,s.c,up?yF-(y+STD.PLAT):0);
       lifts.push({s0:es-1,s1:es+1});
       STAIRS.push({st:s,kind:'エレベーター',s0:es-1,s1:es+1,o0:wc-1,o1:wc+1});
@@ -3198,7 +3422,7 @@ for(const s of STA){
     }
     if(!narrow){
       for(let k=0;k<2;k++){                          // 自動販売機は柱と柱の間(EVの反対側)
-        const vs=pm-8.4+k*1.0;
+        const vs=pq-8.4+k*1.0;
         if(back) vendAt(S.md,vs,pc+back*(hw-0.42),y,-back,k);
         else {vendAt(S.md,vs,pc+0.38,y,1,k); vendAt(S.md,vs,pc-0.38,y,-1,k+1);}
       }
@@ -3210,9 +3434,16 @@ for(const s of STA){
     }
   });
   if(up){                                            // 橋上駅舎(仙川):ホームの中ほどで線路をまたぐ
-    const ps=PLT_OF[s.t], o0=Math.min(...ps.map(q=>q[0]-q[1]))-4.4, o1=Math.max(...ps.map(q=>q[0]+q[1]))+0.6;
-    concourse(S,s,pm-18,pm+18,o0,o1,y,yF,[{s:[pm-STD.COLP,pm+STD.COLP],o:0,y:y+STD.PLAT},
-      {s:[pm-14,pm,pm+14],o:o0+0.6,y:0},{s:[pm-14,pm,pm+14],o:o1-0.4,y:0}]);
+    const ps=PLT_OF[s.t];
+    // 掘割の駅は掘割の両側の地表へ 3m ずつ出る(擁壁の上に載る。柱はホームの上だけ)
+    const o0=cutSta?-(cutHalf(pq,-1)+3.0):Math.min(...ps.map(q=>q[0]-q[1]))-4.4, o1=cutSta?cutHalf(pq,1)+3.0:Math.max(...ps.map(q=>q[0]+q[1]))+0.6;
+    const cols=[{s:[pq-STD.COLP,pq+STD.COLP],o:0,y:y+STD.PLAT}];
+    if(!cutSta) cols.push({s:[pq-14,pq,pq+14],o:o0+0.6,y:0},{s:[pq-14,pq,pq+14],o:o1-0.4,y:0});
+    concourse(S,s,pq-CONC_HALF,pq+CONC_HALF,o0,o1,y,yF,cols);
+    if(cutSta) for(const sg of[-1,1]){                // 掘割の外(地表の上)の部分は床の下を基壇で埋める
+      const a=cutHalf(pq,sg)+CUT_W.OUT, b=sg>0?o1:-o0;
+      S.mg.col(0xb9bcbf).cbox(SV,pq-CONC_HALF,pq+CONC_HALF,sg*(a+b)/2,(b-a)/2,-0.05,yF-0.34,{noBottom:true});
+    }
   }
   PSD_DEF.push({st:s,y:y,drs:DRS_OF[s.t],x0:x0+2,x1:x1-2});
   if(big){
@@ -3248,6 +3479,14 @@ const CAT={STAG:0.20, TWIN:0.075, HANG:5.0, ARM:1.6, REACH:3.0, H1:0.20, DIAG:0.
 const CHAINS=[], SUPS=[], POLES=[], BEAMS=[], POLE_LAMPS=[];   // 架線・支持点・柱・ビーム・柱の灯り(登録簿)
 const rTop=s=>railY(s)+RAIL_TOP;                               // レール面の高さ
 const chunkAt=s=>VIA_CH.find(C=>s>=C.s0&&s<C.s1)||VIA_CH[s<VIA_CH[0].s0?0:VIA_CH.length-1];
+/* 掘割を渡る物(道路橋・橋上駅舎・覆い)の下なら、その床版の下面から吊る(柱は立てない)。
+   yb=床版の下端、lo/hi=吊りパイプを置ける横の範囲(擁壁の内面の 0.3m 内) */
+function cutDeckRoof(s){
+  if(s<DECK_END) return null;
+  const D=CUT_DECKS.find(d=>s>=Math.min(d.aS,d.aN)-0.01&&s<=Math.max(d.bS,d.bN)+0.01); if(!D) return null;
+  const lo=-(cutHalf(s,-1)-CUT_W.T)+0.3, hi=cutHalf(s,1)-CUT_W.T-0.3;
+  return {yb:D.bot, half:Math.min(-lo,hi), lo:lo, hi:hi, deck:true};
+}
 // 大屋根の下なら、その梁の下端の高さと梁の半長(7章 bigRoof と同じ式)
 function staRoofAt(s){
   for(const st of STA) if(BIGROOF(st)&&inStaRoof(s)&&Math.abs(s-st.x)<STA_ROOF_HALF){
@@ -3390,10 +3629,10 @@ function buildCatenary(){
     W.sort((a,b)=>a.o-b.o);
     const CL=[];                                      // 近い架線(分岐器の付近)は1基でまとめて支える
     for(const w of W){const L=CL[CL.length-1]; if(L&&w.o-L[L.length-1].o<1.2) L.push(w); else CL.push([w]);}
-    const C=chunkAt(s), yr=rTop(s), roof=staRoofAt(s), P={};
+    const C=chunkAt(s), yr=rTop(s), roof=staRoofAt(s)||cutDeckRoof(s), P={};
     if(!roof) for(const sg of[-1,1]){                 // 柱:その側の最も外の線路から1.95m外(桁端の0.55m内まで)
       let out=0; for(const w of W) if(sg*w.zo>0) out=Math.max(out,sg*w.zo);
-      let p=s<DECK_END?Math.min(deckHalf(s)-0.50,out+1.95):out+1.95;
+      let p=s<DECK_END?Math.min(deckHalf(s)-0.50,out+1.95):Math.min(cutHalf(s,sg)-0.50,out+1.95);
       for(const pl of PLATS){                         // ホームの上なら線路側の縁から1.2m以上内へ
         if(s<pl.x0-3||s>pl.x1+3) continue;
         const lo=sg*pl.off-pl.hw, hi=sg*pl.off+pl.hw;
@@ -3422,14 +3661,14 @@ function buildCatenary(){
     for(const L of drop){
       /* 吊りパイプは、どの線路の中心からも離れる所に(パンタの通る幅に入れない)。腕は短いほど良い。
          分岐器が重なって線路が密な所でどこにも置けなければ、梁から長幹がいしで真下へ吊る(懸垂) */
-      const M=L.map(w=>w.o), lo=roof?-roof.half+0.3:P[-1]+0.4, hi=roof?roof.half-0.3:P[1]-0.4;
+      const M=L.map(w=>w.o), lo=roof?(roof.deck?roof.lo:-roof.half+0.3):P[-1]+0.4, hi=roof?(roof.deck?roof.hi:roof.half-0.3):P[1]-0.4;
       let best=null;
       for(const dir of[1,-1]) for(let a=CAT.ARM-0.2;a<CAT.REACH-0.35;a+=0.2){
         const b=(dir>0?Math.min.apply(null,M):Math.max.apply(null,M))-dir*a;
         if(b<lo||b>hi) continue;
         const cl=Math.min.apply(null,W.map(w=>Math.abs(b-w.zo)));
         let sc=Math.min(cl,2.0)-0.05*a;
-        if(!roof&&PLATS.some(pl=>s>pl.x0-3&&s<pl.x1+3&&Math.abs(b-pl.off)<pl.hw+0.5)) sc-=1;   // 上屋の上は避ける
+        if((!roof||roof.deck)&&PLATS.some(pl=>s>pl.x0-3&&s<pl.x1+3&&Math.abs(b-pl.off)<pl.hw+0.5)) sc-=1;   // 上屋の上は避ける
         if(!best||sc>best.sc) best={b:b,dir:dir,sc:sc,cl:cl};
       }
       if(!best||best.cl<1.3){
@@ -3438,23 +3677,25 @@ function buildCatenary(){
           C.md.col(0x6e757c).box(VD,s,m,yr+WIRE_CAT+0.01,yr+WIRE_CAT+0.22,0.05,0.26);
           for(const sd of[-1,1]) C.md.box(VD,s,m+sd*CAT.TWIN,yr+WIRE_CAT-0.03,yr+WIRE_CAT+0.03,0.07,0.05);
         }
-        SUPS.push({s:s,mount:roof?'屋根(懸垂)':'ビーム(懸垂)',M:M,ch:L.map(w=>w.c.idx),steady:[]});
+        SUPS.push({s:s,mount:roof?(roof.deck?'床版(懸垂)':'屋根(懸垂)'):'ビーム(懸垂)',M:M,ch:L.map(w=>w.c.idx),steady:[]});
         continue;
       }
       C.md.col(0x9ba2a8).cyl(VD,s,best.b,yr+CAT.LOW-0.05,yb,0.038,6);         // 吊りパイプ
       C.md.col(0x6a7178).box(VD,s,best.b,yb-0.08,yb,0.22,0.22);               // 上の取付金具
       const r=catBracket(C,s,best.b+best.dir*0.04,best.dir,M,yr);
-      SUPS.push({s:s,mount:roof?'屋根':'ビーム',b:best.b,dir:best.dir,M:M,ch:L.map(w=>w.c.idx),
+      SUPS.push({s:s,mount:roof?(roof.deck?'床版':'屋根'):'ビーム',b:best.b,dir:best.dir,M:M,ch:L.map(w=>w.c.idx),
         h1:r.h1,hd:r.hd,e:r.e,steady:r.steady,drop:[yr+CAT.LOW-0.05,yb]});
     }
     if(roof) continue;
-    const base=s<DECK_END?yTop(s):0, top=yr+POLE_TOP;
+    const base=s<DECK_END?yTop(s):floorY(s), top=yr+POLE_TOP;
     for(const sg of[-1,1]){
       catPole(C,s,P[sg],sg,base,top);
       C.md.col(0x6a7178).box(VD,s,P[sg]-sg*0.33,yr+5.58,yr+5.64,0.06,0.32);  // 灯りの腕
       POLE_LAMPS.push({s:s,o:P[sg]-sg*0.55,y:yr+5.6});
       const q=topPrev[sg], t=catP(s,P[sg],top+0.06);                         // 架空地線
-      if(q&&s-q.s<80){const Cq=chunkAt((q.s+s)/2); Cq.wl.push(q.p[0],q.p[1],q.p[2],t[0],t[1],t[2]);}
+      // 掘割を渡る物(柱の頂部より低い床版)の下は通さない(実物は床版の下面に沿わせる)
+      const under=!!q&&CUT_DECKS.some(D=>Math.max(D.bS,D.bN)>q.s&&Math.min(D.aS,D.aN)<s&&D.bot<top+0.1);
+      if(q&&s-q.s<80&&!under){const Cq=chunkAt((q.s+s)/2); Cq.wl.push(q.p[0],q.p[1],q.p[2],t[0],t[1],t[2]);}
       topPrev[sg]={s:s,p:t};
     }
     if(drop.length) catBeam(C,s,P[-1],P[1],top-0.05,yr+BEAM_LOW);
@@ -3464,6 +3705,7 @@ buildTrack();      // 6a章:道床・まくらぎ・レール・分岐器
 buildCatenary();   // 6b章:架線
 // 高架橋・軌道・架線の区画(5章・6a章・6b章)を Mesh にする
 viaFlush();
+scene.traverse(o=>{if(o.isMesh&&o.material===MAT_FENCE) o.userData.flat=true;});   // 掘割の金網は影を受けるだけ
 for(const gq of XINGS){
   const sp=textSprite('旧 '+gq[0]+'踏切',null,false);
   sp.scale.set(64,12.6,1);
@@ -3673,6 +3915,33 @@ function earTri(P){
   }
   for(let i=1;i<idx.length-1;i++) T.push([idx[0],idx[i],idx[i+1]]);   // 残り(退化した所)は扇で
   return T;
+}
+/* 地表に敷く多角形(PLATEAU の道路・緑地)の三角形から、仙川の掘割の中(擁壁の外面より内)を除く。掘割に掛からない
+   多角形は earTri のまま。掛かる三角形は辺が 0.6m 以下になるまで2分し、重心が掘割の中なら捨てる
+   (縁の凹凸は擁壁の厚さ 0.30m と同じ程度)。戻り値 {V:頂点, T:三角形} */
+function cutTris(P){
+  const T0=earTri(P);
+  let x0=1e9,x1=-1e9,z0=1e9,z1=-1e9;
+  for(const p of P){x0=Math.min(x0,p[0]);x1=Math.max(x1,p[0]);z0=Math.min(z0,p[1]);z1=Math.max(z1,p[1]);}
+  if(x1<CUT_BB[0]||x0>CUT_BB[1]||z1<CUT_BB[2]||z0>CUT_BB[3]) return {V:P,T:T0};
+  const V=P.slice(), T=[], Q=new Map();
+  const sq=i=>{let q=Q.get(i); if(!q){q=prjXY(V[i][0],V[i][1]); Q.set(i,q);} return q;};
+  const inC=q=>cutIn(q.s,q.off,CUT_W.OUT);
+  const rec=(a,b,c,d)=>{
+    const A=sq(a),B=sq(b),C=sq(c), sMin=Math.min(A.s,B.s,C.s), sMax=Math.max(A.s,B.s,C.s);
+    if(sMax<DECK_END-1||sMin>CUT_END+1){T.push([a,b,c]);return;}
+    let wN=0,wS=0; for(const s of[sMin,(sMin+sMax)/2,sMax]){wN=Math.max(wN,cutHalf(s,1));wS=Math.max(wS,cutHalf(s,-1));}
+    wN+=1; wS+=1;
+    if((A.off>wN&&B.off>wN&&C.off>wN)||(A.off<-wS&&B.off<-wS&&C.off<-wS)){T.push([a,b,c]);return;}
+    const E=[[a,b],[b,c],[c,a]].map(e=>(V[e[0]][0]-V[e[1]][0])**2+(V[e[0]][1]-V[e[1]][1])**2), Lm=Math.max(...E);
+    if(Lm<0.36||d>18){ if(!inC(prjXY((V[a][0]+V[b][0]+V[c][0])/3,(V[a][1]+V[b][1]+V[c][1])/3))) T.push([a,b,c]); return; }
+    if(Lm<4&&inC(A)&&inC(B)&&inC(C)) return;               // 小さくて全部が掘割の中
+    const k=E.indexOf(Lm), e=[[a,b,c],[b,c,a],[c,a,b]][k];
+    V.push([(V[e[0]][0]+V[e[1]][0])/2,(V[e[0]][1]+V[e[1]][1])/2]); const m=V.length-1;
+    rec(e[0],m,e[2],d+1); rec(m,e[1],e[2],d+1);
+  };
+  for(const t of T0) rec(t[0],t[1],t[2],0);
+  return {V:V,T:T};
 }
 const CITY_LODS=[];                       // まとまりごとの [近・中・遠] の Mesh と外接球
 function cityLod(){
@@ -6838,8 +7107,9 @@ function buildNav(){
     const c=el('circle',{cx:px,cy:py,r:(s.t==='quad')?4.5:3.5,
       fill:(s.t==='ctx'||s.t==='gnd')?'#9aa0a6':'#e4007f',stroke:'#fff','stroke-width':1.2});
     c.style.cursor='pointer';c.addEventListener('click',()=>goStation(s));
-    const at={x:px,y:yB+13,'font-size':small?9:10,fill:'#1c2733','text-anchor':small?'end':'middle','font-weight':600};
-    if(small)at.transform='rotate(-38 '+px+' '+(yB+13)+')';
+    const ly=py>yB+2?yB-5:yB+13;                     // 掘割の駅(地表より下)は名前を地表の線の上に
+    const at={x:px,y:ly,'font-size':small?9:10,fill:'#1c2733','text-anchor':small?'end':'middle','font-weight':600};
+    if(small)at.transform='rotate(-38 '+px+' '+ly+')';
     const tx=el('text',at);tx.textContent=s.n;
     tx.style.cursor='pointer';tx.addEventListener('click',()=>goStation(s));
   }
@@ -7033,7 +7303,7 @@ function loop(now){
     const hx=t.x,ph2=frame(hx,zf(hx));
     const ty=railY(hx)+3;
     const ex=ph2.x+CH.r*Math.sin(CH.ph)*Math.cos(CH.th);
-    const ey=ty+CH.r*Math.cos(CH.ph);
+    const ey=Math.max(ty+CH.r*Math.cos(CH.ph),1.5);   // 地表より下へは行かない(掘割の列車を低い角度で見るとき)
     const ez=ph2.z+CH.r*Math.sin(CH.ph)*Math.sin(CH.th);
     const kk=Math.min(1,dt*3.6);
     chaseEye.x+=(ex-chaseEye.x)*kk;chaseEye.y+=(ey-chaseEye.y)*kk;chaseEye.z+=(ez-chaseEye.z)*kk;
