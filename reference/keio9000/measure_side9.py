@@ -131,11 +131,11 @@ def measure(path, ends, rail, cab):
            'door_windows_u': [(round(p, 3), round(q, 3)) for p, q in dwin],
            'doors_u': doors}
     if cab:
-        # アイボリーの後端:窓の上部の高さ(z 2.65〜2.85。乗務員扉の手すりより上)の行を後ろから運転台へ向かって見て、
-        # ステンレスが途切れる所(その先 0.3m のステンレスが2割未満)の中央値。境の近くの手すりの溝・扉の線が
-        # ぼけてステンレスの灰に見えても、境の位置で測れる
+        # アイボリーの後端:乗務員扉と運転台側の KEIO ロゴより上(z 2.97〜3.25。写真では乗務員扉の上端 2.94・ロゴの上端 2.79)の
+        # 行を後ろから運転台へ向かって見て、ステンレスが途切れる所(その先 0.3m のステンレスが2割未満)の中央値。
+        # 境の近くの手すりの溝・扉の線がぼけてステンレスの灰に見えても、境の位置で測れる(ロゴの高さで測るとロゴを境と取る)
         n, ends = int(.3 * S), []
-        for z in np.arange(2.65, 2.86, .05):
+        for z in np.arange(2.97, 3.26, .05):
             st = M['steel'][row_of(z)]
             for u in np.arange(hw - 2.0, hw - .3, 1 / S):
                 if not st[px_of(u)] and sum(bool(st[px_of(u + i / S)]) for i in range(n)) < .2 * n:
