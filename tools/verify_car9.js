@@ -26,7 +26,11 @@ const REF = {
   SKIRT_OUT: 0.93 * 1.225,                   // スカートの外端 |y|(写真の実測0.93 の1.225倍。利用者指示)
   // 前面の横の位置(利用者指示 2026-10-11:写真の実測から 扉の幅+10cm・行先表示器+15cm・前照灯の間隔+20cm・識別灯の間隔+40cm。
   // measured_9000.md 3b の「利用者指示の微修正」)
-  DEST_HALF: [0.21 * 1.15 + 0.075, 0.0795 * 1.15],   // 行先表示板の半幅・半高(写真の実測を表示板ごと1.15倍、さらに幅+15cm)
+  DEST_HALF: [0.21 * 1.15 + 0.05, 0.0795 * 1.15],    // 行先表示板の半幅・半高(写真の実測を表示板ごと1.15倍、さらに幅+15cm−5cm)
+  KIND_Y: [0.61, 0.99], NUM_Y: [0.71, 1.05], // 種別(向かって左)・車号(右)の |y|(写真の実測から外へ0.10ずつ=間隔+20cm)
+  DOOR_R: 0.035,                             // 戸の縁の上の角の半径(小さな角丸。写真 9755)
+  WIPER: [0.88, 1.92, 0.49, 2.52],           // ワイパーの付け根 |y|・z と先 |y|・z(付け根は窓の下の外寄り、内の上へ。写真 9755)
+  LOGO: [0.71, 1.17, 1.752, 1.888],          // KEIO ロゴの板の外接矩形 |y|・z(白い平行四辺形の板。赤帯の上端にまたがる。写真 9755 の遠近を直した値)
   FDOOR_EDGE: [0.31, 0.40],                  // 中央扉の戸の縁・枠の外縁の縦の線 |y|(写真の実測 0.26・0.35 から扉の幅+10cm)
   FDOOR_W_TOL: 0.015,                        // 戸の幅(2×戸の縁)と公表 610mm の差の許容
   LAMP_CASE: [0.67, 1.10], HL_Y: [0.71, 0.88], TL_Y: [0.93, 1.09],   // 灯火のケース・前照灯・尾灯の |y|(写真の実測から外へ0.10ずつ)
@@ -163,6 +167,14 @@ const G = X.K9GEO;
   ok('車号は向かって右の窓の上部', ny[0] > E[1] && nz[0] >= 3.0,
     'y>' + E[1] + '(向かって右=+y)・z≥3.0', 'y ' + ny[0].toFixed(2) + '〜' + ny[1].toFixed(2) + '・z ' + nz[0].toFixed(2));
   const kd = v4pts(F.kind), ky = range(kd, 1), kz = range(kd, 2);
+  ok('種別と車号の位置', near(-ky[1], REF.KIND_Y[0], 0.003) && near(-ky[0], REF.KIND_Y[1], 0.003) && near(ny[0], REF.NUM_Y[0], 0.003) && near(ny[1], REF.NUM_Y[1], 0.003),
+    '種別 y −' + REF.KIND_Y[1] + '〜−' + REF.KIND_Y[0] + '・車号 ' + REF.NUM_Y.join('〜') + '(間隔+20cm)',
+    '種別 ' + ky.map((v) => v.toFixed(3)).join('〜') + '・車号 ' + ny.map((v) => v.toFixed(3)).join('〜'));
+  // 戸の縁の上の角は円弧(利用者指示:小さな半径の角丸)。角の4分の1の範囲の頂点が、円弧の中心から 半径±線の半幅 にある
+  { const r = REF.DOOR_R, y0 = E[0], zt = 3.026, w = 0.0065;
+    const okC = [-1, 1].every((s) => { const q = all.filter((p) => p[0] > 9 && s * p[1] > y0 - r - 1e-6 && s * p[1] < y0 + 0.01 && p[2] > zt - r - 1e-6 && p[2] < zt + 0.01);
+      return q.length >= 8 && q.every((p) => { const d = Math.hypot(s * p[1] - (y0 - r), p[2] - (zt - r)); return d > r - w && d < r + w; }); });
+    ok('扉の上の角は丸い', okC, '戸の縁の上の角が半径 ' + r + 'm の円弧(左右とも)', okC ? '円弧' : '角が尖る/線が無い'); }
   { const kc = (REF.KIND_Z[0] + REF.KIND_Z[1]) / 2, nc = (nz[0] + nz[1]) / 2;
     ok('車号は種別と同じ高さ', Math.abs(nc - kc) <= 0.01 && ny[0] >= 0.60,
       '中心 z' + kc.toFixed(2) + '±0.01・写真(左端0.58)より右', '中心 z' + nc.toFixed(3) + '・左端' + ny[0].toFixed(3)); }
@@ -203,6 +215,22 @@ const G = X.K9GEO;
       return near(a[0], H[0], t) && near(a[1], H[1], t) && near(b[0], T[0], t) && near(b[1], T[1], t) && near(c[0], C[0], t) && near(c[1], C[1], t); });
     ok('前照灯・尾灯の位置', okL, '前照灯 |y| ' + H.join('〜') + '・尾灯 ' + T.join('〜') + '・ケース ' + C.join('〜') + '(左右とも)',
       [-1, 1].map((sg) => (sg < 0 ? '左 ' : '右 ') + ay(hl, sg).map((v) => v.toFixed(3)).join('〜') + '/' + ay(tl, sg).map((v) => v.toFixed(3)).join('〜')).join(' ')); }
+}
+
+/* ---- 3a. ワイパーと KEIO ロゴ(写真 9755) ---- */
+{
+  const F = G.front, W = REF.WIPER;
+  // ワイパー:前面の部品のうち、窓の内縁(0.42)より外・z 1.88〜2.6 の頂点。いちばん下は付け根(外寄り)、いちばん上は先(内寄り)
+  const okW = [-1, 1].map((s) => { const q = v4pts(F.vc).filter((p) => p[0] > 9 && s * p[1] > 0.42 && s * p[1] < 0.95 && p[2] > 1.88 && p[2] < 2.6);
+    if (q.length < 20) return null;
+    const lo = q.reduce((a, b) => (b[2] < a[2] ? b : a)), hi = q.reduce((a, b) => (b[2] > a[2] ? b : a));
+    return [s * lo[1], lo[2], s * hi[1], hi[2]]; });
+  const goodW = okW.every((v) => v && Math.abs(v[0] - W[0]) < 0.03 && Math.abs(v[1] - W[1]) < 0.03 && Math.abs(v[2] - W[2]) < 0.03 && Math.abs(v[3] - W[3]) < 0.03);
+  ok('ワイパーは外の下から内の上へ', goodW, '付け根 |y|' + W[0] + '・z' + W[1] + ' → 先 |y|' + W[2] + '・z' + W[3] + '(±3cm・左右とも)',
+    okW.map((v) => (v ? '|y|' + v[0].toFixed(2) + '・z' + v[1].toFixed(2) + '→|y|' + v[2].toFixed(2) + '・z' + v[3].toFixed(2) : '無い')).join(' / '));
+  const lg = v4pts(F.logo), ly = range(lg, 1), lz = range(lg, 2), Lg = REF.LOGO;
+  ok('KEIO ロゴの板の位置', near(ly[0], Lg[0], 0.003) && near(ly[1], Lg[1], 0.003) && near(lz[0], Lg[2], 0.003) && near(lz[1], Lg[3], 0.003),
+    '|y| ' + Lg[0] + '〜' + Lg[1] + '・z ' + Lg[2] + '〜' + Lg[3] + '(赤帯の上端 1.833 にまたがる)', '|y| ' + ly.map((v) => v.toFixed(3)).join('〜') + '・z ' + lz.map((v) => v.toFixed(3)).join('〜'));
 }
 
 /* ---- 3b. 乗務員扉の手すりは埋め込み式(利用者指示:正面から見えない)。運転台の細部に車体幅の外へ出る頂点が無く、

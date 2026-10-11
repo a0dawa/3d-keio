@@ -5232,14 +5232,17 @@ const K9={
   FDOOR:[0.31,0.40,1.150,3.026],         // 扉の戸の半幅・枠の外縁(枠のアイボリーで帯が切れる)。写真の実測 0.26・0.35 から扉の幅を10cm 広く(利用者指示) / z 下端・上端
   FLAMP:[0.67,1.10,1.442,1.595],         // 灯火のケース(青帯の中)。写真の実測 0.57〜1.00 から左右へ 0.10 ずつ(前照灯の間隔を20cm 広く=利用者指示)
   FHL:[0.71,0.88], FTL:[0.93,1.09],      // ケースの中の前照灯(内)・尾灯(外)の |y|
-  FDEST:[-(0.21*1.15+0.075),0.21*1.15+0.075,3.2596-0.0795*1.15,3.2596+0.0795*1.15],   // 行先表示器(扉の上)。写真の実測(|y|≤0.21・z3.180〜3.339)を表示板ごと1.15倍し、
-                                         // さらに幅を15cm 広く(利用者指示。高さはそのまま)
-  FKIND:[-0.89,-0.51,3.111,3.323],       // 種別表示器(向かって左の窓の上部、ガラスの内)
-  FNUM:[0.61,0.95,3.148,3.286],          // 車号(向かって右の窓の上部、ガラスの内に白い数字)。写真の実測から
-                                         // 少し右上へ、種別と同じ高さ(中心 z3.217)に(利用者指示)
+  FDEST:[-(0.21*1.15+0.05),0.21*1.15+0.05,3.2596-0.0795*1.15,3.2596+0.0795*1.15],   // 行先表示器(扉の上)。写真の実測(|y|≤0.21・z3.180〜3.339)を表示板ごと1.15倍し、
+                                         // さらに幅を10cm 広く(利用者指示:+15cm のあと −5cm。高さはそのまま)
+  FKIND:[-0.99,-0.61,3.111,3.323],       // 種別表示器(向かって左の窓の上部、ガラスの内)。写真の実測 −0.89〜−0.51 から外へ 0.10(種別と車号の間隔+20cm=利用者指示)
+  FNUM:[0.71,1.05,3.148,3.286],          // 車号(向かって右の窓の上部、ガラスの内に白い数字)。写真の実測から少し右上へ、種別と同じ高さ
+                                         // (中心 z3.217)に(利用者指示)、さらに外へ 0.10(種別と車号の間隔+20cm=利用者指示)
   FPASS:[[-1.23,-1.17],[1.17,1.23],3.132,3.302],   // 識別灯(種別の左・車号の右。白の縦長)。写真の灰の縦長の灯(|y|≈0.95〜1.02)から中心線に対称に置き、
                                                     // 左右の間隔を40cm 広げた(利用者指示)
-  FLOGO:[0.71,1.00,1.691,1.829],         // KEIO ロゴ(向かって右の赤帯の上に白)
+  FLOGO:[0.71,1.17,1.752,1.888], FLOGO_SL:0.05,   // KEIO ロゴ(向かって右):白い平行四辺形の板に黒の斜体の文字。板の外接矩形 |y|・z と、
+                                         // 辺の傾きによる上辺のずれ(下辺 0.71〜1.12・上辺 0.76〜1.17。赤帯の上端にまたがる。写真 9755 の遠近を直した値)
+  FWIPER:[0.88,1.92,0.49,2.52],          // ワイパー:付け根 |y|・z(窓の下の外寄り)/先 |y|・z(内の上へ。写真 9755)
+  FDOOR_R:0.035,                         // 中央扉の戸の縁の上の角の半径(小さな角丸。写真 9755。下の角は角のまま)
   FANTI:[0.43,1.00,0.954,1.044],         // アンチクライマーの板
   FBOT:0.949, FCPL:0.29,                 // 前面の下端 / 連結器まわりの開口の半幅(扉の下〜)
   SKIRT:[0.55*1.225,0.93*1.225,0.175,0.906,0.366],   // スカート:脇の板 |y|・z 0.175〜0.906、中央の前掛けの上端 0.366。幅は写真の実測(0.55〜0.93)の1.225倍(利用者指示)
@@ -5321,6 +5324,14 @@ function k9patch(B,z0,z1,y0,y1,off,n,col){
     const ya=y0+(y1-y0)*i/n, yb=y0+(y1-y0)*(i+1)/n, ua=i/n, ub=(i+1)/n;
     const P=(y,z)=>[k9nose(z,y/hw,hw)+off,y,z];
     B.quad(P(ya,z0),P(yb,z0),P(yb,z1),P(ya,z1),col,[[ua,0],[ub,0],[ub,1],[ua,1]]);
+  }
+}
+// 前面の曲面に沿った線:折れ線 pts=[[y,z],...] を幅 w の帯にする(扉の縁の角丸など)。off=面からの浮かせ量
+function k9stroke(B,pts,w,off,col){
+  const hw=K9.HWB, h=w/2, P=(y,z)=>[k9nose(z,y/hw,hw)+off,y,z];
+  for(let i=0;i+1<pts.length;i++){
+    const a=pts[i], b=pts[i+1], dy=b[0]-a[0], dz=b[1]-a[1], l=Math.hypot(dy,dz)||1, ny=-dz/l*h, nz=dy/l*h;
+    B.quad(P(a[0]-ny,a[1]-nz),P(b[0]-ny,b[1]-nz),P(b[0]+ny,b[1]+nz),P(a[0]+ny,a[1]+nz),col);
   }
 }
 /* 塗り分け(8000系のシェーダと同じ骨組み)。違い:幕板の赤帯なし/帯は腰部で正面へ回る/戸袋窓なし/
@@ -5418,7 +5429,7 @@ const K9_FRAG_MAIN=`
   float tt=clamp((Nn.x-.3)/.4,0.,1.), ay=abs(Y);
   if(tt>.5 && X>K8_L2-.8){
     if(ay>FDF0 && ay<FDF1 && Z>FBLUE0-.012 && Z<RED1+.012){ col=C_IVORY; painted=1.; }
-    if(ay<FDF0 && (abs(Z-FDZ1)<.006 || abs(Z-FDZ0)<.006)) col=C_RUB;
+    if(ay<FDF0 && abs(Z-FDZ0)<.006) col=C_RUB;   // 戸の下辺(上辺は角丸の線でジオメトリが引く)
     float wd=k8rr(vec2(Y,Z),vec4(-FDW,FDW,FDWZ0,FDWZ1),.04,.04);
     if(wd<=0.){ if(wd>-.03){ col=C_RUB; painted=1.; } else { col=C_FGLASS; painted=0.; k8Spec=1.6; } }
     if(Z<FBOT || (ay<FCPL && Z<FANTZ1)){ col=C_BELOW; painted=1.; }
@@ -5504,15 +5515,23 @@ function k9FrontGeos(){
   G.vc  =mk(B=>{
     // 中央の非常扉:戸の縁(|y|=FDOOR[0])と枠の外縁(|y|=FDOOR[1])の縦の線。帯の上と下に分けて引く(帯の切れ目はシェーダ)
     const fr=k8lin(.17,.17,.18), D=K9.FDOOR;
-    for(const yc of [-D[0],D[0],-D[1],D[1]]){
-      k9patch(B,K9.RED[1]+.012,D[3],yc-.006,yc+.006,.004,1,fr);
-      k9patch(B,D[2],K9.FBLUE0-.012,yc-.006,yc+.006,.004,1,fr);
-    }
-    // ワイパー(左右の前面窓。下の内側の付け根から外上へ。位置は窓の内縁 FWIN[0] から)
-    for(const sg of[-1,1]){
-      const P=(y,z,o)=>[k9nose(z,y/hw,hw)+o,y,z], w0=K9.FWIN[0];
-      B.cyl(P(sg*(w0+.07),2.18,.02),P(sg*(w0+.27),2.62,.02),.010,6,fr);
-      B.cyl(P(sg*(w0+.17),2.30,.025),P(sg*(w0+.35),2.80,.025),.007,5,fr);
+    for(const yc of [-D[0],D[0],-D[1],D[1]]) k9patch(B,D[2],K9.FBLUE0-.012,yc-.006,yc+.006,.004,1,fr);
+    for(const yc of [-D[1],D[1]]) k9patch(B,K9.RED[1]+.012,D[3],yc-.006,yc+.006,.004,1,fr);
+    // 戸の縁:帯の上から上端まで。上の角は半径 FDOOR_R の円弧(写真)。上辺の線もここで引く(シェーダは下辺だけ)
+    { const r=K9.FDOOR_R, y0=D[0], zt=D[3], zb=K9.RED[1]+.012, path=[[-y0,zb],[-y0,zt-r]];
+      for(let k=1;k<=8;k++){const a=Math.PI-k/8*Math.PI/2; path.push([-y0+r+r*Math.cos(a),zt-r+r*Math.sin(a)]);}
+      for(let k=0;k<=8;k++){const a=Math.PI/2-k/8*Math.PI/2; path.push([y0-r+r*Math.cos(a),zt-r+r*Math.sin(a)]);}
+      path.push([y0,zb]);
+      k9stroke(B,path,.012,.004,fr); }
+    // ワイパー(写真 9755):付け根は窓の下の外寄り(アイボリーの面)、腕は内の上へ。付け根の近くは太い腕、窓の中は細い腕と払拭板
+    { const Wp=K9.FWIPER, dy=Wp[2]-Wp[0], dz=Wp[3]-Wp[1], l=Math.hypot(dy,dz), ny=dz/l, nz=-dy/l;   // (ny,nz)=腕に直交(外の上向き)
+      for(const sg of[-1,1]){
+        const P=(t,o,d)=>{const y=Wp[0]+dy*t+ny*d, z=Wp[1]+dz*t+nz*d; return [k9nose(z,y/hw,hw)+o,sg*y,z];};
+        B.cyl(P(0,0,0),P(0,.028,0),.020,10,fr);              // 付け根の軸
+        B.cyl(P(0,.022,0),P(.30,.022,0),.014,6,fr);          // 腕(付け根の近く)
+        B.cyl(P(.30,.022,0),P(1,.022,0),.008,6,fr);          // 腕(窓の中)
+        B.cyl(P(.35,.030,.018),P(1,.030,.018),.006,5,fr);    // 払拭板
+      }
     }
     // アンチクライマーの板(明るい灰。前へ張り出す)
     const A=K9.FANTI, gy=k8lin(.62,.63,.64);
@@ -5536,11 +5555,31 @@ function k9FrontGeos(){
   G.passGlow=mk(B=>{for(const r of PS.slice(0,2)) k9patch(B,PS[2]-.015,PS[3]+.015,r[0]-.015,r[1]+.015,.010,2,[1,1,1]);});
   return G;
 }
-// 前面の KEIO ロゴ(赤帯の上に白抜き。写真)
-function k9LogoW(w,h){
-  return k8Tex('logoW'+w+'x'+h,w,h,function(cx){
-    cx.fillStyle='#f4f2ec';
-    k8fitText(cx,'KEIO',w/2,h/2,w,h,'bold italic '+Math.round(h)+'px Arial,Helvetica,sans-serif',0.25,true);
+/* 前面の KEIO ロゴ(写真 9755):白い平行四辺形の板に、黒の太い斜体の文字。板の辺と文字は同じ傾き。
+   文字は線で組む(K の腕と脚・E の3本の横棒・I・角の丸い長方形の O)。寸法は measured_9000.md 3b(その2)。画像は板の外接矩形 K9.FLOGO */
+function k9Logo(w,h){
+  return k8Tex('logo9_'+w+'x'+h,w,h,function(cx){
+    const L=K9.FLOGO, sl=K9.FLOGO_SL, Wm=L[1]-L[0], Hm=L[3]-L[2], k=sl/Hm;
+    const X=(x,z)=>(x+k*z)/Wm*w, Y=(z)=>(1-z/Hm)*h;        // 板の左下からの(横,高さ)[m]→画素。横は傾きの分だけずらす
+    const path=(pts)=>{pts.forEach((p,i)=>{const a=X(p[0],p[1]), b=Y(p[1]); if(i) cx.lineTo(a,b); else cx.moveTo(a,b);}); cx.closePath();};
+    const fill=(pts)=>{cx.beginPath(); path(pts); cx.fill();};
+    const rect=(xa,xb,za,zb)=>fill([[xa,za],[xb,za],[xb,zb],[xa,zb]]);
+    const rr=(xa,xb,za,zb,r)=>{const o=[], c=[[xb-r,za+r,-Math.PI/2],[xb-r,zb-r,0],[xa+r,zb-r,Math.PI/2],[xa+r,za+r,Math.PI]];
+      for(const [cx0,cz0,a0] of c) for(let i=0;i<=6;i++){const a=a0+i/6*Math.PI/2; o.push([cx0+r*Math.cos(a),cz0+r*Math.sin(a)]);}
+      return o;};
+    cx.fillStyle='#f5f5f2'; fill([[0,0],[Wm-sl,0],[Wm-sl,Hm],[0,Hm]]);      // 板(下辺 0〜Wm−sl。上辺は傾きで sl だけ右)
+    const zb=.023, H=.09, t=.020, tb=.018;                                  // 文字の下端・高さ・縦画の太さ・横画の太さ
+    cx.fillStyle='#1a1a1a';
+    let x=.030;
+    rect(x,x+t,zb,zb+H);                                                     // K:縦画
+    fill([[x+t,zb+.40*H],[x+.093,zb+H],[x+.063,zb+H],[x+t,zb+.68*H]]);       //   上の腕
+    fill([[x+t+.004,zb+.50*H],[x+.040,zb+.62*H],[x+.093,zb],[x+.062,zb]]);   //   下の脚
+    x+=.093+.025;
+    rect(x,x+t,zb,zb+H); rect(x,x+.068,zb+H-tb,zb+H); rect(x,x+.060,zb+H/2-tb/2,zb+H/2+tb/2); rect(x,x+.068,zb,zb+tb);   // E
+    x+=.068+.025;
+    rect(x,x+.021,zb,zb+H);                                                  // I
+    x+=.021+.033;
+    cx.beginPath(); path(rr(x,x+.085,zb,zb+H,.030)); path(rr(x+t,x+.085-t,zb+tb,zb+H-tb,.012).reverse()); cx.fill('evenodd');   // O
   });
 }
 // 冷房装置(上端4.017 公表)
@@ -5648,7 +5687,7 @@ function makeCar(opt){
     addFine(F.dest,lit?k8Led(k8DestTxt(o.sign.dest),'#ff8c14',...px(K9.FDEST)):K8M.ledOff,sh);
     addFine(F.kind,lit?k8Led(k8KindTxt(o.sign.kind),K8_KIND_COLORS[o.sign.kind]||'#ff2e14',...px(K9.FKIND)):K8M.ledOff,sh);
     addFine(F.num,k8FrontNum(o.num,...px(K9.FNUM),true),sh);   // 字形のまま(引き伸ばさない)
-    addFine(F.logo,k9LogoW(256,96),sh);
+    addFine(F.logo,k9Logo(Math.round((K9.FLOGO[1]-K9.FLOGO[0])*1280),Math.round((K9.FLOGO[3]-K9.FLOGO[2])*1280)),sh);   // 2倍の細かさ(1m=1280px)
     addFine(F.pass,k8PassOn(o)?M_PASS:M_PASS_OFF,sh);          // 識別灯(各停以外で点く)
     if(k8PassOn(o)) addFine(F.passGlow,K8M.hlGlow,sh);
   }
