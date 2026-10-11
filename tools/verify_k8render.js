@@ -116,6 +116,12 @@ function findChromium() {
     cam = new T.OrthographicCamera(-1.6, 1.6, 2.1, -2.1, 0.3, 200);
     cam.position.set(30, 2.1, 0); cam.up.set(0, 1, 0); cam.lookAt(0, 2.1, 0);
     renderer.render(sc, cam); out.front = grab(480, 630);
+    // 正面の輪郭の幅(背景の白でない列の端から端)。手すり・取っ手が張り出していないかを見る(LUT の前の画素で)
+    { const c2 = document.createElement('canvas'); c2.width = 480; c2.height = 630;
+      const x = c2.getContext('2d'); x.drawImage(cv, 0, 0); const d = x.getImageData(0, 0, 480, 630).data;
+      out.frontW = [1.4, 1.8, 2.2, 2.45, 2.8].map((z) => { const r = Math.round((4.2 - z) * 150); let a = -1, b = -1;
+        for (let i = 0; i < 480; i++) { const k = 4 * (r * 480 + i); if (Math.min(d[k], d[k + 1], d[k + 2]) <= 245) { if (a < 0) a = i; b = i; } }
+        return a < 0 ? 0 : (b - a + 1) / 150; }); }
     // 扉を開けた側面(目視用。照合はしない)
     K8API.setCarDoors(lead, 0.6, -1);
     renderer.setSize(2400, 300, false);
@@ -126,6 +132,7 @@ function findChromium() {
     return out;
   });
   await b.close();
+  const frontW = shots.frontW; delete shots.frontW;
   for (const k of Object.keys(shots)) {
     const d = shots[k];
     fs.writeFileSync(path.join(OUT, k + '.png'), Buffer.from(d.slice(d.indexOf(',') + 1), 'base64'));
@@ -146,6 +153,13 @@ function findChromium() {
   const bad = m ? (m[1] ? +m[1] : 0) : 99;
   console.log('前面:' + (14 - bad) + '/14項目(受け入れ条件 12以上)');
   if (bad > 2) ng++;
+  // 乗務員扉の前後の手すりは埋め込み式(利用者指示):正面から見て、腰〜窓の高さの幅が車体幅(窓の高さ 2.8m の幅=2.770)を
+  // 2画素より超えない。v4 の手すりは 4.5cm 外に出て、腰の高さで幅 2.893m に見えていた
+  { const BODY_W = 2.770, px = 2.01 / 150, w28 = frontW[4], low = frontW.slice(0, 4), mx = Math.max(...low);
+    const okW = Math.abs(w28 - BODY_W) <= px && mx <= BODY_W + px;
+    console.log('正面の輪郭:窓の高さ ' + w28.toFixed(3) + 'm(車体幅 ' + BODY_W + '±2画素)・腰〜窓 ' + low.map((v) => v.toFixed(3)).join('/') +
+      'm(≤' + BODY_W + '+2画素) → ' + (okW ? 'OK(手すりは張り出さない)' : 'NG'));
+    if (!okW) ng++; }
   console.log(ng ? 'RESULT: FAIL' : 'RESULT: PASS');
   process.exit(ng ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

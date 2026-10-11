@@ -21,10 +21,21 @@ const REF = {
   FDOOR_W: 0.610,                            // 中央の非常扉の幅(公表)
   DOORX: [-7.05, -2.35, 2.35, 7.05], DOOR_W: 1.30,   // 客用扉の中心と幅(ホームドアの開口と揃う)
   WIN_PER_GAP: 2,                            // 扉間の窓の数(公表の説明:扉間に窓2枚)
-  LAMP_Z: [1.555, 1.715],
+  // 前面(写真の実測 ftex9.png の高さを、屋根 3.62 基準で 1.06 倍に直した値。measured_9000.md 3b)
+  LAMP_Z: [1.43, 1.624],                     // 前照灯・尾灯は前面の青帯の中
   SKIRT_OUT: 0.93 * 1.225,                   // スカートの外端 |y|(写真の実測0.93 の1.225倍。利用者指示)
-  DEST_HALF: [0.21 * 1.15, 0.075 * 1.15],    // 行先表示板の半幅・半高(写真の実測を表示板ごと1.15倍。利用者指示)                    // 前照灯・尾灯は青帯の中(前面写真の実測 reference/keio9000/ftex9.png)
-  KIND_Z: [3.14, 3.34],                      // 種別表示器の高さ(写真の実測)。車号はこれと同じ高さ(中心)へ(利用者指示)
+  DEST_HALF: [0.21 * 1.15, 0.0795 * 1.15],   // 行先表示板の半幅・半高(写真の実測を表示板ごと1.15倍。利用者指示)
+  KIND_Z: [3.111, 3.323],                    // 種別表示器の高さ(写真の実測)。車号はこれと同じ高さ(中心)へ(利用者指示)
+  // 側面(写真 9736・9036 の実測。measured_9000.md 3c)
+  WIN: [0.035, 0.938], WIN_Z: [1.924, 2.845],   // 2枚1組の窓(扉間の中心から)・上下
+  DWIN: [0.113, 0.540], DWIN_Z: [1.890, 2.884], // 扉窓(扉の中心から)・上下
+  END_WIN: [8.49, 9.395],                    // 車端の窓(先頭車は運転台と反対の端、中間車は両端)
+  CREW_WIN: [8.584, 8.917, 1.979, 2.778],    // 乗務員扉の窓
+  Z_BOT: 0.972, Z_SIDE_TOP: 3.338,           // すそ・側面の上端(雨どいの下)
+  NOSE_END: 9.496,                           // 前面の角が側面の平面に着く x(側面写真2枚の輪郭に2画素以内で合わせ、中央は R10m)
+  HANDRAIL: [9.063, 8.467, 1.292, 2.459],    // 乗務員扉の前後の手すり u と上下
+  NUM_Z: [2.713, 2.832],                     // 側面の車号の高さ(窓の上端の高さ)
+  CAB_LOGO: [7.82, 8.38, 2.64, 2.79],        // 運転台側の KEIO(X・z)
   TOL: 0.005,
 };
 
@@ -61,11 +72,38 @@ const G = X.K9GEO;
   // 天井の下面=床面+天井高さ(車内の幾何に、その高さの頂点がある)
   const room = v4pts(G.room), ceil = REF.Z_FLR + REF.CEIL_H;
   ok('天井高さ', room.some((p) => near(p[2], ceil, 1e-3)), '床面+' + REF.CEIL_H + 'm', room.some((p) => near(p[2], ceil, 1e-3)) ? '頂点あり' : '無い');
+  // 側面写真:すそと側面の上端(垂直な側面の上下)
+  ok('すそ(車体の下端)', near(zr[0], REF.Z_BOT, 0.006), REF.Z_BOT + 'm(写真)', zr[0].toFixed(3) + 'm');
+  ok('側面の上端(雨どいの下)', near(range(side, 2)[1], REF.Z_SIDE_TOP, 0.006), REF.Z_SIDE_TOP + 'm(写真)', range(side, 2)[1].toFixed(3) + 'm');
+  // 前面の角:窓の高さの断面で、側面の平面(|y|=半幅)に着く所の x(写真の輪郭に合わせた形)
+  const end = row.filter((p) => Math.abs(Math.abs(p[1]) - hwm) < 1e-4).map((p) => p[0]);
+  const xe = end.length ? Math.max(...end) : 0;
+  ok('前面の角の終わり', near(xe, REF.NOSE_END, 0.01), 'x ' + REF.NOSE_END + '(側面写真の輪郭)', 'x ' + xe.toFixed(3));
 }
 
 /* ---- 2. 側面の開口:扉間に窓2枚・戸袋窓なし ---- */
 {
   for (const [nm, W] of [['中間車', X.K9_WIN.mid], ['先頭車', X.K9_WIN.cab]]) {
+    // 側面写真の位置と上下(2枚1組の窓・扉窓・車端の窓)
+    const t = 0.006, side = W.filter((w) => w[6] === 0 && Math.abs((w[0] + w[1]) / 2) < 7.5), dws = W.filter((w) => w[6] === 2);
+    const ends = W.filter((w) => w[6] === 0 && Math.abs((w[0] + w[1]) / 2) > 7.5);
+    const okWin = side.length === 6 && side.every((w) => { const g = [4.70, 0, -4.70].reduce((a, b) => Math.abs(b - (w[0] + w[1]) / 2) < Math.abs(a - (w[0] + w[1]) / 2) ? b : a);
+      const lo = Math.min(Math.abs(w[0] - g), Math.abs(w[1] - g)), hi = Math.max(Math.abs(w[0] - g), Math.abs(w[1] - g));
+      return near(lo, REF.WIN[0], t) && near(hi, REF.WIN[1], t) && near(w[2], REF.WIN_Z[0], t) && near(w[3], REF.WIN_Z[1], t); });
+    ok('2枚1組の窓(' + nm + ')', okWin, '中心から ' + REF.WIN.join('〜') + '・z ' + REF.WIN_Z.join('〜') + '(写真)',
+      side.length + '枚 ' + (side[0] ? side[0].slice(0, 4).map((v) => v.toFixed(3)).join('/') : ''));
+    const okD = dws.length === 8 && dws.every((w) => { const d = REF.DOORX.reduce((a, b) => Math.abs(b - (w[0] + w[1]) / 2) < Math.abs(a - (w[0] + w[1]) / 2) ? b : a);
+      const lo = Math.min(Math.abs(w[0] - d), Math.abs(w[1] - d)), hi = Math.max(Math.abs(w[0] - d), Math.abs(w[1] - d));
+      return near(lo, REF.DWIN[0], t) && near(hi, REF.DWIN[1], t) && near(w[2], REF.DWIN_Z[0], t) && near(w[3], REF.DWIN_Z[1], t); });
+    ok('扉窓(' + nm + ')', okD, '扉の中心から ' + REF.DWIN.join('〜') + '・z ' + REF.DWIN_Z.join('〜') + '(写真)', dws.length + '枚');
+    const wantEnds = nm === '中間車' ? [-1, 1] : [-1];
+    const okE = ends.length === wantEnds.length && wantEnds.every((s) => ends.some((w) => near(Math.min(Math.abs(w[0]), Math.abs(w[1])), REF.END_WIN[0], t) &&
+      near(Math.max(Math.abs(w[0]), Math.abs(w[1])), REF.END_WIN[1], t) && Math.sign(w[0] + w[1]) === s));
+    ok('車端の窓(' + nm + ')', okE, (nm === '中間車' ? '両端' : '運転台と反対の端') + ' ' + REF.END_WIN.join('〜') + '(写真)', ends.length + '枚');
+    if (nm === '先頭車') {
+      const cw = W.find((w) => w[6] === 3);
+      ok('乗務員扉の窓', cw && REF.CREW_WIN.every((v, i) => near(cw[i], v, t)), REF.CREW_WIN.join('/') + '(写真)', cw ? cw.slice(0, 4).join('/') : '無い');
+    }
     let bad = null;
     if (W.some((w) => w[6] === 1)) bad = '戸袋窓がある';
     // 戸袋=開いた戸が滑り込む外板の内側(開口の外 DOOR_W/2)。そこに窓があれば戸が透けて見える
@@ -149,13 +187,24 @@ const G = X.K9GEO;
 }
 
 /* ---- 3b. 乗務員扉の手すりは埋め込み式(利用者指示:正面から見えない)。運転台の細部に車体幅の外へ出る頂点が無く、
-   扉の前後(u 9.069・8.46)にくぼみがあること ---- */
+   扉の前後(写真 u 9.07・8.476)にくぼみがあること ---- */
 {
   const D = v4pts(G.detailCab).filter((p) => p[0] > 8.2 && p[0] < 9.4 && p[2] > 1.0 && p[2] < 2.75);
-  const out = D.filter((p) => Math.abs(p[1]) > REF.HWB + 0.008);
-  const near = (u) => D.some((p) => Math.abs(p[0] - u) < 0.05 && Math.abs(Math.abs(p[1]) - REF.HWB) < 0.006);
-  ok('乗務員扉の手すりは埋め込み', out.length === 0 && near(9.069) && near(8.46), '車体幅+8mm の外に出ない・扉の前後にくぼみ',
-    out.length ? '外へ ' + (Math.max(...out.map((p) => Math.abs(p[1]))) - REF.HWB).toFixed(3) + 'm 出る' : (near(9.069) && near(8.46) ? '張り出しなし' : 'くぼみが無い'));
+  const out = D.filter((p) => Math.abs(p[1]) > REF.HWB + 0.003);
+  const H = REF.HANDRAIL, at = (u) => D.filter((p) => Math.abs(p[0] - u) < 0.03 && Math.abs(Math.abs(p[1]) - REF.HWB) < 0.006);
+  const zr2 = (P) => P.length ? range(P, 2) : [0, 0], f = at(H[0]), r = at(H[1]);
+  const okZ = [f, r].every((P) => P.length && near(zr2(P)[0], H[2], 0.006) && near(zr2(P)[1], H[3], 0.006));
+  ok('乗務員扉の手すりは埋め込み', out.length === 0 && f.length > 0 && r.length > 0 && okZ, '車体幅+3mm の外に出ない・u ' + H[0] + '・' + H[1] + '・z ' + H[2] + '〜' + H[3] + '(写真)',
+    out.length ? '外へ ' + (Math.max(...out.map((p) => Math.abs(p[1]))) - REF.HWB).toFixed(4) + 'm 出る' : (f.length && r.length ? 'z ' + zr2(f).map((v) => v.toFixed(3)).join('〜') : 'くぼみが無い'));
+}
+/* ---- 3c. 側面の車号と運転台側の KEIO は窓の上端の高さ(写真。幕板ではない) ---- */
+{
+  const pl = v4pts(G.plate), lg = v4pts(G.cabLogo || G.plate);
+  ok('側面の車号の高さ', near(range(pl, 2)[0], REF.NUM_Z[0], 0.01) && near(range(pl, 2)[1], REF.NUM_Z[1], 0.01),
+    'z ' + REF.NUM_Z.join('〜') + '(写真)', 'z ' + range(pl, 2).map((v) => v.toFixed(3)).join('〜'));
+  const C = REF.CAB_LOGO;
+  ok('運転台側の KEIO', !!G.cabLogo && near(range(lg, 0)[0], C[0], 0.01) && near(range(lg, 0)[1], C[1], 0.01) && near(range(lg, 2)[0], C[2], 0.01) && near(range(lg, 2)[1], C[3], 0.01),
+    'X ' + C[0] + '〜' + C[1] + '・z ' + C[2] + '〜' + C[3] + '(写真)', G.cabLogo ? 'X ' + range(lg, 0).map((v) => v.toFixed(3)).join('〜') + '・z ' + range(lg, 2).map((v) => v.toFixed(3)).join('〜') : '無い');
 }
 
 /* ---- 4. パンタグラフ(PT-7110):屋根の上に載り、すり板がトロリ線に接する ---- */

@@ -20,26 +20,30 @@ const OUT = path.resolve(opt('out', path.join(require('os').tmpdir(), 'k9render'
 if (!PW || !THREEJS) { console.log('SKIP: Playwright / three.min.js の場所が渡されていない(--playwright --three か K8_PW K8_THREE)'); process.exit(0); }
 
 const REF = {
-  RED: [1.78, 1.92], BLUE: [1.555, 1.715],     // 腰部の帯(前面写真の実測 reference/keio9000/ftex9.png)
-  WIN: [1.975, 2.905],                          // 側窓の下端・上端(推定)
-  GAPS: [-4.70, 0, 4.70], WIN_OFF: 0.505,       // 扉間の中心と、2枚の窓の中心の離れ(推定)
+  // 側面は利用者提供の写真(9736・9036)の実測(measured_9000.md 3c)
+  RED: [1.668, 1.833], BLUE: [1.557, 1.631],   // 腰部の帯(側面)。赤は前面も同じ
+  FBLUE: [1.43, 1.631],                         // 前面と側面の前端の青帯(下へ広い)
+  WIN: [1.924, 2.845],                          // 側窓(2枚1組の外形)の下端・上端
+  GAPS: [-4.70, 0, 4.70], WIN_OFF: 0.4865,      // 扉間の中心と、2枚の窓の中心の離れ((0.035+0.938)/2)
   MAKU_Z: 3.20,                                 // 幕板(窓の上)。8000系の赤帯は無い(公表の説明)
-  IVORY_X: 8.39,                                // 先頭車の前頭部(乗務員扉まで)はアイボリー(公表の説明)
-  IVORY_PROBE: 0.21,                            // 塗りを見る点は IVORY_X からこれだけ前(u8.60=乗務員扉の下部。後ろの手すり u8.46 を避ける)
+  IVORY_X: 8.40,                                // 先頭車の前頭部(乗務員扉まで)はアイボリー(公表の説明・写真 8.398)
+  IVORY_PROBE: 0.21,                            // 塗りを見る点は IVORY_X からこれだけ前(u8.61=乗務員扉の上。後ろの手すり u8.467 を避ける)
+  WRAP_X: 9.48,                                 // 前面窓は角の曲面に沿って側面へ回り込み、側面の X 9.48 で終わる(写真2枚)
+  CAB_LOGO: [7.82, 8.38, 2.64, 2.79],           // 運転台側の KEIO(写真)
   FDOOR_HW: 0.305,                              // 中央の非常扉の半幅(公表610mm)
-  // 以下は前面写真の実測(ftex9.png。扉の枠の中心 ±0.305 と屋根の頂部 3.62 で目盛りを決めた)
-  WIN_IN: 0.35, WIN_BOTTOM: [2.08, 2.16],       // 左右の前面窓の内縁 |y|・下端(実測 2.12)
+  // 以下は前面写真の実測(ftex9.png)の高さを、屋根 3.62 基準で 1.06 倍に直した値(measured_9000.md 3b)
+  WIN_IN: 0.35, WIN_BOTTOM: [1.99, 2.07],       // 左右の前面窓の内縁 |y|・下端(2.030)
   DOOR_EDGE: [0.26, 0.35],                      // 扉の戸の縁と枠の外縁(縦の暗い線)
-  HL: [0.695, 1.64], TL: [0.91, 1.64],          // 前照灯・尾灯の中心 [|y|, z](青帯の中)
-  DEST: [-0.20, 0.20, 3.21, 3.35],              // 行先表示器(扉の上)の範囲 [y0,y1,z0,z1]
-  KIND: [-0.88, -0.52, 3.15, 3.33],             // 種別表示器(向かって左の窓の上部)
-  NUM: [0.58, 0.958, 3.15, 3.33],               // 車号(向かって右の窓の上部。種別と同じ高さへ上げた=利用者指示。右の識別灯 0.97〜 は含めない)
-  PASS: [[-1.03, -0.97], [0.97, 1.03], 3.16, 3.32],   // 識別灯(種別の左・車号の右。白の縦長。写真の灰の縦長の灯。中心線に対称)
-  LOGO: [0.72, 0.99, 1.81, 1.92],               // KEIO ロゴ(向かって右の赤帯の上に白)
+  HL: [0.695, 1.52], TL: [0.91, 1.52],          // 前照灯・尾灯の中心 [|y|, z](前面の青帯の中)
+  DEST: [-0.20, 0.20, 3.18, 3.34],              // 行先表示器(扉の上)の範囲 [y0,y1,z0,z1]
+  KIND: [-0.88, -0.52, 3.12, 3.31],             // 種別表示器(向かって左の窓の上部)
+  NUM: [0.58, 0.958, 3.12, 3.31],               // 車号(向かって右の窓の上部。種別と同じ高さへ上げた=利用者指示。右の識別灯 0.97〜 は含めない)
+  PASS: [[-1.03, -0.97], [0.97, 1.03], 3.132, 3.302],   // 識別灯(種別の左・車号の右。白の縦長。写真の灰の縦長の灯。中心線に対称)
+  LOGO: [0.72, 0.99, 1.70, 1.82],               // KEIO ロゴ(向かって右の赤帯の上に白)
   BODY_W: 2.768,                                // 車体幅(公表 2,768mm。8000系は 2,770mm)
-  // 側面の実測の道具(reference/keio9000/measure_side9.py)を描画に当てたとき戻るべき値(measured_9000.md の推定値)
-  WIN_SPAN: [0.025, 0.985], END_WIN: [8.45, 9.38],              // 扉間の窓(扉間の中心から)・車端の窓
-  DOORS: [-7.05, -2.35, 2.35, 7.05], DWIN: [0.135, 0.546], DWIN_Z1: 2.885,   // 客用扉の中心(8000系と同じ)・扉窓(扉中心から)・扉窓の上端
+  // 側面の実測の道具(reference/keio9000/measure_side9.py)を描画に当てたとき戻るべき値(measured_9000.md 3c)
+  WIN_SPAN: [0.035, 0.938], END_WIN: [8.49, 9.395],             // 扉間の窓(扉間の中心から)・車端の窓
+  DOORS: [-7.05, -2.35, 2.35, 7.05], DWIN: [0.113, 0.540], DWIN_Z0: 1.890, DWIN_Z1: 2.884,   // 客用扉の中心(8000系と同じ)・扉窓(扉中心から)・扉窓の上下
 };
 
 fs.mkdirSync(OUT, { recursive: true });
@@ -150,6 +154,20 @@ function findChromium() {
     ok('側面:前頭部はアイボリー', isIvory(iv) && isSteel(mid), '先頭車=アイボリー/中間車=ステンレス', fmt(iv) + ' / ' + fmt(mid));
     ok('側面:帯はアイボリーの上も通る', isRed(S(REF.IVORY_X + REF.IVORY_PROBE, zr(REF.RED))), '京王レッド', fmt(S(REF.IVORY_X + REF.IVORY_PROBE, zr(REF.RED))));
   }
+  // ---- 側面写真:前面窓は角の曲面に沿って側面へ回り込む(利用者指摘)・前頭部の青帯は下へ広い・運転台側の KEIO ----
+  {
+    const isDark = (c) => c[0] + c[1] + c[2] < 260;
+    const wrap = [9.53, 9.60, 9.68].map((x) => S(x, 2.6)), behind = S(REF.WRAP_X - 0.08, 2.6);
+    ok('側面:前面窓が側面へ回り込む', wrap.every(isDark) && isIvory(behind),
+      'X 9.53〜9.68 は窓(暗い)・' + (REF.WRAP_X - 0.08).toFixed(2) + ' はアイボリー', wrap.map(fmt).join(' ') + ' / ' + fmt(behind));
+    const bw = [9.60, 9.50].map((x) => S(x, (REF.FBLUE[0] + REF.BLUE[0]) / 2)), bn = S(8.80, (REF.FBLUE[0] + REF.BLUE[0]) / 2);
+    ok('側面:前頭部の青帯は下へ広い', bw.every(isBlue) && isIvory(bn), 'X 9.5〜9.6 は青・8.8 はアイボリー(z ' + ((REF.FBLUE[0] + REF.BLUE[0]) / 2).toFixed(2) + ')',
+      bw.map(fmt).join(' ') + ' / ' + fmt(bn));
+    let n = 0;
+    for (let x = REF.CAB_LOGO[0]; x <= REF.CAB_LOGO[1]; x += 1 / 60) for (let z = REF.CAB_LOGO[2]; z <= REF.CAB_LOGO[3]; z += 1 / 60) {
+      const c = S(x, z); if (c[0] + c[1] + c[2] < 360) n++; }
+    ok('側面:運転台側の KEIO', n > 15, '暗い文字 >15画素(X ' + REF.CAB_LOGO[0] + '〜' + REF.CAB_LOGO[1] + ')', n + '画素');
+  }
   // ---- 側面の実測の道具(reference/keio9000/measure_side9.py)を自分の描画に当てる ----
   // 9000系の編成写真が手に入ったときに使う道具。60px/m の描画と 45px/m に縮めた写しで、帯・窓・扉・アイボリーの後端が
   // measured_9000.md の値(=描いた値)に戻ること、つまり道具が壊れていないことを毎回確かめる(u は運転台の側が+)
@@ -174,8 +192,8 @@ function findChromium() {
       if (!m) { ok('側面の実測の道具(' + tag + ')', false, 'JSON を出す', ((r.stderr || '') + (r.stdout || '')).trim().slice(-160)); continue; }
       ok('道具(' + tag + '):帯の高さ', nearR(m.red_z, REF.RED) && nearR(m.blue_z, REF.BLUE), '赤 ' + REF.RED.join('〜') + '・青 ' + REF.BLUE.join('〜'),
         f2(m.red_z) + '・' + f2(m.blue_z));
-      ok('道具(' + tag + '):窓の上下', nearR(m.win_z, REF.WIN) && nearR(m.dwin_z, [REF.WIN[0], REF.DWIN_Z1]),
-        REF.WIN.join('〜') + '・扉窓〜' + REF.DWIN_Z1, f2(m.win_z) + '・' + f2(m.dwin_z));
+      ok('道具(' + tag + '):窓の上下', nearR(m.win_z, REF.WIN) && nearR(m.dwin_z, [REF.DWIN_Z0, REF.DWIN_Z1]),
+        REF.WIN.join('〜') + '・扉窓 ' + REF.DWIN_Z0 + '〜' + REF.DWIN_Z1, f2(m.win_z) + '・' + f2(m.dwin_z));
       ok('道具(' + tag + '):窓と扉窓の並び', list(m.side_windows_u, expSide) && list(m.door_windows_u, expDw),
         '側窓' + expSide.length + '枚・扉窓' + expDw.length + '枚 ±' + T.toFixed(3), (m.side_windows_u || []).length + '枚・' + (m.door_windows_u || []).length + '枚 ' +
         (list(m.side_windows_u, expSide) ? '' : '側窓 ' + f2(m.side_windows_u)) + (list(m.door_windows_u, expDw) ? '' : ' 扉窓 ' + f2(m.door_windows_u)));
@@ -196,20 +214,20 @@ function findChromium() {
     for (const y of [-1.0, 1.0]) for (let z = 2.6; z > 1.5; z -= 1 / 150) if (!isDark(F(y, z))) { zb = zb === null ? z : Math.max(zb, z); break; }
     ok('前面:窓の下端', zb !== null && zb >= REF.WIN_BOTTOM[0] && zb <= REF.WIN_BOTTOM[1],
       REF.WIN_BOTTOM.join('〜') + 'm', zb === null ? '無い' : zb.toFixed(3) + 'm');
-    const st = [F(-0.45, zr(REF.RED)), F(0.45, zr(REF.RED))], sb = [F(-0.45, zr(REF.BLUE)), F(0.45, zr(REF.BLUE))];
+    const st = [F(-0.45, zr(REF.RED)), F(0.45, zr(REF.RED))], sb = [F(-0.45, zr(REF.FBLUE)), F(0.45, zr(REF.FBLUE))];
     ok('前面:腰部の帯が正面へ回る', st.every(isRed) && sb.every(isBlue), '赤と青(左右)', st.map(fmt).join(' ') + ' / ' + sb.map(fmt).join(' '));
-    const iv = [F(-0.45, 1.40), F(0.45, 1.40), F(-0.45, 2.02)];
+    const iv = [F(-0.45, 1.40), F(0.45, 1.40), F(-0.45, 1.93)];
     ok('前面:アイボリー', iv.every(isIvory), '帯の上下', iv.map(fmt).join(' '));
-    // 中央の非常扉の縁(幅610mm):y=±0.305 の付近に暗い線
-    const line = (y) => { let m = 999; for (let d = -3; d <= 3; d++) { const c = px(res.front, 480, Math.round((y + 1.6) * 150) + d, Math.round((4.2 - 1.47) * 150)); m = Math.min(m, c[0] + c[1] + c[2]); } return m; };
+    // 中央の非常扉の縁(幅610mm):y=±0.305 の付近に暗い線(青帯の下、扉の下端との間 z1.30 で見る)
+    const line = (y) => { let m = 999; for (let d = -3; d <= 3; d++) { const c = px(res.front, 480, Math.round((y + 1.6) * 150) + d, Math.round((4.2 - 1.30) * 150)); m = Math.min(m, c[0] + c[1] + c[2]); } return m; };
     const E = REF.DOOR_EDGE, lines = [-E[1], -E[0], E[0], E[1]].map(line);
     ok('前面:中央の非常扉の縁', lines.every((v) => v < 200) && line(0) > 500 && line(REF.FDOOR_HW) > 500,
       'y=±' + E.join('・±') + ' に線・中央と枠(±' + REF.FDOOR_HW + ')は無地', lines.join('/') + ' / ' + line(0) + '/' + line(REF.FDOOR_HW));
     // 帯は扉の枠(±0.26〜0.35)のアイボリーで切れる
-    const gap = [F(-REF.FDOOR_HW, zr(REF.RED)), F(REF.FDOOR_HW, zr(REF.BLUE))];
+    const gap = [F(-REF.FDOOR_HW, zr(REF.RED)), F(REF.FDOOR_HW, zr(REF.FBLUE))];
     ok('前面:帯は扉の枠で切れる', gap.every(isIvory), 'アイボリー', gap.map(fmt).join(' '));
     const hl = [F(-REF.HL[0], REF.HL[1]), F(REF.HL[0], REF.HL[1])];
-    ok('前面:前照灯が点く(青帯の中)', hl.every((c) => c[0] + c[1] + c[2] > 600) && zb !== null && zb > REF.HL[1] && REF.HL[1] > REF.BLUE[0] && REF.HL[1] < REF.BLUE[1],
+    ok('前面:前照灯が点く(青帯の中)', hl.every((c) => c[0] + c[1] + c[2] > 600) && zb !== null && zb > REF.HL[1] && REF.HL[1] > REF.FBLUE[0] && REF.HL[1] < REF.FBLUE[1],
       '明るい・窓より下', hl.map(fmt).join(' '));
     const tl = [F(-REF.TL[0], REF.TL[1]), F(REF.TL[0], REF.TL[1])];
     ok('前面:尾灯は消えている(先頭)', tl.every((c) => c[0] < 150 && c[0] > c[1]), '暗い赤', tl.map(fmt).join(' '));

@@ -29,8 +29,8 @@ S = 60.0                       # 揃える縮尺[px/m]
 BODY_L = 19.5                  # 車体長[m](公表)
 DOOR_WIN_MAX = 0.60            # これより幅の狭い窓は扉窓(側窓は 0.93、扉窓は 0.41)
 # measured_9000.md の今の値(推定。比べるために並べるだけで、測り方には使わない)
-EST = {'red_z': (1.78, 1.92), 'blue_z': (1.555, 1.715), 'win_z': (1.975, 2.905), 'dwin_z': (1.975, 2.885),
-       'doors_u': (-7.05, -2.35, 2.35, 7.05), 'ivory_u': 8.39}
+EST = {'red_z': (1.668, 1.833), 'blue_z': (1.557, 1.631), 'win_z': (1.924, 2.845), 'dwin_z': (1.890, 2.884),
+       'doors_u': (-7.05, -2.35, 2.35, 7.05), 'ivory_u': 8.40}
 
 
 def load(path, ends, rail, cab):
@@ -60,16 +60,20 @@ def masks(a):
 
 
 def zrun(m, col, z_of, zlo, zhi):
-    """列 col で mask が続く最も長い区間(zlo〜zhi の中)の (下端, 上端)。画素の境界で"""
-    best, cur = None, None
+    """列 col で mask が続く最も長い区間(zlo〜zhi の中)の (下端, 上端)。画素の境界で。
+    1画素だけの切れ目(窓枠の細い光り・ガラスの縁)はつなぐ"""
+    best, cur, gap = None, None, 0
     for r in range(m.shape[0]):
         on = bool(m[r, col]) and zlo < z_of(r) < zhi
         if on:
             cur = (r, r) if cur is None else (cur[0], r)
+            gap = 0
             if best is None or cur[1] - cur[0] > best[1] - best[0]:
                 best = cur
+        elif cur is not None and gap == 0 and zlo < z_of(r) < zhi:
+            gap = 1                                   # 1画素だけ待つ
         else:
-            cur = None
+            cur, gap = None, 0
     if best is None:
         return None
     return (z_of(best[1]) - .5 / S, z_of(best[0]) + .5 / S)
@@ -166,9 +170,9 @@ def main():
     print('| 京王ブルーの帯 | z %s | z %s |' % (f(res['blue_z']), f(EST['blue_z'])))
     print('| 側窓 下端・上端 | z %s | z %s |' % (f(res['win_z']), f(EST['win_z'])))
     print('| 扉窓 下端・上端 | z %s | z %s |' % (f(res['dwin_z']), f(EST['dwin_z'])))
-    print('| 側窓の並び | %s | 扉間の中心から 0.025〜0.985(2枚)・車端 8.45〜9.38 |'
+    print('| 側窓の並び | %s | 扉間の中心から 0.035〜0.938(2枚)・車端 8.49〜9.395 |'
           % ' / '.join('%.3f〜%.3f' % s for s in res['side_windows_u']))
-    print('| 扉窓の並び | %s | 扉の中心から 0.135〜0.546 |' % ' / '.join('%.3f〜%.3f' % s for s in res['door_windows_u']))
+    print('| 扉窓の並び | %s | 扉の中心から 0.113〜0.540 |' % ' / '.join('%.3f〜%.3f' % s for s in res['door_windows_u']))
     print('| 扉の中心 | %s | %s |' % (' / '.join('%.3f' % d for d in res['doors_u']),
                                       ' / '.join('%.2f' % d for d in EST['doors_u'])))
     if 'ivory_u' in res:

@@ -4838,12 +4838,18 @@ function k8DetailGeo(cab){
   const B=new K8B(), hw=K8.HWB;
   if(cab){
     for(const s of [-1,1]){
-      const y=s*(hw+.045);
+      /* 乗務員扉の前後の手すりは**埋め込み式**(利用者指示。v4 は車体の面から 4.5cm 外に出る丸棒で、正面から見えた)。
+         9000系と同じく、車体の面に縦長のくぼみ(幅5cm・暗い灰)と、その中の握り棒(明るい灰)。どちらも面から 1.5mm 以内で、
+         正面の輪郭を広げない(⑩が正面の幅を見る。3mm でも 150px/m の描画で縁の1画素に掛かった)。位置と高さは v4 のまま
+         (u 9.069・8.46、z 1.152〜2.585)。取っ手も面に沿わせる */
+      const yy=d=>[Math.min(s*hw,s*(hw+d)),Math.max(s*hw,s*(hw+d))];
       for(const xh of [9.069,8.46]){                       // 手すり(乗務員扉の前後)
-        B.cyl([xh,y,1.152],[xh,y,2.585],.013,8,K8C.trim);
-        for(const zz of [1.152,2.585]) B.cyl([xh,s*hw,zz],[xh,y,zz],.01,6,K8C.trim);
+        const g=yy(.0008), r=yy(.0015);
+        B.box(xh-.025,xh+.025,g[0],g[1],1.152,2.585,K8C.groove);          // くぼみ
+        B.box(xh-.008,xh+.008,r[0],r[1],1.152+.06,2.585-.06,K8C.trim);    // 握り棒
       }
-      B.box(8.60,8.70,Math.min(s*hw,s*(hw+.03)),Math.max(s*hw,s*(hw+.03)),1.855,1.895,K8C.trim);
+      const hd=yy(.0015);
+      B.box(8.60,8.70,hd[0],hd[1],1.855,1.895,K8C.trim);  // 乗務員扉の取っ手
     }
     // 屋根上:アンテナと機器箱(先頭車)
     B.box(8.67,8.82,-.08,.08,K8.Z_CROWN-.01,K8.Z_CROWN+.03,K8C.under);
@@ -5126,7 +5132,7 @@ function k8DoorGlassGeo(S){
   const P=[],L=[], FW=S.FW, DW=S.DWIN||[.135,.546];
   for(const s of [-1,1]) for(const d of S.DOORX) for(const l of [-1,1]){
     const xa=d+l*(DW[0]+FW), xb=d+l*(DW[1]-FW), x0=Math.min(xa,xb), x1=Math.max(xa,xb);
-    const z0=S.WZ0+FW, z1=S.DWZ1-FW, y=s*(S.HWB-.003);
+    const z0=(S.DWZ0||S.WZ0)+FW, z1=S.DWZ1-FW, y=s*(S.HWB-.003);
     const q=[[x0,y,z0],[x1,y,z0],[x1,y,z1],[x0,y,z1]];
     for(const k of [0,1,2,0,2,3]){const p=q[k]; P.push(p[0],p[2],-p[1]); L.push(l);}
   }
@@ -5200,31 +5206,40 @@ const K8GEO=(function(){
                 8000系と同じ要領(60px/m の実測)で直す。 */
 const K9={
   LEN:19.5, PITCH:20.0,                  // 車体長(公表)・車両の間隔
+  /* 側面は利用者提供の写真(9736・9036。2026-10)の実測:reference/keio9000/measured_9000.md の 3c。
+     扉の位置は 8000系と同じ(写真の射影が扉の中心で残差 0.2px、後端も合う)。高さは床=扉の下端の線 1.130 から */
   DOORW:1.30, DOORX:[-7.05,-2.35,2.35,7.05],   // 客用扉の幅・中心(8000系と同じ配置:ホームドアの開口と揃う)
   HWB:1.384,                             // 車体半幅(車体幅2,768 公表)
-  Z_BOT:0.990, Z_FLR:1.130,              // 車体すそ(推定=床面−0.14)・床面(公表1,130)
-  Z_SH0:3.300, Z_CROWN:3.620,            // 雨どい(推定)・屋根(公表3,620)
-  WZ0:1.975, WZ1:2.905, DWZ1:2.885,      // 側窓の下端・上端/扉窓の上端(推定)
-  DZ1:3.040, DOOR_HW:0.648,              // 客用扉の上端(推定)・開口の半幅(8000系と同じ扉)
-  FW:0.017, DWIN:[0.135,0.546],          // 窓枠の見付け/扉窓(扉中心からの距離)
-  RED:[1.78,1.92], BLUE:[1.555,1.715],   // 腰部の帯(前面写真の実測 ftex9.png。正面・側面とも同じ高さで一周)
-  IVORY_X:8.39,                          // これより前がアイボリー(乗務員扉まで=公表の説明)
-  CREW:[8.527,9.01], CREW_WIN:[8.595,8.95,1.99,2.905],   // 乗務員扉・その窓(推定)
-  WRAP_X:9.30,                           // 前面ガラスの側面への回り込み(パノラミックウインドウ)の後端
+  Z_BOT:0.972, Z_FLR:1.130,              // 車体すそ(写真)・床面(公表1,130)
+  Z_SH0:3.338, Z_CROWN:3.620,            // 側面の上端=雨どいの下(写真)・屋根(公表3,620)
+  WZ0:1.924, WZ1:2.845,                  // 側窓(2枚1組の外形)の下端・上端(写真)
+  DWZ0:1.890, DWZ1:2.884,                // 扉窓の下端・上端(写真)
+  DZ1:2.971, DOOR_HW:0.648,              // 客用扉の外形の上端(写真。高さ1.841)・開口の半幅(8000系と同じ扉。写真 0.64〜0.66)
+  FW:0.017, DWIN:[0.113,0.540],          // 窓枠の見付け/扉窓(扉中心からの距離。写真)
+  WIN:[0.035,0.938], END_WIN:[8.49,9.395],   // 側窓(扉間の中心から。2枚の間の柱は明るい)・車端の窓(写真)
+  RED:[1.668,1.833], BLUE:[1.557,1.631], // 腰部の帯(写真。赤と青の上端は前面から続く)
+  FBLUE0:1.43, BLUE_TAPER:[9.18,9.45],   // 前面と側面の前端の青帯の下端(写真)。側面では 9.45→9.18 で斜めに上がって BLUE[0] へ
+  IVORY_X:8.40,                          // これより前がアイボリー(乗務員扉まで=公表の説明。写真 8.398)
+  CREW:[8.520,9.006], CREW_Z:[1.136,2.943], CREW_WIN:[8.584,8.917,1.979,2.778],   // 乗務員扉・その窓(写真)
+  HANDRAIL:[9.063,8.467,1.292,2.459],    // 乗務員扉の前後の手すり(埋め込み)の u と上下(写真)
+  WRAP_X:9.48,                           // 前面窓は角の曲面に沿って側面へ回り込み、側面のこの X で終わる(写真2枚)
+  NOSE_D:0.16, NOSE_N:6,                 // 前面の角(平面形):後退の量と形。側面写真2枚の輪郭に2画素以内で合わせ、中央は公表の R10m を保つ(角の終わり x9.496)
   /* 前面(写真の実測:reference/keio9000/ftex9.png。y=中心からの左右・z=レール面から)。アイボリーの面に3つの窓 */
-  FWIN:[0.35,1.24,2.12,3.43],            // 左右の前面窓 |y| 内縁・外縁 / z 下端・上端
-  FDWIN:[0.19,2.13,2.913],               // 中央扉の窓 半幅 / z 下端・上端
-  FDOOR:[0.26,0.35,1.29,3.06],           // 扉の戸の半幅・枠の外縁(枠のアイボリーで帯が切れる) / z 下端・上端
-  FLAMP:[0.57,1.00,1.565,1.71],          // 灯火のケース(青帯の中)。内=前照灯 0.61〜0.78・外=尾灯 0.83〜0.99
-  FDEST:[-0.21*1.15,0.21*1.15,3.28-0.075*1.15,3.28+0.075*1.15],   // 行先表示器(扉の上)。写真の実測(|y|≤0.21・z3.205〜3.355)を表示板ごと1.15倍(利用者指示)
-  FKIND:[-0.89,-0.51,3.14,3.34],         // 種別表示器(向かって左の窓の上部、ガラスの内)
-  FNUM:[0.61,0.95,3.175,3.305],          // 車号(向かって右の窓の上部、ガラスの内に白い数字)。写真の実測(0.58〜0.92・z3.10〜3.23)から
-                                         // 少し右上へ、種別と同じ高さ(中心 z3.24)に(利用者指示)
-  FPASS:[[-1.03,-0.97],[0.97,1.03],3.16,3.32],   // 識別灯(種別の左・車号の右。白の縦長)。写真の灰の縦長の灯(|y|≈0.95〜1.02)から、中心線に対称に
-  FLOGO:[0.71,1.00,1.80,1.93],           // KEIO ロゴ(向かって右の赤帯の上に白)
-  FANTI:[0.43,1.00,1.105,1.19],          // アンチクライマーの板
-  FBOT:1.10, FCPL:0.29,                  // 前面の下端 / 連結器まわりの開口の半幅(扉の下〜)
-  SKIRT:[0.55*1.225,0.93*1.225,0.37,1.06,0.55],   // スカート:脇の板 |y|・z 0.37〜1.06、中央の前掛け z 0.37〜0.55。幅は写真の実測(0.55〜0.93)の1.225倍(利用者指示)
+  /* 高さは ftex9 の縦の目盛りが 6% 小さかったのを、屋根 3.62 を基準に z'=3.62−(3.62−z)×1.06 と直した値(側面写真と 9755 の写真)。
+     横(|y|)は ftex9 のまま */
+  FWIN:[0.35,1.24,2.030,3.419],          // 左右の前面窓 |y| 内縁・(角の始まり。窓は WRAP_X まで回り込む) / z 下端・上端
+  FDWIN:[0.19,2.041,2.871],              // 中央扉の窓 半幅 / z 下端・上端
+  FDOOR:[0.26,0.35,1.150,3.026],         // 扉の戸の半幅・枠の外縁(枠のアイボリーで帯が切れる) / z 下端・上端
+  FLAMP:[0.57,1.00,1.442,1.595],         // 灯火のケース(青帯の中)。内=前照灯 0.61〜0.78・外=尾灯 0.83〜0.99
+  FDEST:[-0.21*1.15,0.21*1.15,3.2596-0.0795*1.15,3.2596+0.0795*1.15],   // 行先表示器(扉の上)。写真の実測(|y|≤0.21・z3.180〜3.339)を表示板ごと1.15倍(利用者指示)
+  FKIND:[-0.89,-0.51,3.111,3.323],       // 種別表示器(向かって左の窓の上部、ガラスの内)
+  FNUM:[0.61,0.95,3.148,3.286],          // 車号(向かって右の窓の上部、ガラスの内に白い数字)。写真の実測から
+                                         // 少し右上へ、種別と同じ高さ(中心 z3.217)に(利用者指示)
+  FPASS:[[-1.03,-0.97],[0.97,1.03],3.132,3.302],   // 識別灯(種別の左・車号の右。白の縦長)。写真の灰の縦長の灯(|y|≈0.95〜1.02)から、中心線に対称に
+  FLOGO:[0.71,1.00,1.691,1.829],         // KEIO ロゴ(向かって右の赤帯の上に白)
+  FANTI:[0.43,1.00,0.954,1.044],         // アンチクライマーの板
+  FBOT:0.949, FCPL:0.29,                 // 前面の下端 / 連結器まわりの開口の半幅(扉の下〜)
+  SKIRT:[0.55*1.225,0.93*1.225,0.175,0.906,0.366],   // スカート:脇の板 |y|・z 0.175〜0.906、中央の前掛けの上端 0.366。幅は写真の実測(0.55〜0.93)の1.225倍(利用者指示)
   NOSE_R:10.0, FDOOR_HW:0.305,           // 前面の平面の半径(公表10,000mm)/中央の非常扉の半幅(公表610mm)
   BOGIE_X:6.88, WHEEL:0.43,              // 台車中心(8000系と同じとする)・車輪半径
   AC_L:4.20, AC_TOP:4.017,               // 冷房装置の長さ(推定)・上端(公表)
@@ -5247,8 +5262,8 @@ const K9_FORMATIONS={
 const K9_ROWS=(function(){
   const R=[], hw=K9.HWB;
   for(let k=0;k<7;k++){const t=k/6*Math.PI/2;
-    R.push([K9.Z_FLR-0.14*Math.cos(t), hw-0.05+0.05*Math.sin(t)]);}
-  for(const z of [K9.BLUE[0],K9.BLUE[1],K9.RED[0],K9.RED[1],K9.WZ0,2.44,K9.DWZ1,K9.WZ1,K9.DZ1]) R.push([z,hw]);
+    R.push([K9.Z_FLR-(K9.Z_FLR-K9.Z_BOT)*Math.cos(t), hw-0.05+0.05*Math.sin(t)]);}
+  for(const z of [K9.FBLUE0,K9.BLUE[0],K9.BLUE[1],K9.RED[0],K9.RED[1],K9.DWZ0,K9.WZ0,2.44,K9.DWZ1,K9.WZ1,K9.DZ1].sort((a,b)=>a-b)) R.push([z,hw]);
   R.push([K9.Z_SH0,hw]);
   for(let k=1;k<15;k++){const t=k/15;
     const y=hw*Math.pow(Math.cos(t*Math.PI/2),0.5);
@@ -5258,9 +5273,9 @@ const K9_ROWS=(function(){
 })();
 // 前面の中心線の輪郭:8000系よりやや直線的(下部の後退が小さく、上は屋根の低いぶん早く後退)
 // 前面写真(ftex9.png):窓の上端 3.43 まで面はほぼ垂直で、その上で屋根へ丸く回る
-const K9_NOSE_PROFILE=[[0.93,9.60],[1.20,9.752],[3.38,9.752],[3.46,9.735],[3.51,9.71],
-                       [3.55,9.67],[3.58,9.62],[3.60,9.56],[3.615,9.48],[3.62,9.40]];
-const K9_NOSE_D=0.30;
+// 前面窓の上端(3.419。前面写真の高さの直し)までほぼ垂直にする
+const K9_NOSE_PROFILE=[[0.93,9.60],[1.15,9.752],[3.42,9.752],[3.48,9.735],[3.525,9.71],
+                       [3.56,9.67],[3.585,9.62],[3.603,9.56],[3.615,9.48],[3.62,9.40]];
 function k9xf(z){
   const P=K9_NOSE_PROFILE;
   if(z<=P[0][0]) return P[0][1];
@@ -5268,25 +5283,28 @@ function k9xf(z){
     if(z<=b[0]) return a[1]+(b[1]-a[1])*(z-a[0])/(b[0]-a[0]);}
   return P[P.length-1][1];
 }
-// 前面の平面形:上から見て半径10m の曲面(公表)。角で側面へ回り込む
+// 前面の平面形:上から見て半径10m の曲面(公表)。角で側面へ回り込む。角の後退 NOSE_D・形 NOSE_N は側面写真2枚の
+// 輪郭(側面の平面へ写して 9.545・9.579)に 2.5画素以内で合わせ、中央は公表の R10m を保つ(以前の 0.30・6 は角が後ろへ寄りすぎた)
 function k9nose(z,s,hw){
   const y=s*hw;
-  return k9xf(z)-K9_NOSE_D*(1-Math.sqrt(Math.max(0,1-Math.pow(Math.abs(s),6))))-y*y/(2*K9.NOSE_R);
+  return k9xf(z)-K9.NOSE_D*(1-Math.sqrt(Math.max(0,1-Math.pow(Math.abs(s),K9.NOSE_N))))-y*y/(2*K9.NOSE_R);
 }
+const K9_XC0=9.752-K9.NOSE_D-K9.HWB*K9.HWB/(2*K9.NOSE_R);   // 角の終わり(側面の平面に着く x。窓の高さ)
 // 開口の一覧 [x0,x1,z0,z1,上の角R,下の角R,種類]。扉間は2枚(戸袋窓なし:窓は戸袋の外から始まる)
 function k9SideWindows(cab){
   const W=[];
-  for(const g of [4.70,0.0,-4.70]){
-    W.push([g+0.025,g+0.985,K9.WZ0,K9.WZ1,0.07,0.07,0]);
-    W.push([g-0.985,g-0.025,K9.WZ0,K9.WZ1,0.07,0.07,0]);
+  const w=K9.WIN, e=K9.END_WIN;
+  for(const g of [4.70,0.0,-4.70]){                      // 2枚1組の窓(写真:外形 0.035〜0.938。間の柱は車体の色)
+    W.push([g+w[0],g+w[1],K9.WZ0,K9.WZ1,0.07,0.07,0]);
+    W.push([g-w[1],g-w[0],K9.WZ0,K9.WZ1,0.07,0.07,0]);
   }
-  for(const s of (cab?[-1]:[-1,1])){                     // 車端の窓
-    const a=s*8.45, b=s*9.38;
-    W.push([Math.min(a,b),Math.max(a,b),K9.WZ0,K9.WZ1,0.08,0.08,0]);
+  for(const s of (cab?[-1]:[-1,1])){                     // 車端の窓(先頭車は運転台と反対の端、中間車は両端)
+    const a=s*e[0], b=s*e[1];
+    W.push([Math.min(a,b),Math.max(a,b),K9.WZ0,K9.WZ1,0.07,0.07,0]);
   }
   for(const d of K9.DOORX){                              // 扉窓(左右の戸に1枚ずつ)
-    W.push([d-K9.DWIN[1],d-K9.DWIN[0],K9.WZ0,K9.DWZ1,0.12,0.10,2]);
-    W.push([d+K9.DWIN[0],d+K9.DWIN[1],K9.WZ0,K9.DWZ1,0.12,0.10,2]);
+    W.push([d-K9.DWIN[1],d-K9.DWIN[0],K9.DWZ0,K9.DWZ1,0.10,0.10,2]);
+    W.push([d+K9.DWIN[0],d+K9.DWIN[1],K9.DWZ0,K9.DWZ1,0.10,0.10,2]);
   }
   if(cab) W.push([K9.CREW_WIN[0],K9.CREW_WIN[1],K9.CREW_WIN[2],K9.CREW_WIN[3],0.05,0.05,3]);
   return W;
@@ -5312,7 +5330,8 @@ function k9ShaderDefs(){
     '#define DZ1 '+f(K9.DZ1), '#define DOOR_HW '+f(K9.DOOR_HW), '#define FW '+f(K9.FW),
     '#define RED0 '+f(K9.RED[0]), '#define RED1 '+f(K9.RED[1]), '#define BLUE0 '+f(K9.BLUE[0]), '#define BLUE1 '+f(K9.BLUE[1]),
     '#define IVORY_X '+f(K9.IVORY_X), '#define WRAP_X '+f(K9.WRAP_X),
-    '#define CREW0 '+f(K9.CREW[0]), '#define CREW1 '+f(K9.CREW[1]),
+    '#define CREW0 '+f(K9.CREW[0]), '#define CREW1 '+f(K9.CREW[1]), '#define CREWZ0 '+f(K9.CREW_Z[0]), '#define CREWZ1 '+f(K9.CREW_Z[1]),
+    '#define FBLUE0 '+f(K9.FBLUE0), '#define BT1 '+f(K9.BLUE_TAPER[0]), '#define BT0 '+f(K9.BLUE_TAPER[1]), '#define XC0 '+f(K9_XC0),
     '#define FDOOR_HW '+f(K9.FDOOR_HW),
     '#define FW0 '+f(K9.FWIN[0]), '#define FW1 '+f(K9.FWIN[1]), '#define FWZ0 '+f(K9.FWIN[2]), '#define FWZ1 '+f(K9.FWIN[3]),
     '#define FDW '+f(K9.FDWIN[0]), '#define FDWZ0 '+f(K9.FDWIN[1]), '#define FDWZ1 '+f(K9.FDWIN[2]),
@@ -5334,7 +5353,11 @@ const K9_FRAG_MAIN=`
   float isSide=step(.75,abs(Nn.y));
   float sgn=(Y>0.)?1.:-1.;
   vec3 col=C_STL; float painted=0.; k8Spec=1.;
-  float red=k8band(Z,RED0,RED1), blue=k8band(Z,BLUE0,BLUE1);
+  float b0=BLUE0;
+#ifdef K8_CAB
+  b0=mix(BLUE0,FBLUE0,clamp((X-BT1)/(BT0-BT1),0.,1.));   // 前頭部の青帯は下へ広い(前面と側面の前端)。BT0→BT1 で斜めに側面の幅へ(写真)
+#endif
+  float red=k8band(Z,RED0,RED1), blue=k8band(Z,b0,BLUE1);
   float roof=step(Z_SH0+.012,Z);
   float o=(sgn>0.)?uOpen.x:uOpen.y;
   float slide=o*DOOR_HW;
@@ -5380,7 +5403,7 @@ const K9_FRAG_MAIN=`
   if(doorLine>.5) col=C_RUB;
 #ifdef K8_CAB
   if(abs(X-IVORY_X)<.004 && Z>Z_BOT+.05 && Z<Z_SH0-.01 && isSide>.5) col=C_GROOVE;
-  { float cr=k8rr(vec2(X,Z),vec4(CREW0,CREW1,Z_FLR+.02,3.02),.06,.005);
+  { float cr=k8rr(vec2(X,Z),vec4(CREW0,CREW1,CREWZ0,CREWZ1),.06,.005);
     if(isSide>.5 && cr<=0. && cr>-.012) col=C_RUB; }
 #endif
   if(frame>.5) { col=C_RUB; painted=1.; }
@@ -5391,13 +5414,18 @@ const K9_FRAG_MAIN=`
      帯は扉の枠(|y| FDF0〜FDF1)のアイボリーで切れる。前面の下端より下は暗い床下、扉の下は連結器まわりの開口 */
   float tt=clamp((Nn.x-.3)/.4,0.,1.), ay=abs(Y);
   if(tt>.5 && X>K8_L2-.8){
-    if(ay>FDF0 && ay<FDF1 && Z>BLUE0-.012 && Z<RED1+.012){ col=C_IVORY; painted=1.; }
+    if(ay>FDF0 && ay<FDF1 && Z>FBLUE0-.012 && Z<RED1+.012){ col=C_IVORY; painted=1.; }
     if(ay<FDF0 && (abs(Z-FDZ1)<.006 || abs(Z-FDZ0)<.006)) col=C_RUB;
-    float wo=k8rr(vec2(ay,Z),vec4(FW0,FW1,FWZ0,FWZ1),.10,.06);
-    if(wo<=0.){ if(wo>-.035){ col=C_RUB; painted=1.; } else { col=C_FGLASS; painted=0.; k8Spec=1.6; } }
     float wd=k8rr(vec2(Y,Z),vec4(-FDW,FDW,FDWZ0,FDWZ1),.04,.04);
     if(wd<=0.){ if(wd>-.03){ col=C_RUB; painted=1.; } else { col=C_FGLASS; painted=0.; k8Spec=1.6; } }
     if(Z<FBOT || (ay<FCPL && Z<FANTZ1)){ col=C_BELOW; painted=1.; }
+  }
+  /* 左右の前面窓は角の曲面に沿って側面へ回り込む(利用者指摘。9755 の写真と側面写真:側面の X=WRAP_X で終わる)。
+     面に沿って伸ばした横の座標 u(前面と角は |y|、側面は 半幅+(角の終わり XC0 − X))で窓を描く。外側の角は大きく丸い */
+  if(X>WRAP_X-.05 && Z>FWZ0-.01 && Z<FWZ1+.01){
+    float u=ay+max(0.,XC0-X), ro=step(.9,u);
+    float wo=k8rr(vec2(u,Z),vec4(FW0,K8_HWB+XC0-WRAP_X,FWZ0,FWZ1),mix(.10,.20,ro),mix(.06,.12,ro));
+    if(wo<=0.){ if(wo>-.035){ col=C_RUB; painted=1.; } else { col=C_FGLASS; painted=0.; k8Spec=1.6; } }
   }
 #endif
   if(!gl_FrontFacing){ col=C_INSIDE; painted=1.; }
@@ -5434,11 +5462,11 @@ function k9DetailGeo(cab){
   if(cab){
     for(const s of [-1,1]){
       /* 乗務員扉の前後の手すりは**埋め込み式**(利用者指示:正面から見えない)。車体の面に縦長のくぼみ(暗い灰)を描き、
-         その中に握り棒(明るい灰)を通す。どちらも車体の面から 3mm 以内で、外へ張り出さない(8000系 v4 の手すりは
-         4.5cm 外に出る)。⑭が車体幅の外に出る頂点が無いこと、⑮が正面の輪郭を見る */
-      const yy=d=>[Math.min(s*hw,s*(hw+d)),Math.max(s*hw,s*(hw+d))];
-      for(const xh of [9.069,8.46]){
-        const g=yy(.0015), r=yy(.003), z0=K9.Z_FLR+.04, z1=2.57;
+         その中に握り棒(明るい灰)を通す。どちらも車体の面から 1.5mm 以内で、外へ張り出さない(8000系も同じ。⑩⑮が正面の
+         輪郭、⑭が車体幅の外に出る頂点が無いことを見る)。位置と上下は側面写真(K9.HANDRAIL) */
+      const yy=d=>[Math.min(s*hw,s*(hw+d)),Math.max(s*hw,s*(hw+d))], H=K9.HANDRAIL;
+      for(const xh of [H[0],H[1]]){
+        const g=yy(.0008), r=yy(.0015), z0=H[2], z1=H[3];
         B.box(xh-.025,xh+.025,g[0],g[1],z0,z1,K8C.groove);              // くぼみ(幅5cm)
         B.box(xh-.008,xh+.008,r[0],r[1],z0+.06,z1-.06,K8C.trim);       // 握り棒(くぼみの中)
       }
@@ -5454,10 +5482,11 @@ function k9DetailGeo(cab){
   return B.geo();
 }
 // 幕板まわりの小物(8000系より幕板が低いぶん下げる。推定)
-const K9_SIDEFIT={HWB:K9.HWB, SLED:[0.143,0.817,2.985,3.150], SLED_FACE:[0.18,0.78,3.012,3.122],
-  LAMPUNIT:[-0.217,-0.083,2.985,3.224], LENS_Z:[3.165,3.045], SIDE_LAMP:[3.958,3.07,0.06],
-  SPEAKERS:[[5.28,5.56],[-5.56,-5.28]], SPK_Z:[3.053,3.224]};
-const K9_PLATE_Z=[2.945,3.065];
+// 側面写真の実測(行先表示器 0.175〜0.815・z 2.971〜3.165/表示灯 −0.197〜−0.092・z 3.016〜3.210/車側灯 +4.0/スピーカー +5.3〜5.7)
+const K9_SIDEFIT={HWB:K9.HWB, SLED:[0.175,0.815,2.971,3.165], SLED_FACE:[0.195,0.795,2.991,3.145],
+  LAMPUNIT:[-0.197,-0.092,3.016,3.210], LENS_Z:[3.160,3.065], SIDE_LAMP:[4.0,3.07,0.06],
+  SPEAKERS:[[5.32,5.68],[-5.68,-5.32]], SPK_Z:[3.053,3.224]};
+const K9_PLATE_Z=[2.713,2.832], K9_LOGO_Z=[2.737,2.842];   // 車号・反対の端のロゴ(写真:窓の上端の高さ。幕板ではない)
 // 前頭部の部品(前面写真の実測 ftex9.png。寸法は K9.F*)
 function k9FrontGeos(){
   const G={}, mk=f=>{const B=new K8B(); f(B); return B.geo();}, hw=K9.HWB;
@@ -5473,7 +5502,7 @@ function k9FrontGeos(){
     const fr=k8lin(.17,.17,.18), D=K9.FDOOR;
     for(const yc of [-D[0],D[0],-D[1],D[1]]){
       k9patch(B,K9.RED[1]+.012,D[3],yc-.006,yc+.006,.004,1,fr);
-      k9patch(B,D[2],K9.BLUE[0]-.012,yc-.006,yc+.006,.004,1,fr);
+      k9patch(B,D[2],K9.FBLUE0-.012,yc-.006,yc+.006,.004,1,fr);
     }
     // ワイパー(左右の前面窓。下の内側の付け根から外上へ)
     for(const sg of[-1,1]){
@@ -5536,7 +5565,8 @@ const K9GEO=(function(){
     bogieM:K8GEO.bogieM, bogieT:K8GEO.bogieT,        // TS-1017/1018(軸距・台車中心は8000系と同じとする)
     under:k8UnderGeo(K9), ac:k9AcGeo(), gang:k8GangGeo(K9), pantoBits:k8PantoBitsGeo(K9.Z_CROWN),
     plate:k8PlateGeo(0,K8_PLATE_U[1]-K8_PLATE_U[0],K9_PLATE_Z[1]-K9_PLATE_Z[0],(K9_PLATE_Z[0]+K9_PLATE_Z[1])/2,.004,K9.HWB),
-    logo:k8PlateGeo(0,K8_PLATE_U[1]-K8_PLATE_U[0],.085,(K9_PLATE_Z[0]+K9_PLATE_Z[1])/2,.005,K9.HWB),
+    logo:k8PlateGeo(0,K8_PLATE_U[1]-K8_PLATE_U[0],K9_LOGO_Z[1]-K9_LOGO_Z[0],(K9_LOGO_Z[0]+K9_LOGO_Z[1])/2,.005,K9.HWB),
+    cabLogo:k8PlateGeo(8.10,.56,.15,2.715,.005,K9.HWB),       // 運転台側の KEIO(写真:X 7.82〜8.38・z 2.64〜2.79。アイボリーの後ろ)
   };
   G.front=k9FrontGeos();
   // パンタ(PT-7110):屋根が8000系より0.10m 低いぶん、付け根も下げる(舟はトロリ線に当てる)
@@ -5601,6 +5631,7 @@ function makeCar(opt){
     const lg=addFine(GEO.logo,k8Logo(256,72),sh); lg.position.x=-xn;
   }
   if(cab&&S9){                                              // 9000系の前頭部
+    addFine(GEO.cabLogo,k8Logo(384,96),sh);
     const F=GEO.front;
     addFine(F.case,K8M.vc,sh); add(F.vc,K8M.vc,sh);
     addFine(F.hl,o.lights==='head'?M_HL:M_HL_OFF,sh);
