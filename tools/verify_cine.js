@@ -26,6 +26,7 @@ const X = require('./stub_three')(path,
   'sunFollow:sunFollow, SH_MAP:SH_MAP, DOM:DOM, srgb:srgb, zRunDown:zRunDown,' +
   'NIGHT:NIGHT, NIGHT_STAT:NIGHT_STAT, PLATS:PLATS, trains:trains, stopPosOf:stopPosOf, CAR_HALF:CAR_HALF,' +
   'STA_LIT_U:(typeof STA_LIT_U!=="undefined"?STA_LIT_U:null), MAT_BALLAST:MAT_BALLAST, deckHalf:deckHalf,' +
+  'K8M:K8M, TRIMMAT:TRIMMAT, M_BOG:M_BOG, M_PN:M_PN, M_SH:M_SH, M_PANS:M_PANS,' +
   'LU:(typeof LU!=="undefined"?LU:null), CARS_ALL:(typeof CARS_ALL!=="undefined"?CARS_ALL:[]), platRange:platRange,' +
   'setLookUI:(typeof setLookUI!=="undefined"?setLookUI:null), LOOK_UI:(typeof LOOK_UI!=="undefined"?LOOK_UI:null)');
 
@@ -263,6 +264,13 @@ const TPROP = {};
     ok('駅の照明の下の線路', bad === null && miss.length === 0 && dayV === 0 && ngtV >= 0.2,
       '駅の中心=1・駅間/桁の下=0・線路の材質5種・昼0/夜≥0.2',
       bad || (miss.length ? '未適用 ' + miss.join('・') : '全' + X.STA.length + '駅・昼' + dayV + '/夜' + ngtV));
+    // 車両の部品も同じ駅の照明を受ける(利用者指示:スカートが暗かった)。スカート・前面のケース・床下・冷房・側面の小物は
+    // 頂点カラーの材質(K8M.vc)、細部・台車・パンタはそれぞれの材質。車体は車両ごとの uLit(上の検査)
+    const cm = [['頂点カラーの部品(スカート・前面・床下・冷房)', X.K8M.vc], ['細部', X.TRIMMAT], ['台車', X.M_BOG], ['パンタの枠', X.M_PN],
+                ['パンタの舟', X.M_SH], ['パンタの台枠', X.M_PANS]];
+    const cmiss = cm.filter(([n, m]) => { const sh = { vertexShader: '#include <begin_vertex>', fragmentShader: '#include <emissivemap_fragment>', uniforms: {} };
+      try { m.onBeforeCompile(sh); } catch (e) { return true; } return !/diffuseColor\.rgb\*uStaLit\*staLitF\(vStaW\)/.test(sh.fragmentShader) || !sh.uniforms.uStaA; }).map((x) => x[0]);
+    ok('駅の照明で車両の部品も照らす', cmiss.length === 0, cm.length + '種(面の色を掛けた発光)', cmiss.length ? '未適用 ' + cmiss.join('・') : cm.length + '種とも');
   }
   /* 駅部は夜に強く照らされている(利用者指示:もっともっと明るい)。駅の結合ジオメトリの発光は
      高架橋の数倍で、面の色(頂点カラー)を掛けて光ること(一様に足すと暗い外装まで白く浮く)。

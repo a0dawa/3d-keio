@@ -4723,6 +4723,11 @@ const M_BOG =mkStd({vertexColors:true,metalness:0.70,roughness:0.52,envMapIntens
 const M_PN  =mkStd({color:srgb(0x202326),metalness:0.80,roughness:0.38,envMapIntensity:1.0});   // パンタの枠
 const M_SH  =mkStd({color:srgb(0xb9bec4),metalness:0.85,roughness:0.30,envMapIntensity:1.0});   // 舟体
 const M_PANS=mkStd({color:srgb(0x9aa1a8),metalness:0.85,roughness:0.25,envMapIntensity:1.0});   // 台枠・ホーン
+/* 夜の駅の照明は車体だけでなく部品にも当てる(利用者指示:スカートが照らされていなかった)。車体は車両ごとの uLit だが、
+   部品の材質(頂点カラーのスカート・前面のケース・床下・冷房・側面の小物・幌/細部/台車/パンタ)は全車で共有なので、
+   線路と同じ世界座標の駅の照明(staLitPatch。ホームの範囲=1・外へ40mで0、強さは夜だけ CAR_LIT)にする。
+   どちらも「面の色を掛けた発光」なので、車体と部品の明るさがそろう。表示器・車番・ロゴ・車内は照明を受けない材質 */
+for(const m of [K8M.vc,TRIMMAT,M_BOG,M_PN,M_SH,M_PANS]) staLitPatch(m);
 // 灯火。点いているものは自発光、消えているものはレンズの色
 const M_HL =mkMat('MeshLambertMaterial',{color:0xffffff,emissive:0xfff2d8});   // 前照灯
 const M_TL =mkMat('MeshLambertMaterial',{color:0xff1a10,emissive:0xff0d08});   // 尾灯
