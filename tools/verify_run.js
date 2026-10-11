@@ -60,6 +60,9 @@ const REF = {
   // 運転モードの種別(利用者指示):特急=本線を走り、停車駅(EXP_STOPS)以外では停まってもホームドアを開けない
   // (利用者が挙げた駅は代田橋・下高井戸・桜上水・上北沢・八幡山・仙川。芦花公園も特急の通過駅)/各停=待避線・停車線を走り、全駅で開ける
   RIDE_EXP_NOOPEN: ['代田橋', '下高井戸', '桜上水', '上北沢', '八幡山', '芦花公園', '仙川'],
+  // 列車が停まらないホームの縁(利用者指示:仙川の上りは北側の単式ホームを使う)。[駅, ホームの中心 off, 縁(+1=北)]。
+  // その縁のホームドアは開かない(各停の開く列に数えない)
+  NOSTOP: [['仙川', 0, 1]],
   SIM_T: 7200,             // いっしょに走らせる時間[秒]
   CAR_L: 19.5, CAR_W: 2.8, // 車体の長さ・幅(重なりの判定)
 };
@@ -72,6 +75,11 @@ function ok(name, cond, expect, got) {
 }
 
 const TRAIN_LEN = (REF.TRAIN_CARS - 1) * X.K8.PITCH + X.K8.LEN;   // 編成長[m]=199.5
+// その列が「列車が停まらない縁」(REF.NOSTOP)に立つか。縁の位置はホームの登録簿 PLATS から(列は縁から 0.12m 内側)
+function nostopRow(p) {
+  return REF.NOSTOP.some((q) => q[0] === p.st.n && X.PLATS.some((pl) => Math.abs(pl.off - q[1]) < 0.5 &&
+    pl.x0 <= p.st.x + 1 && pl.x1 >= p.st.x - 1 && Math.abs(p.off - (pl.off + q[2] * pl.hw)) < 0.3));
+}
 
 /* ---- 1. 停止位置:編成がホームに収まるか ---------------------------------- */
 for (const dir of [1, -1]) {
@@ -251,9 +259,14 @@ ok('上限速度を超えない', vmax <= REF.VMAX_KMH + 0.5, '≤' + REF.VMAX_K
     const bad = X.PSD.filter((p) => p.open.length !== perCar * cars);
     ok('ホームドアの開口数', bad.length === 0, perCar * cars + '箇所/列',
       bad.length ? bad[0].st.n + ' ' + bad[0].open.length + '箇所' : '全て' + perCar * cars + '箇所');
-    const openable = X.PSD.filter((p) => p.openable);
+    const openable = X.PSD.filter((p) => p.openable && !nostopRow(p));
     ok('開くホームドアの列数', openable.length === X.STA.length * 2,
-      X.STA.length * 2 + '列(全駅×上下)', openable.length + '列');
+      X.STA.length * 2 + '列(全駅×上下。列車が停まらない縁を除く)', openable.length + '列');
+    // 列車が停まらない縁の列は、モデルでも開かない柵(noStop)になっている(それ以外の列は noStop でない)
+    const wrongNo = X.PSD.filter((p) => !!p.noStop !== nostopRow(p));
+    ok('停まらない縁の列は開かない柵', wrongNo.length === 0 && X.PSD.some((p) => p.noStop),
+      REF.NOSTOP.map((q) => q[0] + (q[2] > 0 ? '(島式の北)' : '(島式の南)')).join('・') + 'だけ',
+      wrongNo.length ? wrongNo.map((p) => p.st.n + ' off' + p.off.toFixed(2) + (p.noStop ? ' 柵' : ' 開く列')).join(' ') : X.PSD.filter((p) => p.noStop).length + '列');
     // 停車列車が来ない線(笹塚の内側=留置線側/2面4線の内側=本線)にもホームドアを置く
     let bad4 = null;
     for (const n of REF.PSD4_STA) {
@@ -410,6 +423,42 @@ ok('上限速度を超えない', vmax <= REF.VMAX_KMH + 0.5, '≤' + REF.VMAX_K
     const bad = X.PSD.filter((q) => q.side !== 1 && q.side !== -1);
     ok('全扉列でホーム側が定まる', bad.length === 0, X.PSD.length + '列すべて',
       bad.length ? bad[0].st.n + ' 未定' : X.PSD.length + '列すべて');
+  }
+  /* 7-3b 仙川(利用者指示):上りの列車は北側の単式ホームを使う。上りの各停を停めると、上りの線より北の列が開き、
+     客用扉も北の面が開く。島式の北の縁の列(上りの線より南)は開かない。下りは島式の南の縁(下りの線より北)が開く。
+     開く面は 7-2 と同じく seatCar の式から検証側で求める */
+  {
+    const st = X.STA.find((s) => s.n === '仙川');
+    const offs = X.TRACKS.filter((t) => st.x >= t.x0 && st.x <= t.x1).map((t) => t.zf(st.x));
+    const lzOf = (dir) => { const pA = X.frame(st.x - 1, 0), pB = X.frame(st.x + 1, 0), pO = X.frame(st.x, 0), pN = X.frame(st.x, 1);
+      let fx = pB.x - pA.x, fz = pB.z - pA.z; if (dir < 0) { fx = -fx; fz = -fz; }
+      return (-fz * (pN.x - pO.x) + fx * (pN.z - pO.z)) > 0 ? 1 : -1; };
+    const others = X.trains.map((q) => ({ q: q, st: q.st, atSt: q.atSt, dwell: q.dwell, x: q.x, v: q.v, target: q.target }));
+    const res = {};
+    for (const dir of [-1, 1]) {
+      const tr = X.trains.find((t) => t.dir === dir && t.kind === '各停');
+      for (const o of others) { o.q.st = 'run'; o.q.atSt = null; }
+      tr.x = X.stopPosOf(st, dir) - dir * X.CAR_HALF; tr.st = 'dwell'; tr.dwell = 20; tr.atSt = st; tr.v = 0;
+      for (let i = 0; i < 120; i++) X.stepPSD(0.05);
+      for (let i = 0; i < 150; i++) X.stepCarDoors(tr, 0.05);
+      const line = dir < 0 ? Math.max(...offs) : Math.min(...offs);          // 上り=北の線・下り=南の線
+      const op = X.PSD.filter((q) => q.st === st && q.r > 0.95 && !q.hold);
+      const shut = X.PSD.filter((q) => q.st === st && q.r < 0.01 && Math.abs(q.off - line) < 2.5);
+      res[dir] = { op: op, shut: shut, line: line, dr: tr.dr, ds: tr.dside, lz: lzOf(dir) };
+      tr.st = 'run'; tr.atSt = null;
+      for (let i = 0; i < 120; i++) X.stepPSD(0.05);
+      for (let i = 0; i < 150; i++) X.stepCarDoors(tr, 0.05);
+    }
+    for (const o of others) Object.assign(o.q, { st: o.st, atSt: o.atSt, dwell: o.dwell, x: o.x, v: o.v, target: o.target });
+    for (let i = 0; i < 120; i++) X.stepPSD(0.05);
+    const U = res[-1], D = res[1];
+    const upOk = U.op.length === 1 && U.op[0].off > U.line + 0.5 && U.shut.some((q) => q.off < U.line - 0.5) &&
+      U.dr > 0.98 && U.ds === U.lz;
+    ok('仙川:上りは北側のホームで開く', upOk, '上りの線(off' + U.line.toFixed(2) + ')より北の1列・扉は北の面(' + U.lz + ')・島式の北の縁は閉',
+      U.op.map((q) => 'off' + q.off.toFixed(2)).join(' ') + '・扉' + U.dr.toFixed(2) + '面' + U.ds + '・閉' + U.shut.map((q) => q.off.toFixed(2)).join('/'));
+    const dnOk = D.op.length === 1 && D.op[0].off > D.line + 0.5 && D.dr > 0.98 && D.ds === D.lz;
+    ok('仙川:下りは島式ホームで開く', dnOk, '下りの線(off' + D.line.toFixed(2) + ')より北の1列・扉は北の面(' + D.lz + ')',
+      D.op.map((q) => 'off' + q.off.toFixed(2)).join(' ') + '・扉' + D.dr.toFixed(2) + '面' + D.ds);
   }
   /* 7-4〜7-6 客用扉(2026-10 v4 へ差し替え)
      扉は車体の塗り分けシェーダが描く2枚引戸で、開度は車両ごとの uniform uOpen

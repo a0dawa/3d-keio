@@ -66,7 +66,11 @@ const REF = {
            '区急': ['笹塚', '明大前', '桜上水', '千歳烏山', '仙川'], '各停': 'all' },
   DEST_DOWN: ['京王八王子', '高尾山口', '橋本', '調布', 'つつじヶ丘', '若葉台'],
   DEST_UP: ['新宿', '本八幡', '新線新宿'],
+  // 列車が停まらないホームの縁(利用者指示:仙川の上りは北側の単式ホームを使う)。島式(中心 off 0)の北の縁は
+  // 上りの線に面するが番線の案内に数えない。[駅, ホームの中心 off, 縁(+1=北)]
+  NOSTOP: [['仙川', 0, 1]],
 };
+const nostop = (st, p, sg) => REF.NOSTOP.some((q) => q[0] === st.n && Math.abs(p.off - q[1]) < 0.5 && q[2] === sg);
 
 const rows = [];
 let ng = 0;
@@ -268,6 +272,7 @@ ok('乗務員モニターを置かない', !X.STRUCT.some((q) => q.tag === '乗�
     for (const p of X.PLATS) {
       if (!(p.x0 <= pm && p.x1 >= pm)) continue;
       for (const sg of [-1, 1]) {
+        if (nostop(st, p, sg)) continue;                     // 列車が停まらない縁(仙川の島式の北)
         const edge = p.off + sg * p.hw;
         for (const t of X.TRACKS) {
           if (pm < t.x0 || pm > t.x1) continue;
@@ -287,7 +292,8 @@ ok('乗務員モニターを置かない', !X.STRUCT.some((q) => q.tag === '乗�
   for (const w of X.STAIRS) {
     if (w.kind !== '階段') continue;
     const e0 = w.dir > 0 ? w.s0 : w.s1, S = staTrk.get(w.st), p = platOf(w);
-    const own = S.L.filter((q) => p && [-1, 1].some((sg) => { const d = sg * (q.off - (p.off + sg * p.hw)); return d > 0.5 && d < 2.6; }));
+    const own = S.L.filter((q) => p && [-1, 1].some((sg) => { if (nostop(w.st, p, sg)) return false;
+      const d = sg * (q.off - (p.off + sg * p.hw)); return d > 0.5 && d < 2.6; }));
     const g = G.find((q) => q.kind === 'stair' && q.st === w.st && Math.abs(q.s - e0) <= 1.0 && q.off >= w.o0 - 1e-6 && q.off <= w.o1 + 1e-6);
     if (!g) { if (!badFace) badFace = [w.st.n, 's=' + e0.toFixed(0), '案内が無い']; continue; }
     nS++;

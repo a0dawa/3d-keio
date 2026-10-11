@@ -2149,9 +2149,14 @@ const STD={
 // ホームの並び [中心off, 半幅]。PLAT_EDGE(2b章)と同じ値(片方だけ変えないこと)
 const PLT_OF={isl:[[0,3.5]], hachi:[[0,3.0]], side:[[-5.85,2.25],[5.85,2.25]],
               quad:[[-6.05,2.5],[6.05,2.5]], ctx:[[-6.05,2.5],[6.05,2.5]], gnd:[[0,3.0],[7.85,1.7]]};
-// ホームドアの列(縁から0.12m内側=戸袋の厚さの半分)。仙川も縁の内側に置く
+// ホームドアの列(縁から0.12m内側=戸袋の厚さの半分)。仙川も縁の内側に置く(北の単式ホームの縁 6.15 にも)
 const DRS_OF={isl:[-3.38,3.38], hachi:[-2.88,2.88], side:[-3.72,3.72],
-              quad:[-3.67,3.67,-8.43,8.43], ctx:[-3.67,3.67,-8.43,8.43], gnd:[-2.88,2.88]};
+              quad:[-3.67,3.67,-8.43,8.43], ctx:[-3.67,3.67,-8.43,8.43], gnd:[-2.88,2.88,6.27]};
+/* 列車が停まらないホームの縁 [ホームの番号(PLT_OF の順), 縁(+1=北/-1=南)]。
+   仙川の上りは北側の単式ホームを使う(利用者指示)。島式の北の縁も上りの線に面するが、列車は扉を開けない。
+   その縁のホームドアは開かない柵として立て(PSD の noStop)、番線の案内(staTracks)にも数えない */
+const PLAT_NOSTOP={'仙川':[[0,1]]};
+const noStopEdge=(st,pi,sg)=>(PLAT_NOSTOP[st.n]||[]).some(q=>q[0]===pi&&q[1]===sg);
 const ROMA=['Sasazuka','Daitabashi','Meidaimae','Shimo-takaido','Sakurajosui',
             'Kami-kitazawa','Hachimanyama','Roka-koen','Chitose-karasuyama','Sengawa'];
 
@@ -2400,6 +2405,7 @@ function staTracks(st,pm){
   const L=[];
   PLT_OF[st.t].forEach(function(pp,pi){
     for(const sg of[-1,1]){
+      if(noStopEdge(st,pi,sg)) continue;                 // 列車が停まらない縁(仙川の島式の北)
       const edge=pp[0]+sg*pp[1];
       for(const t of TRACKS){
         if(pm<t.x0||pm>t.x1) continue;
@@ -6274,6 +6280,8 @@ for(const d of PSD_DEF){
     const near=TRACKS.filter(t=>st.x>=t.x0&&st.x<=t.x1).map(t=>t.zf(st.x)).reduce((b,o)=>Math.abs(o-off)<Math.abs(b-off)?o:b,Infinity);
     const trackOff=isFinite(near)?near:(openable?(dir>0?-ro:ro):(dir>0?-mainOff(st.x):mainOff(st.x)));
     const side=(off>trackOff?1:-1)*localZSign(st.x,dir);
+    // 列車が停まらない縁(PLAT_NOSTOP。仙川の島式の北)の列は開かない柵:trainPSD・ridePSDFor が選ばない
+    const noStop=PLT_OF[st.t].some((pp,pi)=>[-1,1].some(sg=>noStopEdge(st,pi,sg)&&Math.abs(off-(pp[0]+sg*pp[1]))<0.3));
     CUR=st.kk?KOUKU[st.kk-1].VGs:null;
     // 開口と開口の間の固定部(戸袋)。駅の結合ジオメトリへ積む
     const SG=STG[STA.indexOf(st)];
@@ -6290,7 +6298,7 @@ for(const d of PSD_DEF){
     const inst=new THREE.InstancedMesh(lg,MAT_PSDL,open.length*2);
     inst.frustumCulled=true;
     add(inst);
-    PSD.push({st:st,dir:dir,off:off,side:side,openable:openable,
+    PSD.push({st:st,dir:dir,off:off,side:side,openable:openable,noStop:noStop,
               y:d.y+1.71,open:open,inst:inst,r:-1});
   }
 }
@@ -6375,7 +6383,7 @@ NIGHT_HOOKS.push(on=>{ M_PEOPLE.emissive.copy(on?glow(0x3a3a3a):srgb(0x000000));
     // ホームドアの開口の後ろに並ぶ(扉の位置ごとに 45%)
     for(const e of[-1,1]){
       const edge=q.off+e*q.hw;
-      const row=PSD.find(r=>Math.abs(r.off-edge)<1.2&&r.open.some(c=>c>q.x0&&c<q.x1));
+      const row=PSD.find(r=>!r.noStop&&Math.abs(r.off-edge)<1.2&&r.open.some(c=>c>q.x0&&c<q.x1));
       if(!row) continue;
       for(const c of row.open){
         if(c<q.x0||c>q.x1||Math.random()>0.45) continue;
@@ -6510,7 +6518,7 @@ function trainPSD(t){
   if(t.st!=='dwell'||!t.atSt) return null;
   const to=t.dir>0?-trainOff(t,t.atSt.x):trainOff(t,t.atSt.x);
   let best=null,bd=2.5;
-  for(const q of PSD){ if(q.st!==t.atSt||q.dir!==t.dir) continue; const d=Math.abs(q.off-to); if(d<bd){bd=d;best=q;} }
+  for(const q of PSD){ if(q.st!==t.atSt||q.dir!==t.dir||q.noStop) continue; const d=Math.abs(q.off-to); if(d<bd){bd=d;best=q;} }
   return best;
 }
 function stepCarDoors(t,dt){
@@ -6615,7 +6623,7 @@ function ridePSDFor(st){
   const trackOff=rideZf(st.x);               // 自列車の線(下り=−rideOff)
   let best=null,bd=2.5;
   for(const q of PSD){
-    if(q.st!==st) continue;
+    if(q.st!==st||q.noStop) continue;                 // 列車が停まらない縁(仙川の島式の北)は開かない
     const d=Math.abs(q.off-trackOff);
     if(d<bd){bd=d;best=q;}
   }
