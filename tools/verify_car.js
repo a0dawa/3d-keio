@@ -158,8 +158,10 @@ const range = (pts, k) => { let lo = 1e9, hi = -1e9; for (const p of pts) { if (
   }
 }
 
-/* ---- 3b. 前面のスカートの切り欠き(利用者指示:スカートの大きさは v4 のまま、切り欠きを v4 の1.2倍) ----
-   v4:スカートは上端1.09・下端0.24、切り欠きは |y|<0.36・上から6割。→ 半幅0.432・深さ0.612(下端 z=0.478) */
+/* ---- 3b. 前面のスカートの切り欠き(利用者指示:スカートの大きさは v4 のまま、切り欠きの深さを v4 の1.2倍) ----
+   v4:スカートは上端1.09・下端0.24、切り欠きは上から6割。→ 深さ0.612(下端 z=0.478)。
+   切り欠きの幅は 9000系と共通(2026-10-11 利用者指示):上端の半幅=9000系の前掛けの脇(写真 0.55×1.225)−0.10=0.574、
+   下へ狭まり下端の幅は上端の0.92倍(半幅0.528)。斜めの縁は「上端に1点・切り欠きの下端に2点」の三角形で測る */
 {
   // 明るい(アイボリーの)頂点だけを v4 座標で(スカートの板。連結器・床下の暗い箱を除く)
   const bright = (geo) => { const P = geo.attributes.position.array, C = geo.attributes.color.array, o = [];
@@ -168,8 +170,18 @@ const range = (pts, k) => { let lo = 1e9, hi = -1e9; for (const p of pts) { if (
   const topRow = sk.filter((p) => Math.abs(p[2] - 1.09) < 1e-4), hwN = Math.min(...topRow.map((p) => Math.abs(p[1])));
   const inN = sk.filter((p) => Math.abs(p[1]) < hwN - 1e-4), zN = inN.length ? Math.max(...inN.map((p) => p[2])) : 0;
   const outer = Math.max(...sk.map((p) => Math.abs(p[1]))), zb = Math.min(...sk.map((p) => p[2]));
-  ok('スカートの切り欠き', near(hwN, 0.36 * 1.2, 0.002) && near(zN, 1.09 - 0.6 * 1.2 * 0.85, 0.01),
-    '半幅0.432・下端z0.478(v4×1.2)', '半幅' + hwN.toFixed(3) + '・下端z' + zN.toFixed(3));
+  const OPEN_T = 0.55 * 1.225 - 0.10, OPEN_B = OPEN_T * 0.92;
+  // 斜めの縁の三角形:頂点の高さが {zN, zN, 1.09}。その zN の頂点のうち内側が切り欠きの下端の半幅
+  let hwB = null;
+  { const P = X.K8GEO.front.vc.attributes.position.array, C = X.K8GEO.front.vc.attributes.color.array;
+    for (let i = 0; i < P.length; i += 9) {
+      if (!(C[i] > 0.5 && C[i + 1] > 0.5) || P[i] < 9) continue;
+      const v = [0, 1, 2].map((k) => [P[i + 3 * k], -P[i + 3 * k + 2], P[i + 3 * k + 1]]);
+      const lo = v.filter((q) => Math.abs(q[2] - zN) < 1e-4), hi = v.filter((q) => Math.abs(q[2] - 1.09) < 1e-4);
+      if (lo.length === 2 && hi.length === 1) { const m = Math.min(...lo.map((q) => Math.abs(q[1]))); hwB = hwB === null ? m : Math.min(hwB, m); }
+    } }
+  ok('スカートの切り欠き', near(hwN, OPEN_T, 0.002) && hwB !== null && near(hwB, OPEN_B, 0.002) && near(zN, 1.09 - 0.6 * 1.2 * 0.85, 0.01),
+    '半幅 上0.574・下0.528(×0.92)・下端z0.478', '半幅 上' + hwN.toFixed(3) + '・下' + (hwB === null ? '斜めの縁なし' : hwB.toFixed(3)) + '・下端z' + zN.toFixed(3));
   ok('スカートの大きさ(v4 のまま)', near(zb, 0.24, 0.002) && outer > 1.15 && outer < 1.30, '下端0.24・外端1.2前後', '下端' + zb.toFixed(3) + '・外端' + outer.toFixed(3));
 }
 

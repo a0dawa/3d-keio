@@ -5059,7 +5059,10 @@ function k8NumPlate(num){
 /* LED表示器(黒地に発光の文字)。文字の枠は表示器の幅・高さに対する割合 K8_LED_TXT(利用者指示で v4 の 0.86・0.70 から
    15%大きく)。画像の縦横比は貼る面と同じにすること(違うと文字が縦長・横長に伸びる。9000系の種別で起きた) */
 const K8_LED_TXT=[0.86*1.15,0.70*1.15];
-const K8_SKIRT_NOTCH=[0.36*1.2,0.60*1.2];  // 8000系のスカートの切り欠き:半幅・上端からの深さの割合(v4 の1.2倍。利用者指示)
+/* スカートの中央の開口(8000系・9000系で共通。2026-10-11 利用者指示):上端の半幅は 9000系の前掛けの脇(写真の実測 0.55 の
+   1.225倍=0.674)から左右10cm ずつ狭く、下へ行くほど狭まり、下端の幅は上端の0.92倍 */
+const SKIRT_OPEN=[0.55*1.225-0.10,0.92];
+const K8_SKIRT_NOTCH=[SKIRT_OPEN[0],0.60*1.2];  // 8000系のスカートの切り欠き:上端の半幅・上端からの深さの割合(深さは v4 の1.2倍。利用者指示)
 const K8_FRONT_TXT=1.10;                   // 8000系の前面の行先・種別はさらに10%大きく(利用者指示)
 // 種別の表記:2文字は間を空ける(「特  急」「各  停」。利用者指示)。色は元の種別名で引く
 function k8KindTxt(k){ return (k&&k.length===2)?k[0]+'  '+k[1]:k; }
@@ -5217,19 +5220,23 @@ function k8FrontGeos(){
       B.cyl(P(sg*.87,1.75,.025),P(sg*.70,1.94,.025),.012,6,K8C.black);
       B.cyl(P(sg*.70,1.93,.03),P(sg*.12,1.90,.03),.008,5,K8C.black);
     }
-    /* スカート(アイボリー):上端1.09、下ほど前へ。中央に連結器の切り欠き。切り欠きは v4(|y|<0.36・上から6割)を
-       幅・高さとも1.2倍(利用者指示:スカートの大きさはそのまま)。切り欠きの縁にも列を置いて寸法どおりに切る */
-    const NOTCH=K8_SKIRT_NOTCH, ys=[];
+    /* スカート(アイボリー):上端1.09、下ほど前へ。中央に連結器の切り欠き(スカートの大きさは v4 のまま)。切り欠きは
+       9000系と共通の開口 SKIRT_OPEN(上端の半幅 0.574・下端はその0.92倍)、深さは v4(上から6割)の1.2倍(利用者指示)。
+       切り欠きの縁の上端と下端にも列を置いて寸法どおりに切る(縁は斜め。上端と下端の列の間は三角形) */
+    const NOTCH=K8_SKIRT_NOTCH, D=NOTCH[1], ys=[];
+    // 下端の列:bot は y×0.96 なので、深さ D の所で半幅が上端×0.92 になる列の y
+    const yT=NOTCH[0], yB=NOTCH[0]*SKIRT_OPEN[1]/(1-0.04*D);
     for(let c=0;c<=28;c++) ys.push((-1+2*c/28)*(hw-.12));
-    ys.push(-NOTCH[0],NOTCH[0]); ys.sort((a,b)=>a-b);
+    ys.push(-yT,-yB,yB,yT); ys.sort((a,b)=>a-b);
     const top=[], bot=[];
     for(const y of ys){ const xt=k8nose(1.0,y/hw,hw)-.02; top.push([xt,y,1.09]); bot.push([xt+.06,y*.96,.24]); }
     const Cn=ys.length-1;
     const lerp=(a,b,t)=>[a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t,a[2]+(b[2]-a[2])*t];
     for(let c=0;c<Cn;c++){
-      const yc=Math.abs((ys[c]+ys[c+1])/2);
-      if(yc<NOTCH[0]) B.quad(lerp(top[c],bot[c],NOTCH[1]),bot[c],bot[c+1],lerp(top[c+1],bot[c+1],NOTCH[1]),K8C.ivory);
+      const ym=(ys[c]+ys[c+1])/2, yc=Math.abs(ym), n0=lerp(top[c],bot[c],D), n1=lerp(top[c+1],bot[c+1],D);
+      if(yc<yT) B.quad(n0,bot[c],bot[c+1],n1,K8C.ivory);                 // 切り欠きの下
       else B.quad(top[c],bot[c],bot[c+1],top[c+1],K8C.ivory);
+      if(yc>yB&&yc<yT) B.poly(ym>0?[n0,n1,top[c+1]]:[top[c],n0,n1],K8C.ivory);   // 斜めの縁
     }
     for(const sg of[-1,1]){                                // スカートの側板
       const c=sg<0?0:Cn, p=top[c], q=bot[c];
@@ -5830,12 +5837,18 @@ function k9FrontGeos(){
     // アンチクライマーの板(明るい灰。前へ張り出す)
     const A=K9.FANTI, gy=k8lin(.62,.63,.64);
     for(const sg of[-1,1]){const r=side(sg,A[0],A[1]); k9patch(B,A[2],A[3],r[0],r[1],.06,6,gy); k9patch(B,A[3]-.004,A[3],r[0],r[1],.03,6,gy);}
-    // スカート(アイボリー):脇の板と、中央の低い前掛け。中は連結器
-    const S=K9.SKIRT, xs=k9nose(1.0,0,hw);
-    const plate=(y0,y1,z0,z1)=>{const P=(y,z)=>[k9nose(1.0,Math.min(Math.abs(y),hw-.13)*Math.sign(y||1)/hw,hw)+.03+(1.06-z)*.08,y,z];
-      B.quad(P(y0,z0),P(y1,z0),P(y1,z1),P(y0,z1),K8C.ivory);};
-    for(const sg of[-1,1]){const r=side(sg,S[0],S[1]); plate(r[0],r[1],S[2],S[3]);}
-    plate(-S[0],S[0],S[2],S[4]);
+    /* スカート(アイボリー):脇の板と、中央の低い前掛け。中は連結器。
+       中央の開口(前掛けの上・脇の板の間)は 8000系と共通の SKIRT_OPEN:上端(脇の板の上端)の半幅 0.574=写真の実測の脇 0.674 から
+       左右10cm ずつ狭く、下端(前掛けの上端)は上端の0.92倍(2026-10-11 利用者指示)。脇の板の内の縁は斜め */
+    const S=K9.SKIRT, xs=k9nose(1.0,0,hw), yT=SKIRT_OPEN[0], yB=SKIRT_OPEN[0]*SKIRT_OPEN[1];
+    const P=(y,z)=>[k9nose(1.0,Math.min(Math.abs(y),hw-.13)*Math.sign(y||1)/hw,hw)+.03+(1.06-z)*.08,y,z];
+    for(const sg of[-1,1]){                 // 脇の板:前掛けの高さまでは内の縁が yB、その上は yB→yT
+      const pl=(a0,a1,b0,b1,z0,z1)=>B.quad(P(sg*a0,z0),P(sg*a1,z0),P(sg*b1,z1),P(sg*b0,z1),K8C.ivory);
+      const w=(sg>0)?(a0,a1,b0,b1,z0,z1)=>pl(a0,a1,b0,b1,z0,z1):(a0,a1,b0,b1,z0,z1)=>B.quad(P(-a1,z0),P(-a0,z0),P(-b0,z1),P(-b1,z1),K8C.ivory);
+      w(yB,S[1],yB,S[1],S[2],S[4]);
+      w(yB,S[1],yT,S[1],S[4],S[3]);
+    }
+    B.quad(P(-yB,S[2]),P(yB,S[2]),P(yB,S[4]),P(-yB,S[4]),K8C.ivory);   // 前掛け
     B.box(xs-.9,xs+.20,-.13,.13,.76,.96,K8C.under);
     B.box(xs+.10,xs+.26,-.20,.20,.72,1.00,K8C.under);
     B.box(xs-.6,xs+.08,.22,.40,.78,.92,K8C.under);

@@ -24,6 +24,9 @@ const REF = {
   // 前面(写真の実測 ftex9.png の高さを、屋根 3.62 基準で 1.06 倍に直した値。measured_9000.md 3b)
   LAMP_Z: [1.43, 1.624],                     // 前照灯・尾灯は前面の青帯の中
   SKIRT_OUT: 0.93 * 1.225,                   // スカートの外端 |y|(写真の実測0.93 の1.225倍。利用者指示)
+  // スカートの中央の開口(2026-10-11 利用者指示):上端の半幅=前掛けの脇(写真 0.55×1.225)−0.10、下端は上端の0.92倍。
+  // 高さは measured_9000.md 3b:脇の板の上端 0.906・前掛けの上端 0.366
+  SKIRT_OPEN: [0.55 * 1.225 - 0.10, 0.92], SKIRT_ZT: 0.906, SKIRT_ZB: 0.366,
   // 前面の横の位置(利用者指示 2026-10-11:写真の実測から 扉の幅+10cm・行先表示器+15cm・前照灯の間隔+20cm・識別灯の間隔+40cm。
   // measured_9000.md 3b の「利用者指示の微修正」)
   DEST_HALF: [0.21 * 1.15 + 0.05, 0.0795 * 1.15],    // 行先表示板の半幅・半高(写真の実測を表示板ごと1.15倍、さらに幅+15cm−5cm)
@@ -144,6 +147,14 @@ const G = X.K9GEO;
     for (let i = 0; i < P.length; i += 3) if (C[i] > 0.5 && C[i + 1] > 0.5) o.push([P[i], -P[i + 2], P[i + 1]]); return o; };
   const sk = bright(F.vc).filter((p) => p[0] > 9 && p[2] < 1.07), so = Math.max(...sk.map((p) => Math.abs(p[1])));
   ok('スカートの幅', near(so, REF.SKIRT_OUT, 0.003), '外端|y| ' + REF.SKIRT_OUT.toFixed(3) + 'm', so.toFixed(3) + 'm');
+  { // 中央の開口:上端(脇の板の上端)の内の縁・下端(前掛けの上端)の内の縁。開口の中(高さの間・内の縁より内)に板の頂点が無い
+    const oT = REF.SKIRT_OPEN[0], oB = oT * REF.SKIRT_OPEN[1];
+    const at = (z) => sk.filter((p) => Math.abs(p[2] - z) < 0.003 && Math.abs(p[1]) > 0.2).map((p) => Math.abs(p[1]));
+    const yT = Math.min(...at(REF.SKIRT_ZT)), yB = Math.max(...sk.filter((p) => Math.abs(p[2] - REF.SKIRT_ZB) < 0.003 && Math.abs(p[1]) < oT - 0.01).map((p) => Math.abs(p[1])));
+    const inn = sk.filter((p) => p[2] > REF.SKIRT_ZB + 0.01 && p[2] < REF.SKIRT_ZT - 0.01 && Math.abs(p[1]) < oB - 0.01).length;
+    ok('スカートの中央の開口', near(yT, oT, 0.003) && near(yB, oB, 0.003) && inn === 0,
+      '半幅 上' + oT.toFixed(3) + '・下' + oB.toFixed(3) + '(×0.92)・中は空き', '上' + yT.toFixed(3) + '・下' + yB.toFixed(3) + '・中の頂点' + inn);
+  }
   { const d = v4pts(F.dest), y = range(d, 1), z = range(d, 2);
     ok('行先表示板の大きさ', near((y[1] - y[0]) / 2, REF.DEST_HALF[0], 0.002) && near((z[1] - z[0]) / 2, REF.DEST_HALF[1], 0.002),
       '半幅' + REF.DEST_HALF[0].toFixed(3) + '・半高' + REF.DEST_HALF[1].toFixed(4), '半幅' + ((y[1] - y[0]) / 2).toFixed(3) + '・半高' + ((z[1] - z[0]) / 2).toFixed(4)); }

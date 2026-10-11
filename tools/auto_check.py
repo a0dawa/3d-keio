@@ -174,13 +174,15 @@ def main():
 
     # 8000系の前面の文字はさらに1.10倍、種別の2文字は間を空ける、スカートの切り欠きは v4 の1.2倍(利用者指示)
     m2 = re.search(r'const K8_FRONT_TXT=([\d.]+);', src)
-    m3 = re.search(r'const K8_SKIRT_NOTCH=\[0\.36\*([\d.]+),0\.60\*([\d.]+)\]', src)
+    # 切り欠きの幅は 9000系と共通の SKIRT_OPEN(2026-10-11 利用者指示:9000系の脇から10cm ずつ狭く、下端は0.92倍)。深さは v4 の1.2倍
+    m3 = re.search(r'const K8_SKIRT_NOTCH=\[SKIRT_OPEN\[0\](),0\.60\*([\d.]+)\]', src)
+    m4 = re.search(r'const SKIRT_OPEN=\[0\.55\*1\.225-0\.10,0\.92\];', src)
     sp = "k[0]+'  '+k[1]" in src
     ok = (m2 is not None and abs(float(m2.group(1)) - 1.10) < 1e-9 and m3 is not None
-          and abs(float(m3.group(1)) - 1.2) < 1e-9 and abs(float(m3.group(2)) - 1.2) < 1e-9 and sp)
+          and m4 is not None and abs(float(m3.group(2)) - 1.2) < 1e-9 and sp)
     ng += 0 if ok else 1
     print('%-18s %14s %14s %8s  %s' % ('前面の文字・切り欠き', '×1.10・×1.2・字間',
-                                       ('×%s' % m2.group(1) if m2 else '無い') + ('/×%s' % m3.group(1) if m3 else '/無い') + ('・字間' if sp else '・字間なし'),
+                                       ('×%s' % m2.group(1) if m2 else '無い') + ('/×%s' % m3.group(2) if m3 else '/無い') + ('・開口' if m4 else '・開口なし') + ('・字間' if sp else '・字間なし'),
                                        '-', 'OK' if ok else 'NG'))
 
     # 行先「新宿」は形式によらず「新  宿」(利用者指示)。表記の関数と、前面(8000系・9000系)・側面の3か所で通すこと
