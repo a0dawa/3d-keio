@@ -1889,7 +1889,10 @@ function trackBulge(t,a,b){          // 線路 t の a〜b が、両端を結ぶ
    まくらぎ=TIE_LOD/締結装置=TRK.FAST_LOD まで。締結装置は数が多い(区画あたり数千)ので、
    区画をさらに TRK.FAST_BLK ごとに分けて、すぐ近くのまとまりだけを描く。 */
 const TRK={BED:1.35, BAL:1.6, BED_Y:-0.145, BAL_Y:-0.135, TIE_Y:-0.105, TIE_HW:1.15, TIE_P:0.625,
-           WING:0.116, OPEN:0.11, HEEL:0.18, FAST_LOD:60, FAST_BLK:40};
+           WING:0.116, OPEN:0.11, HEEL:0.18, BEND:0.5, FAST_LOD:60, FAST_BLK:40};
+/* BEND:トングレールの折れ点(B 側のトングレールが A に沿う向きから B のレールへ向きを変える所)を、2本の中心が頭部の幅だけ
+   離れる所(full)から先端と反対の側へずらす量[m](2026-10-11 利用者指示:折れ曲がる部分を50cm 程度先端ではない方へ)。
+   先端から折れ点まではまっすぐ(A に対して直線)。開きが0になる所(heel)も同じだけずらす */
 // 50kgN レールの片側の断面(レール中心からの横・railY からの高さ)。頭頂面の縁から底部の縁まで
 const RAIL_PF=[[0.033,0.060],[0.036,0.055],[0.036,0.022],[0.031,0.012],[0.010,0.006],[0.0075,-0.004],
                [0.0075,-0.058],[0.012,-0.066],[0.0635,-0.080],[0.0635,-0.093]];
@@ -1942,7 +1945,8 @@ function trackTopo(){
     let full=null, heel=null;
     for(let s=e;f*(s-e)<80&&s>=B.x0&&s<=B.x1;s+=f*0.05){ if(full===null&&D(s)>=RAIL_W) full=s; if(D(s)>=TRK.HEEL){heel=s;break;} }
     if(heel===null) continue;
-    TURNOUTS.push({a:A.id,b:B.id,A:A,B:B,s:e,f:f,sg:Math.sign(B.zf(heel)-A.zf(heel)),full:full,heel:heel});
+    heel+=f*TRK.BEND;
+    TURNOUTS.push({a:A.id,b:B.id,A:A,B:B,s:e,f:f,sg:Math.sign(B.zf(heel)-A.zf(heel)),full:full,bend:full+f*TRK.BEND,heel:heel});
   }
   for(let i=0;i<TRACKS.length;i++) for(let j=i+1;j<TRACKS.length;j++){
     const A=TRACKS[i], B=TRACKS[j], lo=Math.max(A.x0,B.x0), hi=Math.min(A.x1,B.x1);
@@ -2013,17 +2017,20 @@ function buildTrack(){
   for(const t of TRACKS) for(const r of[-1,1]){
     let iv=[[t.x0,t.x1,null]];
     for(const T of TURNOUTS){
-      const a=Math.min(T.s,T.full), b=Math.max(T.s,T.full), ah=Math.min(T.s,T.heel), bh=Math.max(T.s,T.heel);
+      const ah=Math.min(T.s,T.heel), bh=Math.max(T.s,T.heel);
       const A=T.A, B=T.B, sg=T.sg, W=swOf(T);
       if(T.A===t&&r===sg){        // A 側のトングレール:定位で密着(A のゲージ線から基本レールまで)。反位では A の内側へ開く
-        iv=cutIv(iv,a,b);
-        iv.push([a,b,s=>{const g=A.zf(s)+sg*(RAIL_OFF-RAIL_W/2)-sg*(W?dOpen(T,s)*W.r:0), w=Math.min(RAIL_W,Math.abs(B.zf(s)-A.zf(s)));
+        // 開きが0になる所(heel)まで。以前は full で終えていたので、反位では固定のレールとの継ぎ目で約5cm 食い違っていた
+        iv=cutIv(iv,ah,bh);
+        iv.push([ah,bh,s=>{const g=A.zf(s)+sg*(RAIL_OFF-RAIL_W/2)-sg*(W?dOpen(T,s)*W.r:0), w=Math.min(RAIL_W,Math.abs(B.zf(s)-A.zf(s)));
           return [Math.min(g,g+sg*w),Math.max(g,g+sg*w)];},'密着',W]);
       }
       if(T.B===t&&r===-sg){       // B 側のトングレール:定位で基本レールから転てつ方向へ開く。反位で密着
         iv=cutIv(iv,ah,bh);
-        iv.push([ah,bh,s=>{const d=dOpen(T,s)*(W?1-W.r:1), D=Math.abs(B.zf(s)-A.zf(s));
-          const g=A.zf(s)-sg*(RAIL_OFF-RAIL_W/2)+sg*d, w=Math.min(RAIL_W,D), o=D<RAIL_W?g:B.zf(s)-sg*(RAIL_OFF+RAIL_W/2)+sg*d;
+        // 先端から折れ点(bend)までは A に対してまっすぐ(折れ点で B のレールの位置に着く)、その先は B のレールに沿う
+        const Db=Math.abs(B.zf(T.bend)-A.zf(T.bend));
+        iv.push([ah,bh,s=>{const d=dOpen(T,s)*(W?1-W.r:1), D=Math.abs(B.zf(s)-A.zf(s)), u=(s-T.s)/(T.bend-T.s);
+          const g=A.zf(s)-sg*(RAIL_OFF-RAIL_W/2)+sg*(d+(Db-RAIL_W)*u), w=Math.min(RAIL_W,D), o=u<=1?g:B.zf(s)-sg*(RAIL_OFF+RAIL_W/2)+sg*d;
           return [Math.min(o,o+sg*w),Math.max(o,o+sg*w)];},'開',W]);
       }
     }

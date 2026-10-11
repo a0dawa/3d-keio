@@ -23,6 +23,7 @@ const REF = {
   TIE_LEN: 2.2,            // まくらぎの長さの下限[m]
   N: [6, 35],              // 分岐器の番数(クロッシング角の逆数)
   OPEN: 0.08,              // 開いたトングレールと基本レールの間(先端)の下限[m]
+  BEND: 0.5,               // トングレールの折れ点:2本の中心が頭部の幅だけ離れる所から、先端と反対の側へ[m](2026-10-11 利用者指示)
   GUARD_LEN: 3.5,          // ガードレールの長さの下限[m]
   LONG: 0.8,               // ポイントの先端からクロッシングまで、分岐まくらぎが占める割合の下限
 };
@@ -159,13 +160,13 @@ const near = (L, s, w) => { let lo = 0, hi = L.length; while (lo < hi) { const m
 
 /* ---- 3. 分岐器 ----------------------------------------------------------- */
 {
-  let bB = null, bFr = null, bG = null, bM = null, bL = null, nT = X.TURNOUTS.length;
+  let bB = null, bFr = null, bG = null, bM = null, bL = null, bP = null, nP = 0, nT = X.TURNOUTS.length;
   const half = REF.GAUGE / 2;
   for (const T of X.TURNOUTS) {
     const A = T.A, B = T.B, sg = T.sg, f = T.f;
     // トングレール:A 側(定位)は A の軌間の線と基本レール(B の外側のレール)の内面の間に密着し、
     // B 側は基本レール(A の反対側のレール)から開く
-    const cl = X.RAILS.find((r) => r.kind === 'トングレール' && r.state === '密着' && r.id === A.id && r.r === sg && Math.abs(Math.min(r.s0, r.s1) - Math.min(T.s, T.full)) < 0.01);
+    const cl = X.RAILS.find((r) => r.kind === 'トングレール' && r.state === '密着' && r.id === A.id && r.r === sg && Math.abs(Math.min(r.s0, r.s1) - Math.min(T.s, T.heel)) < 0.01);
     const op = X.RAILS.find((r) => r.kind === 'トングレール' && r.state === '開' && r.id === B.id && r.r === -sg && Math.abs(Math.min(r.s0, r.s1) - Math.min(T.s, T.heel)) < 0.01);
     if ((!cl || !op) && !bB) bB = [B.id, 's=' + T.s.toFixed(1), (cl ? '' : '密着側') + (op ? '' : '開く側') + 'のトングレールが無い'];
     if (cl && !bB) {
@@ -177,6 +178,21 @@ const near = (L, s, w) => { let lo = 0, hi = L.length; while (lo < hi) { const m
       const s = T.s + f * 0.05, e = op.e(s), stock = A.zf(s) - sg * half;
       const gap = Math.min(Math.abs(e[0] - stock), Math.abs(e[1] - stock));
       if (gap < REF.OPEN && !bB) bB = [B.id, 's=' + s.toFixed(1), '開き ' + gap.toFixed(3) + 'm'];
+    }
+    /* 折れ点:B 側のトングレールの基本レール側の縁を A からの距離で見て、向きが最も大きく変わる所が
+       「2本の中心が頭部の幅だけ離れる所」(検証側で求める)から先端と反対の側へ REF.BEND。そこまでは A に対してまっすぐ */
+    if (op && !bP) {
+      let full = null; for (let s = T.s; f * (s - T.s) < 80; s += f * 0.01) if (Math.abs(B.zf(s) - A.zf(s)) >= REF.HEAD) { full = s; break; }
+      const rel = (s) => { const e = op.e(s); return sg * ((sg > 0 ? e[0] : e[1]) - A.zf(s)); };
+      const h = 0.1, s1 = T.heel - f * 1.0; let km = 0, sk = null;
+      for (let s = T.s + f * 0.3; f * (s1 - s) > 0; s += f * 0.02) { const k = Math.abs(rel(s + h) - 2 * rel(s) + rel(s - h)); if (k > km) { km = k; sk = s; } }
+      const want = full === null ? null : full + f * REF.BEND;
+      let dev = 0;
+      if (want !== null) { const r0 = rel(T.s + f * 0.05), r1 = rel(want - f * 0.05);
+        for (let s = T.s + f * 0.05; f * (want - f * 0.05 - s) > 0; s += f * 0.1) dev = Math.max(dev, Math.abs(rel(s) - (r0 + (r1 - r0) * (s - T.s - f * 0.05) / (want - T.s - f * 0.1)))); }
+      if ((want === null || sk === null || Math.abs(sk - want) > 0.12 || dev > 0.002) && !bP)
+        bP = [B.id, 's=' + T.s.toFixed(1), '折れ点 ' + (sk === null ? '無し' : (f * (sk - T.s)).toFixed(2)) + 'm(期待 ' + (want === null ? '-' : (f * (want - T.s)).toFixed(2)) + 'm)・直線からのずれ ' + (dev * 1000).toFixed(1) + 'mm'];
+      else nP++;
     }
     // クロッシング:A の分かれる側のレールと B の反対側のレールが交わる所。番数と切れ目(フランジウェー)
     const F = X.FROGS.filter((q) => q.t && ((q.a === A.id && q.b === B.id && q.ra === sg && q.rb === -sg) ||
@@ -207,6 +223,7 @@ const near = (L, s, w) => { let lo = 0, hi = L.length; while (lo < hi) { const m
     if (long < REF.LONG * all && !bL) bL = [B.id, 's=' + T.s.toFixed(1), long + '/' + all + '本'];
   }
   ok('トングレール(密着・開き)', bB === null && nT > 0, '定位で密着・反位側は≥' + REF.OPEN + 'm開く', bB ? bB.join(' ') : nT + '組');
+  ok('トングレールの折れ点', bP === null && nP > 0, '中心が頭部の幅だけ離れる所+' + REF.BEND + 'm(±0.12)・先端からまっすぐ', bP ? bP.join(' ') : nP + '組');
   /* 転換する分岐器(利用者指示:待避線へ入る列車に合わせて転換):本線⇔待避線・停車線の分岐器が全て転換でき、反位では
      A 側のトングレールが基本レール(B の外側のレール)から ≥REF.OPEN 開き、B 側が基本レール(A の反対側)に密着する。
      描く Mesh の頂点も同じ位置へ動く */
@@ -218,6 +235,7 @@ const near = (L, s, w) => { let lo = 0, hi = L.length; while (lo < hi) { const m
       if (bad) break;
       const T = W.T, A = T.A, B = T.B, sg = T.sg;
       const cl = X.RAILS.find((r) => r.sw === W && r.state === '密着'), op = X.RAILS.find((r) => r.sw === W && r.state === '開');
+      const f0 = (r) => (Math.abs(r.s0 - T.s) < Math.abs(r.s1 - T.s) ? r.s1 : r.s0);   // 先端と反対の端
       if (!cl || !op || !W.mesh) { bad = [B.id, 's=' + T.s.toFixed(1), '登録が無い']; break; }
       const P0 = Array.from(W.geo.attributes.position.array);
       W.r = 1; W.fill();
@@ -226,12 +244,16 @@ const near = (L, s, w) => { let lo = 0, hi = L.length; while (lo < hi) { const m
       const gA = Math.min(Math.abs(ea[0] - stockA), Math.abs(ea[1] - stockA));
       const eb = op.e(s), stockB = A.zf(s) - sg * half;          // B 側:基本レールに密着
       const gB = Math.min(Math.abs(eb[0] - stockB), Math.abs(eb[1] - stockB));
+      // A 側のトングレールの終わり(開きが0になる所)で、続く固定のレールと食い違わない
+      const se = f0(cl), ec = cl.e(se), ef = [A.zf(se) + sg * half, A.zf(se) + sg * (half + REF.HEAD)];
+      const jump = Math.max(Math.abs(Math.min(...ec) - Math.min(...ef)), Math.abs(Math.max(...ec) - Math.max(...ef)));
       const P1 = W.geo.attributes.position.array;
       let mv = 0; for (let i = 0; i < P1.length; i++) mv = Math.max(mv, Math.abs(P1[i] - P0[i]));
       W.r = 0; W.fill(); n++;
       if (gA < REF.OPEN) bad = [B.id, 's=' + T.s.toFixed(1), '反位で A 側が開かない ' + gA.toFixed(3) + 'm'];
       else if (gB > 0.002) bad = [B.id, 's=' + T.s.toFixed(1), '反位で B 側が密着しない ' + gB.toFixed(3) + 'm'];
       else if (mv < 0.08) bad = [B.id, 's=' + T.s.toFixed(1), '描く Mesh が動かない ' + mv.toFixed(3) + 'm'];
+      else if (jump > 0.002) bad = [B.id, 's=' + T.s.toFixed(1), '反位で A 側のトングレールの終わりが固定のレールと ' + (jump * 1000).toFixed(0) + 'mm 食い違う'];
     }
     ok('分岐器の転換(反位)', bad === null && n > 0, '本線⇔待避線・停車線の全組:A 側が≥' + REF.OPEN + 'm開き B 側が密着', bad ? bad.join(' ') : n + '組');
   }
