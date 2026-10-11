@@ -1565,7 +1565,7 @@ function localZSign(s,dir){
   const rx=-fz, rz=fx;                      // R = F × (0,1,0)
   return (rx*(pN.x-pO.x)+rz*(pN.z-pO.z))>0 ? 1 : -1;
 }
-// ※運転モード(手動)は自動運転ではないので、従来どおり本線(外側の通過線)を走る
+// ※運転モード(手動)の自列車の線は種別で決まる(rideOff:特急=本線/各停=runOff。10章)
 CUR=null;
 layTrack('本線下り-東',DOM.x0,KOUKU[0].s0,zDown);layTrack('本線上り-東',DOM.x0,KOUKU[0].s0,zUp);
 for(const K of KOUKU){
@@ -4296,6 +4296,8 @@ const K8_FORMATIONS={
            panto:[2,4,5,8,9], motor:[2,3,4,5,8,9]},
   '8713F':{cars:['8713','8013','8063','8113','8163','8513','8563','8213','8263','8763'],
            panto:[2,4,5,8,9], motor:[2,3,4,5,8,9]},   // v4 で推定(8714Fにならう)
+  '8715F':{cars:['8715','8015','8065','8115','8165','8515','8565','8215','8265','8765'],
+           panto:[2,4,5,8,9], motor:[2,3,4,5,8,9]},   // 上りの各停(8714Fにならって推定)
 };
 // 種別表示の文字色(sRGB)。特急は v4 の値、各停(白)は v4 でも推定
 const K8_KIND_COLORS={'特急':'#ff2e14','急行':'#2fd36a','各停':'#fff8ee'};
@@ -5268,6 +5270,14 @@ const K9_FORMATIONS={
   // 下りの急行(各停を待避線で追い越す。利用者指示)
   '9733F':{cars:['9733','9033','9083','9533','9133','9583','9683','9233','9283','9783'],
            panto:[2,3,5,8,9], motor:[2,3,5,8,9]},
+  // 笹塚の3番線(新宿方面のホーム)に停めて待たせる編成(利用者指示)
+  '9734F':{cars:['9734','9034','9084','9534','9134','9584','9684','9234','9284','9784'],
+           panto:[2,3,5,8,9], motor:[2,3,5,8,9]},
+  // 上りの各停・急行(本八幡行=京王新線から都営新宿線へ直通。直通できるのは9000系の30番台)
+  '9735F':{cars:['9735','9035','9085','9535','9135','9585','9685','9235','9285','9785'],
+           panto:[2,3,5,8,9], motor:[2,3,5,8,9]},
+  '9736F':{cars:['9736','9036','9086','9536','9136','9586','9686','9236','9286','9786'],
+           panto:[2,3,5,8,9], motor:[2,3,5,8,9]},
 };
 // 断面:8000系と同じ作り。帯・窓・扉の境目に頂点を置く
 const K9_ROWS=(function(){
@@ -5758,7 +5768,7 @@ function k8CarSpec(form,n){
           series:K9_FORMATIONS[form]?'9000':'8000'};
 }
 
-/* ---- 走行列車(3本)。各駅停車のダイヤを自動運転で再現する ----
+/* ---- 走行列車(7本。TRAIN_DEF)。各駅停車・急行・特急を自動運転で走らせる ----
    加速=P4(3.3km/h/s), 上限=60km/h, 減速=B5(3.0km/h/s), 停車時間=25秒。
    状態機械: 'run'(駅間走行) → 'brake'(停止位置へ減速) → 'dwell'(25秒停車) → 'run' */
 const DRIVE={ACC:3.3, DEC:3.0, VMAX_KMH:60, DWELL:25};   // 自動運転パラメータ
@@ -5775,11 +5785,16 @@ function trainOff(t,x){ return isLocal(t)?runOff(x):mainOff(x); }          // �
 function trainZf(t){ return t.dir>0?(isLocal(t)?zRunDown:zDown):(isLocal(t)?zRunUp:zUp); }
 function trainVmax(t){ return ((TRAIN_KIND[t.kind]||{}).vmax||DRIVE.VMAX_KMH)/3.6; }
 const trains=[];
-/* 走行列車(4本):[向き, 初めの位置 s, 種別, 編成, 行先]。下りは各停2本と急行1本(急行が各停を待避駅で追い越す。
-   利用者指示)、上りは特急1本。急行は 8714F の各停の後ろから出る(明大前で緩急接続、その先で追い越す)。
-   trains[0] は下りの各停(検証が使う) */
+/* 走行列車(7本):[向き, 初めの位置 s, 種別, 編成, 行先]。下りは各停2本と急行1本(急行が各停を待避駅で追い越す。
+   利用者指示)。上りは特急1本と、各停2本・急行1本(利用者指示:上りが少ない。下りと同じく急行が各停を待避駅で
+   追い越す)。上りの急行は 9735F の各停の後ろから出る(千歳烏山で緩急接続、その先で追い越す)。
+   上りの各停・急行の行先は笹塚の4番線(新線新宿・本八幡方面)に合わせ、9000系は本八幡(都営新宿線へ直通)、
+   8000系は新線新宿(都営線へは直通しない)。
+   trains[0] は下りの各停、上りの最初(trains の並びで)は特急(検証と撮影が使う)。足す列車は後ろへ */
 const TRAIN_DEF=[[1,300,'各停','8714F','京王八王子'],[1,3000,'各停','9731F','京王八王子'],
-                 [1,-380,'急行','9733F','橋本'],[-1,5600,'特急','8713F','新宿']];
+                 [1,-380,'急行','9733F','橋本'],[-1,5600,'特急','8713F','新宿'],
+                 [-1,7200,'各停','9735F','本八幡'],[-1,8000,'急行','9736F','本八幡'],
+                 [-1,2900,'各停','8715F','新線新宿']];
 TRAIN_DEF.forEach(function(a){
   const dir=a[0], xs=a[1], kind=a[2], form=a[3], dest=a[4], cars=[];
   /* 編成は v4 の 8714F/8713F と 9000系。車番・パンタ・電動車は「新宿方から何両目」で決まる。
@@ -6159,7 +6174,8 @@ function stepXRail(dt){
 }
 stepXRail(0);           // 初期配置(列車走行OFFのままでも線路の上に載っている)
 const parkedCars=[];
-/* 留置の編成の登録簿(検証が置き場所・編成・向きを読む)。cars は東(新宿方)から順 */
+/* 留置の編成の登録簿(検証が置き場所・編成・向きを読む)。cars は東(新宿方)から順。
+   lit=灯火・表示を点けてホームで待っている編成(笹塚の3番線) */
 const PARKS=[];
 { // 滞泊編成:留置線の実測有効長に応じ両数を自動決定
   // 留置線は sx が j とともに増える(走行列車と逆)。cabF/cabR をそのまま使うと
@@ -6185,6 +6201,21 @@ const PARKS=[];
      東端は本線からの渡り線が留置線に入る分岐の先(⑥が分岐との離れを見る) */
   { const T=TRACKS.find(t=>t.id==='笹塚留置線南'), L=9*K8.PITCH+K8.LEN;
     parkSet('笹塚 留置線(西側・南)','9732F',10,T.x1-3.0-L,-2,null); }
+  /* ホームで待っている編成:上りの列車と同じ向き(j=0 が東端=新宿方の先頭)で、駅の上りの停止位置に着ける
+     (扉がホームドアの開口に合う)。前照灯・尾灯・表示器を点け、乗客も乗せる。扉とホームドアは閉めたまま */
+  const standSet=(name,form,st,off,kind,dest)=>{
+    const n=10, e0=stopPosOf(st,-1);
+    const P={name:name, form:form, off:off, e0:e0, e1:e0+(n-1)*K8.PITCH+K8.LEN, cars:[], lit:true};
+    for(let j=0;j<n;j++){const sp=k8CarSpec(form,j+1);
+      const c=makeCar({cabF:j===0, cabR:j===n-1, panto:sp.panto, motor:sp.motor, num:sp.num, series:sp.series,
+        hachi:-1, lights:j===0?'head':(j===n-1?'tail':'off'), sign:{kind:kind,dest:dest}, crowd:j%3});
+      seatCar(c,e0+CAR_HALF+j*K8.PITCH,()=>off,-1);
+      parkedCars.push(c); P.cars.push(c);}
+    PARKS.push(P); return P;
+  };
+  /* 笹塚の3番線(内側の北 +2m。番線は南から数える。新宿方面のホーム):9000系10両(利用者指示)。この線は西で車止めに
+     終わる線(本線は外側)なので、走行列車とは交わらない。西端は本線へ渡る分岐の手前(⑥が分岐との離れを見る) */
+  standSet('笹塚 3番線','9734F',STA[0],2,'各停','新宿');
 }
 
 /* ---- ホームドア(可動式ホーム柵) ------------------------------------------
@@ -7221,27 +7252,32 @@ const CINE=(function(){
      置き直しは列車の状態を絶対値で書き換えるので、それまでの経過に依らない
      (撮影ではコマ番号で決まる時刻に適用するので、並列に撮っても同じ映像になる)。
      同じ向きの別の列車が近くに居れば後ろへ退ける(同じ線路に2本重ならないように)。 */
-  const STAGE={ARRIVE_T:20.0, DEPART_T:6.0, CLEAR:900, BACK:1200};
+  const STAGE={ARRIVE_T:20.0, DEPART_T:6.0, CLEAR:900, BACK:1200, PASS_T:30};
   function stage(i,mode,dir){
     const st=STA[i], t=trains.find(q=>q.dir===dir);
     if(!st||!t) return null;
     const stop=stopPosOf(st,dir)-dir*CAR_HALF, dec=DRIVE.DEC/3.6, acc=DRIVE.ACC/3.6;
-    const vmax=DRIVE.VMAX_KMH/3.6;
-    if(!stopsAt(t,st)){                      // 通過する駅(特急):本線の上限で駆け抜ける所を切り取る
-      const vp=trainVmax(t);
-      t.x=stop-dir*vp*(mode==='arrive'?4:-1); t.v=vp; t.st='run'; t.target=null; t.atSt=null; t.dwell=0;
-      for(const c of t.cars) setCarDoors(c,0,1);
-      t.dr=0; t.dside=1; placeTrain(t); syncSwitches(); return t;
-    }
-    // 近くの同じ向きの列車は後ろへ退ける。退け先は 450m ずつずらし、ほかの列車と 300m 以内にならない所を選ぶ
-    const mv=trains.filter(q=>q!==t&&q.dir===dir&&Math.abs(q.x-stop)<STAGE.CLEAR);
+    const vmax=DRIVE.VMAX_KMH/3.6, pass=!stopsAt(t,st);
+    /* 近くの同じ向きの列車は後ろへ退ける。退け先は 450m ずつずらし、ほかの列車と 300m 以内にならない所を選ぶ。
+       通過する列車(特急)はカットの間(PASS_T 秒)に上限の速さで先へ進むので、その先に居る列車も退ける
+       (上りに各停・急行を足したので、通過駅のホームに各停が停まっていることがある) */
+    const ahead=pass?STAGE.CLEAR+trainVmax(t)*STAGE.PASS_T:STAGE.CLEAR;
+    const mv=trains.filter(q=>q!==t&&q.dir===dir&&(q.x-stop)*dir<ahead&&(stop-q.x)*dir<STAGE.CLEAR);
     let slot=0;
     for(const q of mv){
       let x;
       do{ x=stop-dir*(STAGE.BACK+450*slot); slot++; }
       while(trains.some(r=>r!==q&&r!==t&&r.dir===dir&&mv.indexOf(r)<0&&Math.abs(r.x-x)<300)&&slot<8);
       q.x=x; q.v=0; q.st='run'; q.target=null; q.atSt=null; q.dwell=0;
+      for(const c of q.cars) setCarDoors(c,0,1);
+      q.dr=0; q.dside=1;
       placeTrain(q);
+    }
+    if(pass){                                // 通過する駅(特急):本線の上限で駆け抜ける所を切り取る
+      const vp=trainVmax(t);
+      t.x=stop-dir*vp*(mode==='arrive'?4:-1); t.v=vp; t.st='run'; t.target=null; t.atSt=null; t.dwell=0;
+      for(const c of t.cars) setCarDoors(c,0,1);
+      t.dr=0; t.dside=1; placeTrain(t); syncSwitches(); return t;
     }
     if(mode==='arrive'){
       const v=Math.min(vmax,dec*STAGE.ARRIVE_T), d=v*v/(2*dec);   // 制動距離ちょうどの位置から減速

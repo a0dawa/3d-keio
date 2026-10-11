@@ -25,7 +25,7 @@ const X = require('./stub_three')(path,
   'ROAD_SKIP:ROAD_SKIP,PS0:PS0,PLATS:PLATS,VIA_CH:VIA_CH,' +
   'CHAINS:(typeof CHAINS!=="undefined"?CHAINS:[]),SUPS:(typeof SUPS!=="undefined"?SUPS:[]),' +
   'POLES:(typeof POLES!=="undefined"?POLES:[]),BEAMS:(typeof BEAMS!=="undefined"?BEAMS:[]),' +
-  'POLE_LAMPS:(typeof POLE_LAMPS!=="undefined"?POLE_LAMPS:[])');
+  'POLE_LAMPS:(typeof POLE_LAMPS!=="undefined"?POLE_LAMPS:[]),PSD:(typeof PSD!=="undefined"?PSD:[])');
 
 /* ---- 設計上の要件(検証側が独立して持つ) ---------------------------------- */
 const REQ = {
@@ -224,7 +224,7 @@ if (X.TRACKS && X.WIRES) {
   {
     const REF_9732F = ['9732', '9032', '9082', '9532', '9132', '9582', '9682', '9232', '9282', '9782'];
     const sasa = X.STA.find((s) => s.n === '笹塚');
-    const P = X.PARKS.find((q) => /笹塚/.test(q.name));
+    const P = X.PARKS.find((q) => /笹塚/.test(q.name) && /留置/.test(q.name));
     if (!P) ok('笹塚の留置線に9000系', false, '10両', '無い');
     else {
       const nums = P.cars.map((c) => c.userData.k8.num), ser = P.cars.every((c) => c.userData.k8.series === '9000');
@@ -255,6 +255,64 @@ if (X.TRACKS && X.WIRES) {
       const lit = P.cars.filter((c) => c.userData.k8.lights !== 'off' || c.userData.k8.sign).length;
       const cabs = P.cars[0].userData.k8.cabR && P.cars[9].userData.k8.cabF && P.cars.slice(1, 9).every((c) => !c.userData.k8.cabF && !c.userData.k8.cabR);
       ok('笹塚の留置:運転台は両端・消灯', cabs && lit === 0, '両端に運転台・灯火と表示は消灯', (cabs ? '両端' : '運転台の位置違い') + '・点灯' + lit + '両');
+    }
+  }
+  /* 2-4f 笹塚の3番線に 9000系10両(利用者指示)。基準は検証側で持つ:
+       編成 9734F(新宿方から 9734・9034・9084・9534・9134・9584・9684・9234・9284・9784)、
+       3番線=笹塚のホームに面する線路を南から数えて3番目(京王の番線の数え方)。
+     守ること:①その線路の上 ②ホームの範囲に収まる ③ほかの線路(本線へ渡る分岐)が車体の幅に入ってこない
+     ④上りの向き(新宿方=東端が先頭で前照灯、西端が尾灯)・表示器が点いている ⑤40か所の扉がホームドアの開口に合う */
+  {
+    const REF_9734F = ['9734', '9034', '9084', '9534', '9134', '9584', '9684', '9234', '9284', '9784'];
+    const DOORX = [-7.05, -2.35, 2.35, 7.05];                 // 扉の中心(車両中心から。8000系・9000系とも)
+    const sasa = X.STA.find((s) => s.n === '笹塚'), pr = X.platRange(sasa);
+    // ホームの全長に掛かる線路を南(off の小さい側)から並べる
+    const offs = [];
+    for (const t of X.TRACKS) {
+      if (t.x0 > pr[0] || t.x1 < pr[1]) continue;
+      const o = t.zf(sasa.x); if (!offs.some((v) => Math.abs(v - o) < 0.5)) offs.push(o);
+    }
+    offs.sort((a, b) => a - b);
+    const off3 = offs[2];
+    const P = X.PARKS.find((q) => /笹塚/.test(q.name) && /3番線/.test(q.name));
+    if (!P || offs.length !== 4) ok('笹塚の3番線に9000系', false, '10両(ホームの線路4本)', P ? '線路' + offs.length + '本' : '無い');
+    else {
+      const nums = P.cars.map((c) => c.userData.k8.num), ser = P.cars.every((c) => c.userData.k8.series === '9000');
+      ok('笹塚の3番線に9000系10両', P.cars.length === 10 && ser && JSON.stringify(nums) === JSON.stringify(REF_9734F),
+        '9734F(新宿方から)', P.cars.length + '両・' + (ser ? '9000系' : '形式違い') + '・' + nums.join(' '));
+      const half = X.K8.LEN / 2, ss = P.cars.map((c) => c.userData.s);
+      const e0 = Math.min(...ss) - half, e1 = Math.max(...ss) + half;
+      let badOn = null;
+      for (const c of P.cars) {
+        const q = X.frame(c.userData.s, off3), d = Math.hypot(c.position.x - q.x, c.position.z - q.z);
+        if (d > 0.3 && !badOn) badOn = c.userData.k8.num + ' ずれ' + d.toFixed(2) + 'm';
+      }
+      const tr = X.TRACKS.filter((t) => Math.abs(t.zf(sasa.x) - off3) < 0.05 && e0 >= t.x0 && e1 <= t.x1);
+      ok('笹塚の3番線:線路の上・ホームに収まる', !badOn && tr.length > 0 && e0 >= pr[0] && e1 <= pr[1],
+        '南から3番目の線路(off ' + off3.toFixed(2) + ')・ホーム ' + pr[0].toFixed(0) + '〜' + pr[1].toFixed(0),
+        (badOn || 'ずれ0.3m 以内') + '・' + e0.toFixed(1) + '〜' + e1.toFixed(1));
+      let foul = null;
+      for (let s = e0; s <= e1; s += 1) for (const t of X.TRACKS) {
+        if (tr.indexOf(t) >= 0 || s < t.x0 || s > t.x1) continue;
+        const d = Math.abs(t.zf(s) - off3);
+        if (d < 3.0 && (!foul || d < foul[1])) foul = [t.id + ' s=' + s.toFixed(0), d];
+      }
+      ok('笹塚の3番線:ほかの線路と離れる', !foul, '離れ3.0m 以上(西端は分岐の手前)', foul ? foul[0] + ' 離れ' + foul[1].toFixed(2) + 'm' : 'すべて3.0m 以上');
+      // 向き:東端(s の小さい側)の車両が先頭(運転台・前照灯)、西端が最後尾(尾灯)。表示は全車で点く
+      const byS = P.cars.slice().sort((a, b) => a.userData.s - b.userData.s), E = byS[0].userData.k8, W = byS[9].userData.k8;
+      const head = (E.cabF || E.cabR) && E.lights === 'head' && (W.cabF || W.cabR) && W.lights === 'tail';
+      const signs = P.cars.filter((c) => c.userData.k8.sign && c.userData.k8.sign.dest).length;
+      ok('笹塚の3番線:新宿方が先頭・表示が点く', head && signs === 10 && E.num === REF_9734F[0],
+        '東端 ' + REF_9734F[0] + '=前照灯・西端=尾灯・表示10両', (head ? '東端 ' + E.num + ' 前照灯' : '向き違い') + '・表示' + signs + '両');
+      // 扉:その線に面したホームドアの列の開口に、40か所の扉が合う
+      const row = X.PSD.find((q) => q.st === sasa && Math.abs(q.off - off3) < 2.5);
+      let worst = 0, nd = 0;
+      if (row) for (const c of P.cars) for (const dx of DOORX) {
+        const x = c.userData.s + dx; nd++;
+        worst = Math.max(worst, Math.min(...row.open.map((o) => Math.abs(o - x))));
+      }
+      ok('笹塚の3番線:扉がホームドアの開口に合う', !!row && nd === 40 && worst < 0.3, '40か所・ずれ0.3m 未満',
+        row ? nd + 'か所・最大のずれ ' + worst.toFixed(2) + 'm' : 'ホームドアの列なし');
     }
   }
   // 2-5 架線の高さの順序:トロリ線 < ちょう架線 < ビーム下弦(部材と干渉しない)

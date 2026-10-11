@@ -262,13 +262,19 @@ const range = (pts, k) => { let lo = 1e9, hi = -1e9; for (const p of pts) { if (
     (mats(lead).has(X.M_HL) ? '前照灯点灯' : '前照灯消灯') + '・' + (mats(lead).has(X.M_TL) ? '尾灯点灯' : '尾灯消灯'));
   ok('最後尾の尾灯が点く', mats(tail).has(X.M_TL) && !mats(tail).has(X.M_HL), '尾灯=点灯/前照灯=消灯',
     (mats(tail).has(X.M_TL) ? '尾灯点灯' : '尾灯消灯') + '・' + (mats(tail).has(X.M_HL) ? '前照灯点灯' : '前照灯消灯'));
-  // 留置車は灯火も表示も消灯
-  let lit = 0;
-  for (const c of X.parkedCars) if (mats(c).has(X.M_HL) || mats(c).has(X.M_TL)) lit++;
-  ok('留置車は灯火を消す', lit === 0, '0両', lit + '両');
+  // 留置車は灯火も表示も消灯。ただし笹塚の3番線にホームで待たせる 9734F(利用者指示)は先頭=前照灯・最後尾=尾灯
+  // (向きと表示は⑥が見る)。どの編成かは検証側の車番で見分ける
+  const STAND = ['9734', '9034', '9084', '9534', '9134', '9584', '9684', '9234', '9284', '9784'];
+  let lit = 0, litS = 0, nS = 0;
+  for (const c of X.parkedCars) {
+    const on = mats(c).has(X.M_HL) || mats(c).has(X.M_TL);
+    if (STAND.indexOf(c.userData.k8.num) >= 0) { nS++; if (on) litS++; } else if (on) lit++;
+  }
+  ok('留置車は灯火を消す', lit === 0 && nS === 10 && litS === 2, '0両(笹塚の3番線の 9734F は両端の2両が点く)',
+    lit + '両(9734F ' + nS + '両のうち ' + litS + '両)');
   // 運転台は編成の外側を向く(最後尾のシェルは180°回す=v4 と同じ)
   const rotOK = X.trains.every((t) => t.cars[0].userData.tail === false && t.cars[9].userData.tail === true);
-  ok('運転台が外を向く', rotOK, '先頭=+x/最後尾=180°', rotOK ? '3本とも' : '逆向きあり');
+  ok('運転台が外を向く', rotOK, '先頭=+x/最後尾=180°', rotOK ? X.trains.length + '本とも' : '逆向きあり');
 }
 
 /* ---- 5b. 車両の遠景(LOD):遠くでは台車・パンタを描かず、近づけば戻る。車体はいつも描く ----

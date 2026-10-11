@@ -853,8 +853,10 @@ ok('上限速度を超えない', vmax <= REF.VMAX_KMH + 0.5, '≤' + REF.VMAX_K
   const T = X.trains;
   const save = T.map((t) => ({ x: t.x, v: t.v, st: t.st, dwell: t.dwell, target: t.target, atSt: t.atSt }));
   const kinds = T.map((t) => t.kind + '/' + t.dir + '/' + t.cars[0].userData.k8.sign.dest).sort().join(' ');
-  ok('走行列車の種別と行先', kinds === ['各停/1/京王八王子', '各停/1/京王八王子', '急行/1/橋本', '特急/-1/新宿'].sort().join(' '),
-    '下り 各停2・急行(橋本)1/上り 特急(新宿)1', kinds);
+  // 上りは利用者指示で増やした(各停2・急行1を足す)。行先は笹塚の4番線(新線新宿・本八幡方面)に合わせる
+  ok('走行列車の種別と行先', kinds === ['各停/1/京王八王子', '各停/1/京王八王子', '急行/1/橋本',
+    '特急/-1/新宿', '各停/-1/本八幡', '各停/-1/新線新宿', '急行/-1/本八幡'].sort().join(' '),
+    '下り 各停2・急行(橋本)1/上り 特急(新宿)1・各停(本八幡・新線新宿)2・急行(本八幡)1', kinds);
   const HF = (t) => t.x + t.dir * X.CAR_HALF;
   const seq = T.map(() => []), wraps = T.map(() => 0), stopT = T.map(() => 0);
   const prev = T.map((t) => ({ st: t.st, x: t.x }));
@@ -934,19 +936,21 @@ ok('上限速度を超えない', vmax <= REF.VMAX_KMH + 0.5, '≤' + REF.VMAX_K
   const lim = T.map((t) => t.kind === '各停' ? 900 : 120);
   ok('駅以外で止まる時間', stopT.every((v, i) => v <= lim[i]), '各停≤900秒・優等≤120秒(2時間)', stopT.map((v) => v.toFixed(0)).join('/') + '秒');
   /* 待避:発車間際の各停(待避線・停車線)は、すぐ後ろ(1.8km 以内)の急行が先頭を越えて先へ出るまで発車しない。
-     八幡山=急行は通過(停車線の各停を追い越す)・明大前=急行も停まる(緩急接続:急行の発車を待つ) */
-  for (const n of ['八幡山', '明大前']) {
-    const L = T.find((t) => t.kind === '各停' && t.dir === 1), E = T.find((t) => t.kind === '急行');
+     下り:八幡山=急行は通過(停車線の各停を追い越す)・明大前=急行も停まる(緩急接続:急行の発車を待つ)。
+     上り(利用者指示で各停・急行を足した):八幡山=通過・千歳烏山=緩急接続 */
+  for (const [n, dir] of [['八幡山', 1], ['明大前', 1], ['八幡山', -1], ['千歳烏山', -1]]) {
+    const L = T.find((t) => t.kind === '各停' && t.dir === dir), E = T.find((t) => t.kind === '急行' && t.dir === dir);
+    if (!L || !E) { ok('待避:' + n + (dir > 0 ? '(下り)' : '(上り)'), false, '各停と急行', '列車が無い'); continue; }
     for (const t of T) { if (t !== L && t !== E) { t.x = X.DOM.x1 + 3000; t.st = 'wait'; } }
     const st = X.STA.find((s) => s.n === n);
-    L.x = X.stopPosOf(st, 1) - X.CAR_HALF; L.v = 0; L.st = 'dwell'; L.dwell = 4; L.atSt = st; L.target = null;
-    E.x = L.x - 1000; E.v = 25; E.st = 'run'; E.target = null; E.atSt = null; E.dwell = 0;
+    L.x = X.stopPosOf(st, dir) - dir * X.CAR_HALF; L.v = 0; L.st = 'dwell'; L.dwell = 4; L.atSt = st; L.target = null;
+    E.x = L.x - dir * 1000; E.v = 25; E.st = 'run'; E.target = null; E.atSt = null; E.dwell = 0;
     let dep = null, tt = 0;
     for (let k = 0; k < 6000 && dep === null; k++) {
       X.driveTrain(E, 0.05); X.driveTrain(L, 0.05); X.stepSwitches(0.05); tt += 0.05;
-      if (L.st !== 'dwell') dep = { t: tt, rel: (HF(E) - HF(L)) };
+      if (L.st !== 'dwell') dep = { t: tt, rel: (HF(E) - HF(L)) * dir };
     }
-    ok('待避:' + n + 'の各停は急行に追い越されてから発車', dep !== null && dep.rel > 0 && dep.t > 4.5,
+    ok('待避:' + n + (dir > 0 ? '(下り)' : '(上り)') + 'の各停は急行に追い越されてから発車', dep !== null && dep.rel > 0 && dep.t > 4.5,
       '急行の先頭が前に出てから(発車まで' + '4秒より長く待つ)', dep ? '発車 ' + dep.t.toFixed(0) + '秒後・急行は ' + dep.rel.toFixed(0) + 'm 前' : '発車しない');
   }
   /* 分岐器の防護:進路へ転換していない分岐器の手前で止まり、転換し終わってから通る(分岐器は止めておき、後で動かす) */
