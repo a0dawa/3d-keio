@@ -1678,6 +1678,11 @@ const RAIL_PF=[[0.033,0.060],[0.036,0.055],[0.036,0.022],[0.031,0.012],[0.010,0.
                [0.0075,-0.058],[0.012,-0.066],[0.0635,-0.080],[0.0635,-0.093]];
 const RAIL_PC=[0x8d9298,0x8d9298,0x7a7d80,0x6f5c4f,0x6f5c4f,0x6f5c4f,0x6f5c4f,0x6a584b,0x5f4f44];
 const TURNOUTS=[], FROGS=[], RAILS=[], BUFFERS=[], BEDS=[];   // 分岐器・クロッシング・レール・車止め・道床の幅(登録簿)
+/* 転換する分岐器(利用者指示:待避線へ入る列車に合わせて転換)。列車が本線⇔待避線・停車線を出入りする所(A=本線・
+   B=副本線/停車線)。トングレールだけ別の小さな Mesh にし、転換の量 r(0=定位・1=反位)で頂点を描き直す(fill)。
+   定位:A 側のトングレールが密着・B 側が開く/反位:A 側が開き・B 側が密着。転換は stepSwitches(6c章) */
+const SWITCHES=[];
+const MAT_TONGUE=mkStd({vertexColors:true,side:THREE.DoubleSide,metalness:0.85,roughness:0.30,envMapIntensity:1.0});
 const RST={step:2,tol:0.004}, RFINE={step:0.5,tol:0.002};
 // レール(全断面)。o(s)=レール中心の off
 function railRun(s0,s1,o,fine){
@@ -1760,7 +1765,7 @@ function frogOf(A,ra,B,rb,sf){
 // 区間の一覧 L から [a,b] を切り取る。残る区間は形(v[2])も状態(v[3]=密着/開)も引き継ぐ
 // (状態を落とすと、クロッシングに端を削られたトングレールが「状態なし」になる。笹塚の渡り線で起きた)
 function cutIv(L,a,b){const out=[];for(const v of L){if(b<=v[0]||a>=v[1]){out.push(v);continue;}
-  if(a>v[0])out.push([v[0],a,v[2],v[3]]); if(b<v[1])out.push([b,v[1],v[2],v[3]]);}return out;}
+  if(a>v[0])out.push([v[0],a].concat(v.slice(2))); if(b<v[1])out.push([b,v[1]].concat(v.slice(2)));}return out;}
 // 両端をなめらかに外へ逃がす(ガードレール・ウイングレールの端の開き)
 const flare=(s,a,b,d,L)=>{const u=Math.max(0,Math.max(a+L-s,s-(b-L))/L);return d*u*u;};
 function buildTrack(){
@@ -1783,20 +1788,25 @@ function buildTrack(){
     for(let s=Math.ceil(t.x0/2)*2;s<=t.x1;s+=2){const sp=bedSpan(i,s,s<DECK_END?TRK.BED:TRK.BAL); if(sp) BEDS.push({id:t.id,s:s,lo:sp[0],hi:sp[1]});}
   });
   // ---- レール:普通の区間・トングレール・クロッシングの切れ目 ----
+  for(const T of TURNOUTS) if(/^本線/.test(T.A.id)&&/副本線|停車線/.test(T.B.id))
+    SWITCHES.push({T:T, r:0, want:0, tongues:[], lo:Math.min(T.s,T.heel)-2, hi:Math.max(T.s,T.heel)+2});
+  const swOf=T=>SWITCHES.find(W=>W.T===T)||null;
+  const dOpen=(T,s)=>Math.max(0,TRK.OPEN*(1-Math.abs(s-T.s)/Math.abs(T.heel-T.s)));   // 先端で TRK.OPEN 開く
   for(const t of TRACKS) for(const r of[-1,1]){
     let iv=[[t.x0,t.x1,null]];
     for(const T of TURNOUTS){
       const a=Math.min(T.s,T.full), b=Math.max(T.s,T.full), ah=Math.min(T.s,T.heel), bh=Math.max(T.s,T.heel);
-      const A=T.A, B=T.B, sg=T.sg;
-      if(T.A===t&&r===sg){        // 閉じたトングレール(A へ開通):A のゲージ線から基本レールまで
+      const A=T.A, B=T.B, sg=T.sg, W=swOf(T);
+      if(T.A===t&&r===sg){        // A 側のトングレール:定位で密着(A のゲージ線から基本レールまで)。反位では A の内側へ開く
         iv=cutIv(iv,a,b);
-        iv.push([a,b,s=>{const g=A.zf(s)+sg*(RAIL_OFF-RAIL_W/2), w=Math.min(RAIL_W,Math.abs(B.zf(s)-A.zf(s)));return [Math.min(g,g+sg*w),Math.max(g,g+sg*w)];},'密着']);
+        iv.push([a,b,s=>{const g=A.zf(s)+sg*(RAIL_OFF-RAIL_W/2)-sg*(W?dOpen(T,s)*W.r:0), w=Math.min(RAIL_W,Math.abs(B.zf(s)-A.zf(s)));
+          return [Math.min(g,g+sg*w),Math.max(g,g+sg*w)];},'密着',W]);
       }
-      if(T.B===t&&r===-sg){       // 開いたトングレール(B 側):基本レールから転てつ方向へ開く
+      if(T.B===t&&r===-sg){       // B 側のトングレール:定位で基本レールから転てつ方向へ開く。反位で密着
         iv=cutIv(iv,ah,bh);
-        iv.push([ah,bh,s=>{const d=TRK.OPEN*(1-Math.abs(s-T.s)/Math.abs(T.heel-T.s)), D=Math.abs(B.zf(s)-A.zf(s));
+        iv.push([ah,bh,s=>{const d=dOpen(T,s)*(W?1-W.r:1), D=Math.abs(B.zf(s)-A.zf(s));
           const g=A.zf(s)-sg*(RAIL_OFF-RAIL_W/2)+sg*d, w=Math.min(RAIL_W,D), o=D<RAIL_W?g:B.zf(s)-sg*(RAIL_OFF+RAIL_W/2)+sg*d;
-          return [Math.min(o,o+sg*w),Math.max(o,o+sg*w)];},'開']);
+          return [Math.min(o,o+sg*w),Math.max(o,o+sg*w)];},'開',W]);
       }
     }
     for(const F of FROGS){
@@ -1806,9 +1816,40 @@ function buildTrack(){
     iv.sort((u,v)=>u[0]-v[0]);
     for(const v of iv){
       const of=s=>t.zf(s)+r*RAIL_OFF;          // 描くのと同じ関数を登録簿に残す(検証が描いた位置そのものを測る)
-      if(v[2]) headRun(v[0],v[1],v[2]); else railRun(v[0],v[1],of,false);
-      RAILS.push({id:t.id,r:r,s0:v[0],s1:v[1],kind:v[2]?'トングレール':'レール',state:v[3],e:v[2],o:v[2]?null:of});
+      if(v[2]){ if(v[4]) v[4].tongues.push({s0:v[0],s1:v[1],e:v[2]}); else headRun(v[0],v[1],v[2]); }   // 転換するものは別の Mesh
+      else railRun(v[0],v[1],of,false);
+      RAILS.push({id:t.id,r:r,s0:v[0],s1:v[1],kind:v[2]?'トングレール':'レール',state:v[3],e:v[2],o:v[2]?null:of,sw:v[4]||null});
     }
+  }
+  // 転換するトングレールの Mesh:頭頂面と両側面の帯(headRun と同じ形)を 0.25m 刻みで。fill() が今の r で頂点を置き直す
+  for(const W of SWITCHES){
+    let n=0; for(const q of W.tongues){ q.n=Math.max(2,Math.ceil((q.s1-q.s0)/0.25)+1); q.o=n; n+=q.n; }
+    const P=new Float32Array(n*18), Cl=new Float32Array(n*18), I=[];
+    const cT=srgb(0xe6e9ee), cS=srgb(0x8d9298);
+    for(const q of W.tongues) for(let i=0;i<q.n;i++){
+      const k=(q.o+i)*6;
+      for(let j=0;j<6;j++){ const c=j<2?cT:cS; Cl.set([c.r,c.g,c.b],(k+j)*3); }
+      if(i<q.n-1){ const a=k, b=k+6;
+        I.push(a,b,b+1, a,b+1,a+1,  a+2,b+2,b+3, a+2,b+3,a+3,  a+4,b+5,b+4, a+4,a+5,b+5); }
+    }
+    const g=new THREE.BufferGeometry();
+    g.setAttribute('position',new THREE.BufferAttribute(P,3)); g.setAttribute('color',new THREE.BufferAttribute(Cl,3)); g.setIndex(I);
+    W.geo=g;
+    W.fill=function(){
+      const A=this.geo.attributes.position.array;
+      for(const q of this.tongues) for(let i=0;i<q.n;i++){
+        const s=q.s0+(q.s1-q.s0)*i/(q.n-1), e=q.e(s), y=railY(s), k=(q.o+i)*18;
+        const L=frame(s,e[0]), R=frame(s,e[1]);
+        A.set([L.x,y+RAIL_TOP,L.z, R.x,y+RAIL_TOP,R.z, L.x,y+0.058,L.z, L.x,y-0.03,L.z, R.x,y+0.058,R.z, R.x,y-0.03,R.z],k);
+      }
+      this.geo.attributes.position.needsUpdate=true; this.geo.computeVertexNormals();
+      if(this.geo.boundingSphere) this.geo.computeBoundingSphere();
+    };
+    W.fill();
+    const m=new THREE.Mesh(g,MAT_TONGUE); m.name='トングレール(転換)'; W.mesh=m;
+    const c=frame((W.lo+W.hi)/2,W.T.A.zf((W.lo+W.hi)/2)), y=railY(W.lo);
+    scene.add(m);
+    lodAdd(m,{x0:c.x-14,x1:c.x+14,y0:y-1,y1:y+1,z0:c.z-14,z1:c.z+14},300);
   }
   // ---- クロッシング:ノーズ・ウイングレール・床・ガードレール ----
   for(const F of FROGS){
@@ -5709,6 +5750,12 @@ function gapAhead(t){                     // 前の列車(この列車の線を�
     g=Math.min(g,(tailRear(q)-f)*t.dir);
   }
   if(t.dir>0&&rideOn&&trainsOn&&rideS>f) g=Math.min(g,rideS-trainLen(t)-f);   // 運転モードの自列車(rideS=先頭)
+  for(const W of SWITCHES){               // 進路へ転換し終わっていない分岐器の 5m 手前で止まる
+    const rb=routeB(t,W); if(rb===null) continue;
+    const d=((t.dir>0?W.lo:W.hi)-f)*t.dir;
+    if(d<0||d>SW.LOOK) continue;
+    if(W.r!==(rb?1:0)) g=Math.min(g,d-5+HEAD.MARGIN);
+  }
   return g;
 }
 function expressBehind(t){                // すぐ後ろ(または並び)の同じ向きの列車が HEAD.HOLD 以内の優等列車か
@@ -5719,6 +5766,46 @@ function expressBehind(t){                // すぐ後ろ(または並び)の同
     if(d>=0&&d<bd){bd=d;best=q;}
   }
   return !!best&&bd<=HEAD.HOLD&&!isLocal(best);
+}
+/* ---- 6c. 分岐器の転換(利用者指示:待避線へ入る列車に合わせて転換)。SWITCHES の r を動かす ----
+   ・分岐器に向かう列車(先頭が SW.LOOK 以内。停車中の列車は発車の5秒前から)のうち最も近いものの進路へ転換する。
+     各停は待避線・停車線(反位)、急行・特急と運転モードの自列車は本線(定位)。
+   ・列車が分岐器(先端〜後端±2m)に載っている間は転換しない(鎖錠)。転換は SW.THROW 秒。
+   ・列車は進路へ転換し終わっていない分岐器の手前で止まる(gapAhead)。撮影で列車を置き直したら syncSwitches */
+const SW={LOOK:600, THROW:3.0};
+const RIDE_LEN=9*K8.PITCH+K8.LEN;
+function routeB(t,W){                     // 列車 t がこの分岐器を B(待避線・停車線)へ通るか。通らなければ null
+  const T=W.T, zf=trainZf(t);
+  if(Math.abs(zf(T.s)-T.A.zf(T.s))>0.5) return null;                 // 別の線(反対の方向の線など)
+  const s1=T.s+T.f*20;
+  return Math.abs(zf(s1)-T.B.zf(s1))<Math.abs(zf(s1)-T.A.zf(s1));
+}
+function swOccupied(W,t){ const h=headFront(t), tl=tailRear(t); return Math.max(h,tl)>=W.lo&&Math.min(h,tl)<=W.hi; }
+function stepSwitches(dt){
+  for(const W of SWITCHES){
+    let occ=false, bd=Infinity, want=null;
+    for(const t of trains){
+      if(t.st==='wait') continue;
+      const rb=routeB(t,W); if(rb===null) continue;
+      if(swOccupied(W,t)){occ=true;break;}
+      if(t.st==='dwell'&&t.dwell>5) continue;                         // 停車中は発車間際だけ
+      const d=((t.dir>0?W.lo:W.hi)-headFront(t))*t.dir;
+      if(d>=0&&d<=SW.LOOK&&d<bd){bd=d;want=rb?1:0;}
+    }
+    if(!occ&&rideOn&&trainsOn&&Math.abs(zDown(W.T.s)-W.T.A.zf(W.T.s))<0.5){   // 運転モードの自列車(下りの本線)
+      if(rideS>=W.lo&&rideS-RIDE_LEN<=W.hi) occ=true;
+      else{ const d=W.lo-rideS; if(d>=0&&d<=SW.LOOK&&d<bd){bd=d;want=0;} }
+    }
+    if(!occ&&want!==null) W.want=want;
+    if(W.r!==W.want){ const k=dt/SW.THROW; W.r=W.want>W.r?Math.min(W.want,W.r+k):Math.max(W.want,W.r-k); W.fill(); }
+  }
+}
+function syncSwitches(){                  // 載っている列車の進路へ即座に合わせる(撮影で列車を置き直したとき)
+  for(const W of SWITCHES) for(const t of trains){
+    if(t.st==='wait') continue;
+    const rb=routeB(t,W); if(rb===null||!swOccupied(W,t)) continue;
+    const v=rb?1:0; if(W.r!==v){ W.r=W.want=v; W.fill(); }
+  }
 }
 function startClear(t){                   // 入り直す所(線路の端の外)の先が空いているか
   if(trains.indexOf(t)<0) return true;
@@ -5772,6 +5859,7 @@ function driveTrain(t,dt){
 
 // 車両は「前後の車端2点を結ぶ弦」に沿って配置する(曲線でも必ず線路方向を向く)
 const CAR_HALF=K8.LEN/2;
+syncSwitches();                           // 初めの位置で分岐器に載っている列車があればその進路へ(CAR_HALF の後)
 // 車端2点の実位置から姿勢(ヨー+ピッチ)を決める。勾配区間でも車体が線路に沿う
 let LOD_NEAR=420;   // この距離までは高精細モデル(スマホでは短縮)
 let LOD_FAR=1500;   // この距離より先は台車・床下・冷房・パンタも省く(車体だけ)
@@ -6549,6 +6637,7 @@ function stepWorld(dt){
     placeTrain(t);
     stepCarDoors(t,dt);   // 客用扉:停車中はホーム側だけ開く
   }
+  stepSwitches(dt);       // 分岐器:近づく列車の進路へ転換(載っている間は動かさない)
   stepPSD(dt);            // ホームドア:停車中(発車3秒前まで)だけ開く
   for(const c of parkedCars) lodCar(c);   // 留置中の編成もLODを見直す
   stepXRail(dt);          // 井の頭線・世田谷線
@@ -6840,7 +6929,7 @@ const CINE=(function(){
       const vp=trainVmax(t);
       t.x=stop-dir*vp*(mode==='arrive'?4:-1); t.v=vp; t.st='run'; t.target=null; t.atSt=null; t.dwell=0;
       for(const c of t.cars) setCarDoors(c,0,1);
-      t.dr=0; t.dside=1; placeTrain(t); return t;
+      t.dr=0; t.dside=1; placeTrain(t); syncSwitches(); return t;
     }
     // 近くの同じ向きの列車は後ろへ退ける。退け先は 450m ずつずらし、ほかの列車と 300m 以内にならない所を選ぶ
     const mv=trains.filter(q=>q!==t&&q.dir===dir&&Math.abs(q.x-stop)<STAGE.CLEAR);
@@ -6862,6 +6951,7 @@ const CINE=(function(){
     for(const c of t.cars) setCarDoors(c,0,1);            // 扉は閉めた状態から(開閉は自動運転が行う)
     t.dr=0; t.dside=1;
     placeTrain(t);
+    syncSwitches();                                       // 置き直した列車が載る分岐器はその進路へ
     return t;
   }
   // 前面展望:下り線の運転台から

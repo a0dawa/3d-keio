@@ -17,7 +17,8 @@ const X = require('./stub_three')(path,
   'setRideState:setRideState,getRideState:getRideState,setNotch:setNotch,NIDX_N:NIDX_N,' +
   'NOTCH_LAG:NOTCH_LAG,ATC_DISP_STEP:ATC_DISP_STEP,ATC_UP_LAG:ATC_UP_LAG,' +
   'ridePSDFor:ridePSDFor,mainOff:mainOff,' +
-  'DOOR_OPEN_SEC:DOOR_OPEN_SEC,DOOR_STOP_TOL:DOOR_STOP_TOL,stopPosOf:stopPosOf,placeTrain:placeTrain');
+  'DOOR_OPEN_SEC:DOOR_OPEN_SEC,DOOR_STOP_TOL:DOOR_STOP_TOL,stopPosOf:stopPosOf,placeTrain:placeTrain,' +
+  'SWITCHES:SWITCHES,stepSwitches:stepSwitches');
 
 /* ---- 期待値(検証側が独立して持つ) ---------------------------------------- */
 const REF = {
@@ -717,8 +718,25 @@ ok('上限速度を超えない', vmax <= REF.VMAX_KMH + 0.5, '≤' + REF.VMAX_K
   const rel = {};                                         // 列車の組 → 先頭の前後(符号)
   const dirAt = (s) => { const a = X.frame(s - 1, 0), b = X.frame(s + 1, 0); const l = Math.hypot(b.x - a.x, b.z - a.z); return [(b.x - a.x) / l, (b.z - a.z) / l]; };
   const dt = 0.1;
+  // 分岐器:各停は待避駅で待避線・停車線(反位=1)、優等列車は本線(定位=0)を通る(検証側の決まり)。
+  // 列車が載っている間の r を全部記録し、通過ごとに「転換し終わって、進路どおり」かを見る
+  const SWI = X.SWITCHES, occ = new Map(), swBad = [], swN = { rev: 0, nor: 0 };
+  const sideOf = (t, W) => W.T.A.id.indexOf(t.dir > 0 ? '下り' : '上り') >= 0;
+  const occupies = (t, W) => { const h = HF(t), tl = h - t.dir * (9 * X.K8.PITCH + X.K8.LEN); return Math.max(h, tl) >= W.lo && Math.min(h, tl) <= W.hi; };
   for (let k = 0; k * dt < REF.SIM_T; k++) {
     for (const t of T) X.driveTrain(t, dt);
+    X.stepSwitches(dt);
+    for (let i = 0; i < T.length; i++) for (let j = 0; j < SWI.length; j++) {
+      const t = T[i], W = SWI[j]; if (t.st === 'wait' || !sideOf(t, W)) continue;
+      const key = i + '-' + j, o = occupies(t, W), P = occ.get(key);
+      if (o) { if (!P) occ.set(key, { r: new Set([W.r]) }); else P.r.add(W.r); }
+      else if (P) {
+        const want = t.kind === '各停' ? 1 : 0, rs = [...P.r];
+        if ((rs.length !== 1 || rs[0] !== want) && swBad.length < 3) swBad.push(t.kind + ' ' + W.T.B.id + ' s=' + W.T.s.toFixed(0) + ' r=' + rs.map((v) => v.toFixed(2)).join(','));
+        if (want) swN.rev++; else swN.nor++;
+        occ.delete(key);
+      }
+    }
     for (let i = 0; i < T.length; i++) {
       const t = T[i], q = prev[i];
       if (t.st === 'dwell' && q.st !== 'dwell' && t.atSt) seq[i].push(t.atSt.n);
@@ -753,6 +771,8 @@ ok('上限速度を超えない', vmax <= REF.VMAX_KMH + 0.5, '≤' + REF.VMAX_K
     }
   }
   ok('全列車:車両が重ならない', overlap === null, REF.SIM_T + '秒・' + T.length + '本', overlap ? overlap.join(' ') : nChk + '回の測定で0');
+  ok('分岐器は進路へ転換し終わってから通る', swBad.length === 0 && swN.rev >= 10 && swN.nor >= 10,
+    '各停=反位・優等=定位、載っている間は動かない(各10回以上)', swBad.length ? swBad.join(' / ') : '反位' + swN.rev + '回・定位' + swN.nor + '回');
   // 停車駅の並び:隣り合う2回の停車が、種別の停車駅の表で隣り合う(端では折り返して最初の駅へ)
   const order = (dir, names) => X.STA.filter((s) => names === null || names.indexOf(s.n) >= 0).sort((a, b) => (a.x - b.x) * dir).map((s) => s.n);
   let badSeq = null;
@@ -779,11 +799,25 @@ ok('上限速度を超えない', vmax <= REF.VMAX_KMH + 0.5, '≤' + REF.VMAX_K
     E.x = L.x - 1000; E.v = 25; E.st = 'run'; E.target = null; E.atSt = null; E.dwell = 0;
     let dep = null, tt = 0;
     for (let k = 0; k < 6000 && dep === null; k++) {
-      X.driveTrain(E, 0.05); X.driveTrain(L, 0.05); tt += 0.05;
+      X.driveTrain(E, 0.05); X.driveTrain(L, 0.05); X.stepSwitches(0.05); tt += 0.05;
       if (L.st !== 'dwell') dep = { t: tt, rel: (HF(E) - HF(L)) };
     }
     ok('待避:' + n + 'の各停は急行に追い越されてから発車', dep !== null && dep.rel > 0 && dep.t > 4.5,
       '急行の先頭が前に出てから(発車まで' + '4秒より長く待つ)', dep ? '発車 ' + dep.t.toFixed(0) + '秒後・急行は ' + dep.rel.toFixed(0) + 'm 前' : '発車しない');
+  }
+  /* 分岐器の防護:進路へ転換していない分岐器の手前で止まり、転換し終わってから通る(分岐器は止めておき、後で動かす) */
+  {
+    const L = T.find((t) => t.kind === '各停' && t.dir === 1);
+    for (const t of T) { if (t !== L) { t.x = X.DOM.x1 + 3000; t.st = 'wait'; } }
+    const W = X.SWITCHES.find((w) => w.T.A.id.indexOf('下り') >= 0 && w.T.f === 1 && /副本線/.test(w.T.B.id));
+    W.r = W.want = 0; W.fill();                                   // 定位(各停の進路=待避線ではない)
+    L.x = W.lo - 400; L.v = 16; L.st = 'run'; L.target = null; L.atSt = null; L.dwell = 0;
+    for (let k = 0; k < 1600; k++) X.driveTrain(L, 0.05);         // 80秒。分岐器は動かさない
+    const stopGap = W.lo - HF(L), stopped = L.v === 0;
+    let passed = false;
+    for (let k = 0; k < 3000 && !passed; k++) { X.stepSwitches(0.05); X.driveTrain(L, 0.05); if (HF(L) > W.hi + 5) passed = true; }
+    ok('転換していない分岐器の手前で止まる', stopped && stopGap > 0 && stopGap < 30 && passed && W.r === 1,
+      '分岐器の手前(30m 以内)で停止→反位へ転換して通る', '手前' + stopGap.toFixed(1) + 'm・' + (stopped ? '停止' : (L.v * 3.6).toFixed(0) + 'km/h') + '→' + (passed ? '通過(r=' + W.r + ')' : '通れない'));
   }
   // 運転モードの自列車(下りの本線)の後ろで、自動運転の各停は手前で止まる
   {
