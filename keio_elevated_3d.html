@@ -1467,22 +1467,8 @@ for(const gq of XINGS)box(6.5,.2,240,MAT.road,gq[1],.1,0);   // 高架下±120m�
 // 生活道路グリッド(踏切以外は線路部で分断=模式)
 const NSx=[];{let x=DOM.x0+70;while(x<DOM.x1-40){NSx.push(x);x+=92+Math.random()*66;}}
 // 細街路グリッドの描画は廃止(格子状スジの解消)。街区割りNSxは建物配置にのみ使用。
-// 整備側道(付属街路)
-// 線路を横切る実際の道路(ROAD_XING)の所では切る(歩道の帯が交差道路の車道を横切らない)
-// 区間ごとの帯は1つのジオメトリに積む(区間ごとに Mesh にすると描画の呼び出しが区間の数だけ増える)
-{let a=DOM.x0+10; const cuts=ROAD_XING.slice().sort((p,q)=>p[0]-q[0]).concat([[DECK_END,DECK_END]]);
- const P=[],N=[],I=[];
- const band=(x0,x1,o0,o1)=>{const xs=[];for(let x=x0;x<x1;x+=40)xs.push(x);xs.push(x1);
-   xs.forEach((x,i)=>{const pa=frame(x,o0(x)),pb=frame(x,o1(x)),k=P.length/3;
-     P.push(pa.x,.16,pa.z,pb.x,.16,pb.z);N.push(0,1,0,0,1,0);
-     if(i<xs.length-1)I.push(k,k+1,k+2,k+1,k+3,k+2);});};
- for(const c of cuts){ const b=Math.min(c[0],DECK_END);
-   if(b-a>2){
-     band(a,b,x=>-(deckHalf(x)+4.6),x=>-(deckHalf(x)+1.1));
-     band(a,b,x=> deckHalf(x)+1.1,x=> deckHalf(x)+4.6);
-   }
-   a=Math.max(a,c[1]+1); }
- scene.add(new THREE.Mesh(facesGeo(P,N,I),MAT.sidewalk));}
+// 整備側道の歩道の帯(高架の両側に沿う緑がかった帯)は描かない(利用者指示:高架に沿う緑の道のようなものは削除)。
+// 高架下と側道の範囲(桁半幅+5.2m)は引き続き建物・樹木の占有域
 // 水緑・施設
 box(15,.3,460,MAT.green,JOSUI_X,.15,0,.2);        // 玉川上水(暗渠緑道)
 /* 和田堀給水所・変電所の模式の箱と池は、実データ(PLATEAU の建物)があるときは描かない。
