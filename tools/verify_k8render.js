@@ -146,13 +146,21 @@ function findChromium() {
   const rs = run('check_side.py', [path.join(OUT, 'side.png')]);
   console.log('---- 側面(check_side.py:実測値と45項目) ----\n' + rs.stdout + rs.stderr);
   if (!/RESULT: PASS/.test(rs.stdout)) ng++;
-  const rf = run('check_front.py', [path.join(OUT, 'front.png'), path.join(REF, 'ref', 'ftex.png')]);
-  console.log('---- 前面(check_front.py:前面写真と14項目) ----\n' + rf.stdout + rf.stderr);
-  // v4 の受け入れ条件:14項目中12項目以上(外れる2項目は写真の側の理由。CLAUDE.md 参照)
-  const m = rf.stdout.match(/RESULT: (?:PASS|(\d+) 項目が)/);
-  const bad = m ? (m[1] ? +m[1] : 0) : 99;
-  console.log('前面:' + (14 - bad) + '/14項目(受け入れ条件 12以上)');
-  if (bad > 2) ng++;
+  /* 前面写真(ftex.png)は撮影者・権利の記録が無いので、リポジトリから(履歴も)外した(2026-10-11 利用者指示)。
+     写真があるとき(ref/ftex.png に置くか、環境変数 K8_FTEX で場所を渡す)だけ前面14項目を照合する */
+  const FTEX = process.env.K8_FTEX || path.join(REF, 'ref', 'ftex.png');
+  if (!fs.existsSync(FTEX)) {
+    console.log('---- 前面(check_front.py:前面写真と14項目) ----\nSKIP: 前面写真が無い(' + FTEX + ')。権利の記録が無いので外した。' +
+      '使ってよい写真があれば ref/ftex.png に置くか K8_FTEX で渡す');
+  } else {
+    const rf = run('check_front.py', [path.join(OUT, 'front.png'), FTEX]);
+    console.log('---- 前面(check_front.py:前面写真と14項目) ----\n' + rf.stdout + rf.stderr);
+    // v4 の受け入れ条件:14項目中12項目以上(外れる2項目は写真の側の理由。CLAUDE.md 参照)
+    const m = rf.stdout.match(/RESULT: (?:PASS|(\d+) 項目が)/);
+    const bad = m ? (m[1] ? +m[1] : 0) : 99;
+    console.log('前面:' + (14 - bad) + '/14項目(受け入れ条件 12以上)');
+    if (bad > 2) ng++;
+  }
   // 乗務員扉の前後の手すりは埋め込み式(利用者指示):正面から見て、腰〜窓の高さの幅が車体幅(窓の高さ 2.8m の幅=2.770)を
   // 2画素より超えない。v4 の手すりは 4.5cm 外に出て、腰の高さで幅 2.893m に見えていた
   { const BODY_W = 2.770, px = 2.01 / 150, w28 = frontW[4], low = frontW.slice(0, 4), mx = Math.max(...low);

@@ -31,4 +31,5 @@ Blender の画面で使うだけなら、`keio8000.blend` から編成のコレ�
 ## ライセンスまわり
 
 - 同梱フォント（keio8000/fonts/）は Noto Sans CJK JP Bold の部分集合です（SIL Open Font License 1.1、OFL.txt）
-- ref/ftex.png は 3d-keio の前面写真です。公開するときは写真の権利を確かめてください
+- ref/ftex.png(前面写真)は撮影者・権利の記録が無いので、このリポジトリには入れていません(2026-10-11 に外した)。
+  check_front.py を使うときは、使ってよい前面写真を ref/ftex.png に置いてください

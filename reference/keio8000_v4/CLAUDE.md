@@ -27,7 +27,7 @@ keio8000_model/
 │   └── build_library.py     ← keio8000.blend の作り直し
 └── ref/
     ├── keio8000_measured_v4.md  ← 実測値・換算・出典（寸法の根拠はすべてここ）
-    ├── ftex.png                 ← 前面写真（3d-keio の前面テクスチャ）
+    ├── ftex.png                 ← 前面写真（3d-keio の前面テクスチャ。権利の記録が無いので 3d-keio では外した）
     └── preview_library.png      ← 見本の画像
 ```
 
@@ -131,7 +131,7 @@ python3 tools/check_front.py /tmp/k8v/front.png    # 前面14項目 → 12項目
 ## 出典
 
 - 側面：RailFile.jp「京王8000系8714編成」山側・海側（2025年10月・12月）。画像は同梱していない（測った値のみ）。
-- 前面：3d-keio（github.com/a0dawa/3d-keio）の前面写真 → ref/ftex.png。公開するときは写真の権利を確かめること。
+- 前面：3d-keio（github.com/a0dawa/3d-keio）の前面写真 → ref/ftex.png。撮影者・権利の記録が無いので、3d-keio では外した（2026-10-11、履歴からも）。
 - 編成：Wikipedia「京王8000系電車」「Keio 8000 series」、2nd-train（8722F）、4号車.net の編成表。
 - 車長 19.5m・連結面間 20.0m：3d-keio の値。
 

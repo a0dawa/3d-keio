@@ -8,7 +8,7 @@
 | ファイル | 内容 |
 |---|---|
 | `ref/keio8000_measured_v4.md` | **寸法の根拠**(編成写真・前面写真の実測値と測り方) |
-| `ref/ftex.png` | 前面写真(このリポジトリの旧前面写真)。`check_front.py` の基準 |
+| `ref/ftex.png` | 前面写真(`check_front.py` の基準)。**撮影者・権利の記録が無いので外した**(2026-10-11、履歴からも)。使ってよい写真があれば置く |
 | `tools/check_side.py` / `check_front.py` | v4 の照合ツール。`tools/verify_k8render.js` が Three.js の描画にそのまま当てる |
 | `keio8000/__init__.py` | v4 本体(形の作り方の原典) |
 | `CLAUDE.md` / `README.md` | v4 の使い方・作業ルール・確かでない点 |
