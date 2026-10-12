@@ -1155,16 +1155,17 @@ function MG(){
    判定は描く直前のカメラで行う(ループと撮影モードの render の両方から呼ぶ)。 */
 const LODS=[];
 let LOD_STRUCT=1;                 // 距離の倍率(スマホでは縮める)
-function lodAdd(obj,b,dist){
+function lodAdd(obj,b,dist,dmin){     // dmin:この距離より近いと描かない(近くは別の細かい形を描く物)
   const x=(b.x0+b.x1)/2, y=(b.y0+b.y1)/2, z=(b.z0+b.z1)/2;
   const r=Math.hypot(b.x1-b.x0,b.y1-b.y0,b.z1-b.z0)/2;
   if(!(r<1e8)) return;            // 空の群
-  LODS.push({o:obj,x:x,y:y,z:z,r:r,d:dist});
+  LODS.push({o:obj,x:x,y:y,z:z,r:r,d:dist,dmin:dmin||0});
 }
 function lodStruct(){
   const p=camera.position;
   for(const L of LODS){
-    const v=Math.hypot(p.x-L.x,p.y-L.y,p.z-L.z)-L.r < L.d*LOD_STRUCT;
+    // 近距離の条件(dmin)がある物だけ近くで消す(カメラが外接球の中=dd<0 のときに他の物まで消さない)
+    const dd=Math.hypot(p.x-L.x,p.y-L.y,p.z-L.z)-L.r, v=dd<L.d*LOD_STRUCT&&!(L.dmin>0&&dd<L.dmin*LOD_STRUCT);
     if(L.o.visible!==v) L.o.visible=v;
   }
   if(typeof cityLod==='function') cityLod();      // PLATEAU の建物の3段(8章)
@@ -6752,31 +6753,139 @@ for(const P of PARKS){
    形:脚(濃い色)・胴(服=インスタンスの色)・頭(肌)。服の色は頂点の色が白の所だけに掛ける(onBeforeCompile)。
    夜は駅の照明で照らされた明るさ(面の色を掛けた発光)。登録簿 PEOPLE(検証が位置を測る) */
 const PEOPLE=[];
+/* 人の形(2026-10-12 利用者指示:老若男女・学生・会社員・主婦など多くの型、鞄やスマホも)。1つの形に全部の部品を入れ、
+   人ごとに見せる部品(iMask のビット)と色(上着=インスタンスの色・下=iLow・髪=iHair・鞄=iBag)を属性で選ぶ。
+   隠す部品は頂点を原点へ潰す(三角形が消える)。駅ごと・歩道ごとに1回の描画のまま。
+   歩く人は脚と腕を振る(iWalk=(歩く量,位相)。uPeopleT=時刻)。高さ1・前=+x */
+const PP={LEGL:0,LEGR:1,TORSO:2,ARML:3,ARMR:4,ARMUP:5,HEAD:6,HAIRS:7,HAIRL:8,SKIRT:9,TIE:10,PACK:11,SBAG:12,CASE:13,PHONE:14,SHOP:15};
+const PK={FIX:0,UP:1,LOW:2,HAIR:3,BAG:4,LEG:5};   // 色の出どころ:頂点の色・上着・下(ズボン・スカート)・髪・鞄・脚(ズボンかタイツ)
+const PEOPLE_U={uPeopleT:{value:0}};
+const PERSON_GEO=(function(){
+  const P=[],N=[],Cc=[],I=[],AP=[],AK=[], col=new THREE.Color();
+  const box=(x0,x1,y0,y1,z0,z1,part,kind,hex)=>{ for(const [k,q] of boxFaces(x0,x1,y0,y1,z0,z1,['top','px','nx','pz','nz'])){const v=P.length/3;   // 下面は見えないので作らない
+    if(hex===undefined||hex===null) col.setRGB(1,1,1); else setSrgb(col,hex);
+    for(let i=0;i<4;i++){P.push(q[i][0],q[i][1],q[i][2]);N.push(q[4][0],q[4][1],q[4][2]);Cc.push(col.r,col.g,col.b);AP.push(part);AK.push(kind);}
+    I.push(v,v+1,v+2,v,v+2,v+3);} };
+  const SKIN=0xd9b69a, SHOE=0x1f1d1c;
+  box(-0.07,0.07,0.04,0.47,-0.13,-0.02,PP.LEGL,PK.LEG); box(-0.07,0.1,0,0.04,-0.13,-0.02,PP.LEGL,PK.FIX,SHOE);   // 脚と靴
+  box(-0.07,0.07,0.04,0.47,0.02,0.13,PP.LEGR,PK.LEG);   box(-0.07,0.1,0,0.04,0.02,0.13,PP.LEGR,PK.FIX,SHOE);
+  box(-0.1,0.1,0.47,0.80,-0.18,0.18,PP.TORSO,PK.UP);                                                             // 胴(上着)
+  box(-0.045,0.045,0.50,0.79,-0.235,-0.18,PP.ARML,PK.UP); box(-0.035,0.035,0.43,0.50,-0.23,-0.185,PP.ARML,PK.FIX,SKIN);   // 左腕と手
+  box(-0.045,0.045,0.50,0.79,0.18,0.235,PP.ARMR,PK.UP);   box(-0.035,0.035,0.43,0.50,0.185,0.23,PP.ARMR,PK.FIX,SKIN);     // 右腕(下ろす)
+  box(-0.045,0.045,0.62,0.79,0.18,0.235,PP.ARMUP,PK.UP);  box(-0.02,0.16,0.60,0.66,0.13,0.2,PP.ARMUP,PK.UP);             // 右腕(スマホを見る)
+  box(0.14,0.19,0.62,0.69,0.13,0.2,PP.ARMUP,PK.FIX,SKIN);
+  box(0.165,0.18,0.66,0.76,0.135,0.195,PP.PHONE,PK.FIX,0x111214);                                                // スマホ
+  box(-0.045,0.045,0.80,0.86,-0.045,0.045,PP.HEAD,PK.FIX,SKIN); box(-0.075,0.085,0.86,1.0,-0.07,0.07,PP.HEAD,PK.FIX,SKIN);   // 首・頭
+  box(-0.085,0.07,0.95,1.005,-0.075,0.075,PP.HAIRS,PK.HAIR); box(-0.085,-0.03,0.88,0.97,-0.075,0.075,PP.HAIRS,PK.HAIR);     // 短い髪
+  box(-0.09,0.075,0.95,1.01,-0.08,0.08,PP.HAIRL,PK.HAIR); box(-0.095,-0.02,0.74,0.97,-0.085,0.085,PP.HAIRL,PK.HAIR);         // 長い髪(肩まで)
+  box(-0.01,0.08,0.86,0.97,-0.082,-0.07,PP.HAIRL,PK.HAIR); box(-0.01,0.08,0.86,0.97,0.07,0.082,PP.HAIRL,PK.HAIR);
+  box(-0.12,0.12,0.28,0.50,-0.19,0.19,PP.SKIRT,PK.LOW);                                                          // スカート
+  box(0.1,0.108,0.60,0.79,-0.016,0.016,PP.TIE,PK.FIX,0x7a1f2a);                                                  // ネクタイ
+  box(-0.21,-0.1,0.50,0.79,-0.14,0.14,PP.PACK,PK.BAG);                                                           // リュック
+  box(-0.05,0.08,0.42,0.56,-0.27,-0.2,PP.SBAG,PK.BAG); box(-0.012,0.012,0.56,0.80,-0.215,-0.19,PP.SBAG,PK.BAG);  // 肩掛け鞄と紐
+  box(-0.07,0.09,0.28,0.42,0.215,0.25,PP.CASE,PK.BAG);                                                           // 書類鞄(右手)
+  box(-0.06,0.07,0.25,0.43,-0.285,-0.22,PP.SHOP,PK.BAG);                                                         // 買い物袋(左手)
+  const g=facesGeo(P,N,I,Cc);
+  const PK2=[]; for(let i=0;i<AP.length;i++) PK2.push(AP[i],AK[i]);
+  g.setAttribute('aPK',new THREE.Float32BufferAttribute(PK2,2));      // (部品, 色の出どころ)。頂点の属性の数を上限(16)に収めるため詰める
+  return g;
+})();
+/* 遠くの人の形(PEOPLE_FAR より先):脚(1つ)・胴・頭・髪・鞄だけ。部品の番号と色の出どころは近くの形と同じ(同じ材質・属性で描ける) */
+const PERSON_GEO_FAR=(function(){
+  const P=[],N=[],Cc=[],I=[],PK2=[], col=new THREE.Color();
+  const box=(x0,x1,y0,y1,z0,z1,part,kind,hex)=>{ for(const [k,q] of boxFaces(x0,x1,y0,y1,z0,z1,['top','px','nx','pz','nz'])){const v=P.length/3;
+    if(hex===undefined) col.setRGB(1,1,1); else setSrgb(col,hex);
+    for(let i=0;i<4;i++){P.push(q[i][0],q[i][1],q[i][2]);N.push(q[4][0],q[4][1],q[4][2]);Cc.push(col.r,col.g,col.b);PK2.push(part,kind);}
+    I.push(v,v+1,v+2,v,v+2,v+3);} };
+  box(-0.07,0.07,0,0.47,-0.13,0.13,PP.LEGL,PK.LEG); box(-0.1,0.1,0.47,0.80,-0.22,0.22,PP.TORSO,PK.UP);
+  box(-0.075,0.085,0.80,1.0,-0.07,0.07,PP.HEAD,PK.FIX,0xd9b69a);
+  box(-0.085,0.07,0.94,1.005,-0.075,0.075,PP.HAIRS,PK.HAIR); box(-0.095,0.075,0.76,1.01,-0.085,0.085,PP.HAIRL,PK.HAIR);
+  box(-0.12,0.12,0.28,0.50,-0.19,0.19,PP.SKIRT,PK.LOW);
+  box(-0.21,-0.1,0.50,0.79,-0.14,0.14,PP.PACK,PK.BAG); box(-0.05,0.08,0.42,0.56,-0.27,-0.2,PP.SBAG,PK.BAG);
+  box(-0.07,0.09,0.28,0.42,0.215,0.25,PP.CASE,PK.BAG); box(-0.06,0.07,0.25,0.43,-0.285,-0.22,PP.SHOP,PK.BAG);
+  const g=facesGeo(P,N,I,Cc); g.setAttribute('aPK',new THREE.Float32BufferAttribute(PK2,2)); return g;
+})();
+const PEOPLE_NEAR=120, PEOPLE_FAR=350;      // 細かい形を描く距離・人を描く距離[m](まとまりの外接球の縁から)
 const M_PEOPLE=mkMat('MeshLambertMaterial',{vertexColors:true});
 M_PEOPLE.onBeforeCompile=sh=>{
-  sh.vertexShader=sh.vertexShader.replace('#include <color_vertex>',
+  Object.assign(sh.uniforms,PEOPLE_U);
+  // 属性は詰めてある:aPK=(部品,色の出どころ)、iMW=(見せる部品のビット,歩く量,位相)、iC0..2=下・脚・髪・鞄の色(12成分)
+  sh.vertexShader='attribute vec2 aPK; attribute vec3 iMW; attribute vec4 iC0; attribute vec4 iC1; attribute vec4 iC2;\n'+
+    'uniform float uPeopleT;\n'+
+    sh.vertexShader.replace('#include <begin_vertex>','#include <begin_vertex>\n'+   // (color_vertex が先に来るので、展開はそこで)
+    ' if(mod(floor(iMask/pow(2.,aPart)+.001),2.)<.5) transformed=vec3(0.);\n'+          // 見せない部品は潰す
+    ' else if(iWalk.x>0.){ float sw=sin(uPeopleT*7.5+iWalk.y)*0.42*iWalk.x;\n'+           // 歩く:脚は腰、腕は肩を軸に振る
+    '   float a=0., py=0.; if(aPart<.5){a=sw;py=.47;} else if(aPart<1.5){a=-sw;py=.47;} else if(aPart>2.5&&aPart<3.5){a=-sw*.7;py=.79;} else if(aPart>3.5&&aPart<4.5){a=sw*.7;py=.79;}\n'+
+    '   if(a!=0.){ vec2 d=transformed.xy-vec2(0.,py); float c=cos(a), s=sin(a); transformed.xy=vec2(0.,py)+vec2(c*d.x-s*d.y,s*d.x+c*d.y); } }')
+    .replace('#include <color_vertex>',
     '#if defined( USE_COLOR ) || defined( USE_INSTANCING_COLOR )\n vColor = vec3( 1.0 );\n#endif\n#ifdef USE_COLOR\n vColor *= color;\n#endif\n'+
-    '#ifdef USE_INSTANCING_COLOR\n if( color.r > 0.99 && color.g > 0.99 && color.b > 0.99 ) vColor.xyz *= instanceColor.xyz;\n#endif');
+    ' float aPart=aPK.x, aKind=aPK.y, iMask=iMW.x; vec2 iWalk=iMW.yz;\n'+
+    ' vec3 iLow=iC0.xyz, iLeg=vec3(iC0.w,iC1.xy), iHair=vec3(iC1.zw,iC2.x), iBag=iC2.yzw;\n'+
+    '#ifdef USE_INSTANCING_COLOR\n if(aKind>.5&&aKind<1.5) vColor.xyz*=instanceColor.xyz;\n#endif\n'+
+    ' if(aKind>1.5&&aKind<2.5) vColor.xyz*=iLow; else if(aKind>2.5&&aKind<3.5) vColor.xyz*=iHair; else if(aKind>3.5&&aKind<4.5) vColor.xyz*=iBag; else if(aKind>4.5) vColor.xyz*=iLeg;');
   sh.fragmentShader=sh.fragmentShader.replace('#include <emissivemap_fragment>','#include <emissivemap_fragment>\n totalEmissiveRadiance *= vColor;');
 };
-M_PEOPLE.customProgramCacheKey=()=>'people';
-const PERSON_GEO=(function(){                 // 高さ1・前=+x。脚・胴(白=服の色)・頭
-  const P=[],N=[],Cc=[],I=[], col=new THREE.Color();
-  const box=(x0,x1,y0,y1,z0,z1,hex)=>{ for(const [k,q] of boxFaces(x0,x1,y0,y1,z0,z1,['top','px','nx','pz','nz'])){const v=P.length/3;
-    if(hex===null) col.setRGB(1,1,1); else setSrgb(col,hex);
-    for(let i=0;i<4;i++){P.push(q[i][0],q[i][1],q[i][2]);N.push(q[4][0],q[4][1],q[4][2]);Cc.push(col.r,col.g,col.b);}
-    I.push(v,v+1,v+2,v,v+2,v+3);} };
-  box(-0.08,0.08,0,0.47,-0.14,-0.02,0x2e3238); box(-0.08,0.08,0,0.47,0.02,0.14,0x2e3238);   // 脚
-  box(-0.11,0.11,0.47,0.82,-0.20,0.20,null);                                                  // 胴(服)
-  box(-0.045,0.045,0.82,0.86,-0.045,0.045,0xd9b69a);                                          // 首
-  box(-0.075,0.085,0.86,1.0,-0.07,0.07,0xd9b69a);                                             // 頭
-  box(-0.085,0.07,0.95,1.005,-0.075,0.075,0x2a2522);                                          // 髪(上)
-  box(-0.085,-0.03,0.88,0.97,-0.075,0.075,0x2a2522);                                          // 髪(後ろ。顔は +x)
-  return facesGeo(P,N,I,Cc);
+M_PEOPLE.customProgramCacheKey=()=>'people2';
+/* 人の型(見た目)。[名前, 割合, 作る関数]。作る関数は {mask, up, low, hair, bag, h, w} を返す(色は sRGB の16進) */
+const PEOPLE_TYPES=(function(){
+  const pick=a=>a[Math.floor(Math.random()*a.length)], B=(...ids)=>ids.reduce((m,i)=>m|(1<<i),0);
+  const BASE=B(PP.LEGL,PP.LEGR,PP.TORSO,PP.ARML,PP.HEAD);
+  const HAIR_Y=[0x1c1a19,0x2a2220,0x3a2a20,0x5a3e2b], HAIR_O=[0x8a8a88,0xb5b4b0,0xd6d5d0,0x5e5c5a];
+  const arm=(phone)=>phone?B(PP.ARMUP,PP.PHONE):B(PP.ARMR);
+  return [
+    ['会社員',0.24,()=>{const ph=Math.random()<0.35, cs=!ph&&Math.random()<0.7;
+      return {mask:BASE|arm(ph)|B(PP.HAIRS,PP.TIE)|(cs?B(PP.CASE):(Math.random()<0.5?B(PP.PACK):B(PP.SBAG))), up:pick([0x23283a,0x2b2b2e,0x3a3d44,0x1d2433]),
+        low:null, hair:pick(HAIR_Y), bag:pick([0x1b1a19,0x2b2420,0x3a3027]), h:1.68+Math.random()*0.16, w:1.0+Math.random()*0.08};}],
+    ['会社員(女性)',0.12,()=>{const ph=Math.random()<0.45, sk=Math.random()<0.55;
+      return {mask:BASE|arm(ph)|B(PP.SBAG)|(Math.random()<0.6?B(PP.HAIRL):B(PP.HAIRS))|(sk?B(PP.SKIRT):0), up:pick([0x2a2e3c,0x4a4b52,0xd8d2c4,0x6b5a4c]),
+        low:sk?pick([0x2a2e3c,0x3b3b3e]):pick([0x2a2e3c,0x3b3b3e,0xcfc8b8]), hair:pick(HAIR_Y), bag:pick([0x3b2a22,0x1d1c1c,0xb9a58a,0x7a2a2a]), h:1.55+Math.random()*0.12, w:0.92+Math.random()*0.06, stock:sk};}],
+    ['学生(男子)',0.12,()=>{const ph=Math.random()<0.5, c=pick([0x1b1e2a,0x16171b]);
+      return {mask:BASE|arm(ph)|B(PP.HAIRS,PP.PACK), up:c, low:c, hair:0x161413, bag:pick([0x1c1c1e,0x22314f,0x3b3b3b]), h:1.62+Math.random()*0.16, w:0.95+Math.random()*0.06};}],
+    ['学生(女子)',0.11,()=>{const ph=Math.random()<0.5;
+      return {mask:BASE|arm(ph)|B(PP.SKIRT)|(Math.random()<0.7?B(PP.HAIRL):B(PP.HAIRS))|(Math.random()<0.6?B(PP.PACK):B(PP.SBAG)), up:pick([0x1d2338,0x23283a,0xe9e9ea]),
+        low:pick([0x2b2f45,0x3a3346,0x2f3640]), hair:pick([0x161413,0x2a2220]), bag:pick([0x1c1c1e,0x6a3b2a,0x22314f]), h:1.52+Math.random()*0.12, w:0.9+Math.random()*0.05, stock:true};}],
+    ['主婦',0.12,()=>{const ph=Math.random()<0.2, sk=Math.random()<0.35;
+      return {mask:BASE|arm(ph)|(Math.random()<0.6?B(PP.HAIRL):B(PP.HAIRS))|(sk?B(PP.SKIRT):0)|(Math.random()<0.55?B(PP.SHOP):B(PP.SBAG)), up:pick([0xd9c7a8,0xa8b8c8,0xc98f7a,0x8fa38a,0xe6e1d6,0x7b6f9a]),
+        low:pick([0x5a5246,0x3f4656,0xb9ae98,0x2f2f33]), hair:pick(HAIR_Y.concat([0x6b4a32])), bag:pick([0xf0eee8,0xc9b48f,0x8a5a3c,0x5d6b4e]), h:1.52+Math.random()*0.1, w:0.95+Math.random()*0.08, stock:false};}],
+    ['高齢者',0.12,()=>{const f=Math.random()<0.5;
+      return {mask:BASE|arm(false)|(f?B(PP.HAIRL):B(PP.HAIRS))|(Math.random()<0.5?B(PP.SBAG):B(PP.SHOP)), up:pick([0x8a7f6c,0x6c6f73,0xa69c8a,0x5b5f66,0x7a6a5a]),
+        low:pick([0x4a4a4c,0x6a6458,0x3b3e45]), hair:pick(HAIR_O), bag:pick([0x5a4a3a,0x3b3b3b,0x8a7a62]), h:(f?1.47:1.58)+Math.random()*0.08, w:0.95+Math.random()*0.08};}],
+    ['若者',0.13,()=>{const ph=Math.random()<0.6, f=Math.random()<0.5;
+      return {mask:BASE|arm(ph)|(f&&Math.random()<0.6?B(PP.HAIRL):B(PP.HAIRS))|(Math.random()<0.55?B(PP.PACK):B(PP.SBAG))|(f&&Math.random()<0.4?B(PP.SKIRT):0),
+        up:pick([0xc23b3b,0x2f6fb0,0xe8e4da,0x3b3b3b,0x5d8a4e,0xd9a83a,0x8a4fa0,0x2f3d5c]), low:pick([0x2f4a6b,0x2a2a2c,0xb9ae98,0x4a5a3a]),
+        hair:pick(HAIR_Y.concat([0x7a5232,0x9a6a3a])), bag:pick([0x1c1c1e,0x6a3b2a,0x2f6fb0,0x8a8a88]), h:(f?1.55:1.68)+Math.random()*0.14, w:0.92+Math.random()*0.08};}],
+    ['子ども',0.04,()=>({mask:BASE|B(PP.ARMR,PP.HAIRS,PP.PACK), up:pick([0xe0533b,0x3b8ad9,0xf2c23a,0x5bb04a]), low:pick([0x2f4a6b,0x3b3b3b]),
+        hair:0x1c1a19, bag:pick([0xd23b2f,0x2f5fb0,0x3a3a3a]), h:1.1+Math.random()*0.2, w:0.9})],
+  ];
 })();
+function personLook(){
+  let r=Math.random(), T=PEOPLE_TYPES[0];
+  for(const t of PEOPLE_TYPES){ if((r-=t[1])<=0){T=t;break;} }
+  const L=T[2](); L.type=T[0];
+  if(L.low===null) L.low=L.up;                      // スーツは上下同じ色
+  if(L.stock) L.legHex=0x2b2420;                    // スカートの下は濃い色のタイツ
+  return L;
+}
+/* 人のインスタンスを作る(駅のホーム・歩道で共用)。list=[{x,y,z,yaw,look,walk:[量,位相]}] */
+function peopleMesh(list,name,far){
+  const g=(far?PERSON_GEO_FAR:PERSON_GEO).clone(), n=list.length, im=new THREE.InstancedMesh(g,M_PEOPLE,n);
+  const aMW=new Float32Array(n*3), aC=[new Float32Array(n*4),new Float32Array(n*4),new Float32Array(n*4)], c=new THREE.Color();
+  const M4=new THREE.Matrix4(), Q=new THREE.Quaternion(), E=new THREE.Euler(), V=new THREE.Vector3(), S=new THREE.Vector3();
+  list.forEach(function(m,i){
+    const L=m.look;
+    E.set(0,m.yaw,0); Q.setFromEuler(E); M4.compose(V.set(m.x,m.y,m.z),Q,S.set(L.w,L.h,L.w)); im.setMatrixAt(i,M4);
+    im.setColorAt(i,setSrgb(c,L.up));
+    aMW.set([L.mask,m.walk?m.walk[0]:0,m.walk?m.walk[1]:0],i*3);
+    const v=[]; for(const h of [L.low,L.legHex||L.low,L.hair,L.bag]){ setSrgb(c,h); v.push(c.r,c.g,c.b); }   // 12成分を3つの vec4 へ
+    for(let k=0;k<3;k++) aC[k].set(v.slice(k*4,k*4+4),i*4);
+  });
+  g.setAttribute('iMW',new THREE.InstancedBufferAttribute(aMW,3));
+  for(let k=0;k<3;k++) g.setAttribute('iC'+k,new THREE.InstancedBufferAttribute(aC[k],4));
+  im.instanceMatrix.needsUpdate=true; if(im.instanceColor) im.instanceColor.needsUpdate=true;
+  im.name=name; return im;
+}
 NIGHT_HOOKS.push(on=>{ M_PEOPLE.emissive.copy(on?glow(0x3a3a3a):srgb(0x000000)); });
 {
-  const CLOTH=[0x2f3d5c,0x3b3b3b,0x8a1f2b,0xe8e4da,0x5d6b4e,0x6a4b3a,0x1f2a44,0x9aa3ad,0xc9a24a,0x4a6f8f,0x7a2d5c,0xf0f0ee];
   const byPlat=new Map();
   for(const q of PLATS){
     const yP=railY((q.x0+q.x1)/2)+STD.PLAT;
@@ -6790,8 +6899,8 @@ NIGHT_HOOKS.push(on=>{ M_PEOPLE.emissive.copy(on?glow(0x3a3a3a):srgb(0x000000));
       for(const m of PEOPLE) if(m.q===q&&Math.abs(m.s-s)<0.55&&Math.abs(m.o-o)<0.55) return false;
       return true;
     };
-    const put=(s,o,face)=>{ if(!free(s,o)) return; PEOPLE.push({q:q,s:s,o:o,y:railY(s)+STD.PLAT,face:face,
-      h:1.55+Math.random()*0.3, w:0.9+Math.random()*0.2, c:CLOTH[Math.floor(Math.random()*CLOTH.length)]}); };
+    const put=(s,o,face)=>{ if(!free(s,o)) return; const L=personLook();
+      PEOPLE.push({q:q,s:s,o:o,y:railY(s)+STD.PLAT,face:face,h:L.h,w:L.w,c:L.up,look:L,type:L.type}); };
     // ホームドアの開口の後ろに並ぶ(扉の位置ごとに 45%)
     for(const e of[-1,1]){
       const edge=q.off+e*q.hw;
@@ -6811,22 +6920,18 @@ NIGHT_HOOKS.push(on=>{ M_PEOPLE.emissive.copy(on?glow(0x3a3a3a):srgb(0x000000));
   const groups=new Map();
   for(const m of PEOPLE){ let st=STA[0]; for(const z of STA) if(Math.abs(z.x-(m.q.x0+m.q.x1)/2)<Math.abs(st.x-(m.q.x0+m.q.x1)/2)) st=z;
     m.st=st; let g=groups.get(st); if(!g){g=[];groups.set(st,g);} g.push(m); }
-  const M4=new THREE.Matrix4(), Q=new THREE.Quaternion(), E=new THREE.Euler(), V=new THREE.Vector3(), SC=new THREE.Vector3(), C=new THREE.Color();
   for(const [st,list] of groups){
-    const g=PERSON_GEO.clone(), im=new THREE.InstancedMesh(g,M_PEOPLE,list.length);
     const bx={x0:1e9,x1:-1e9,y0:1e9,y1:-1e9,z0:1e9,z1:-1e9};
-    list.forEach(function(m,i){
+    const L2=list.map(function(m){
       const f=frame(m.s,m.o), n=frame(m.s,m.o+m.face);            // 縁(線路)の方を向く
-      E.set(0,Math.atan2(-(n.z-f.z),n.x-f.x),0); Q.setFromEuler(E);
-      V.set(f.x,m.y,f.z); SC.set(m.w,m.h,m.w); M4.compose(V,Q,SC); im.setMatrixAt(i,M4);
-      setSrgb(C,m.c); im.setColorAt(i,C);
       bx.x0=Math.min(bx.x0,f.x);bx.x1=Math.max(bx.x1,f.x);bx.y0=Math.min(bx.y0,m.y);bx.y1=Math.max(bx.y1,m.y+2);bx.z0=Math.min(bx.z0,f.z);bx.z1=Math.max(bx.z1,f.z);
+      return {x:f.x,y:m.y,z:f.z,yaw:Math.atan2(-(n.z-f.z),n.x-f.x),look:m.look};
     });
-    im.instanceMatrix.needsUpdate=true; if(im.instanceColor) im.instanceColor.needsUpdate=true;
-    g.boundingSphere=new THREE.Sphere(new THREE.Vector3((bx.x0+bx.x1)/2,(bx.y0+bx.y1)/2,(bx.z0+bx.z1)/2),
-      Math.hypot(bx.x1-bx.x0,bx.y1-bx.y0,bx.z1-bx.z0)/2+2);
-    im.frustumCulled=true; im.name='ホームの人 '+st.n;
-    scene.add(im); lodAdd(im,bx,600);
+    const sph=new THREE.Sphere(new THREE.Vector3((bx.x0+bx.x1)/2,(bx.y0+bx.y1)/2,(bx.z0+bx.z1)/2),Math.hypot(bx.x1-bx.x0,bx.y1-bx.y0,bx.z1-bx.z0)/2+2);
+    // 近く(PEOPLE_NEAR まで)は細かい形、その先 PEOPLE_FAR までは粗い形。どちらも駅ごとに1回の描画
+    const im=peopleMesh(L2,'ホームの人 '+st.n), imF=peopleMesh(L2,'ホームの人(遠く) '+st.n,true);
+    for(const m of [im,imF]){ m.geometry.boundingSphere=sph; m.frustumCulled=true; scene.add(m); }
+    lodAdd(im,bx,PEOPLE_NEAR); lodAdd(imF,bx,PEOPLE_FAR,PEOPLE_NEAR);
   }
 }
 
@@ -6838,7 +6943,13 @@ NIGHT_HOOKS.push(on=>{ M_PEOPLE.emissive.copy(on?glow(0x3a3a3a):srgb(0x000000));
    登録簿 RD_LANES・RD_CARS(検証が位置を測る) */
 const RD_LANES=[], RD_CARS=[];
 const M_ROADCAR=mkMat('MeshLambertMaterial',{vertexColors:true});
-M_ROADCAR.onBeforeCompile=M_PEOPLE.onBeforeCompile; M_ROADCAR.customProgramCacheKey=()=>'roadcar';
+M_ROADCAR.onBeforeCompile=sh=>{                // 車体の色(インスタンスの色)は頂点の色が白の所だけ
+  sh.vertexShader=sh.vertexShader.replace('#include <color_vertex>',
+    '#if defined( USE_COLOR ) || defined( USE_INSTANCING_COLOR )\n vColor = vec3( 1.0 );\n#endif\n#ifdef USE_COLOR\n vColor *= color;\n#endif\n'+
+    '#ifdef USE_INSTANCING_COLOR\n if( color.r > 0.99 && color.g > 0.99 && color.b > 0.99 ) vColor.xyz *= instanceColor.xyz;\n#endif');
+  sh.fragmentShader=sh.fragmentShader.replace('#include <emissivemap_fragment>','#include <emissivemap_fragment>\n totalEmissiveRadiance *= vColor;');
+};
+M_ROADCAR.customProgramCacheKey=()=>'roadcar';
 const M_CARLAMP=mkMat('MeshBasicMaterial',{vertexColors:true});
 const CAR_GEO=(function(){                    // 前=+x。車体(白=色)・窓・タイヤ
   const P=[],N=[],Cc=[],I=[], col=new THREE.Color();

@@ -19,7 +19,7 @@ const X = require('./stub_three')(path,
   'PSD:PSD,K8:K8,DECK_END:DECK_END,LODS:LODS,POLE_S:POLE_S,WIRE_CAT:WIRE_CAT,' +
   'GUIDES:GUIDES,depList:depList,pidsSetTime:pidsSetTime,' +
   'PEOPLE:(typeof PEOPLE!=="undefined"?PEOPLE:[]),scene:scene,STD:STD,POLES:(typeof POLES!=="undefined"?POLES:[]),' +
-  'TURNOUTS:TURNOUTS,prjXY:prjXY,INO:INO,INO_PLAT:INO_PLAT,XR:XR,VIA_COLS:VIA_COLS');
+  'TURNOUTS:TURNOUTS,prjXY:prjXY,INO:INO,INO_PLAT:INO_PLAT,XR:XR,VIA_COLS:VIA_COLS,lodStruct:lodStruct,camera:camera');
 
 /* ---- 検証側が独立に持つ寸法 -------------------------------------------- */
 const REF = {
@@ -605,6 +605,32 @@ const w = (s, n) => String(s) + ' '.repeat(Math.max(0, n -
     L.forEach((m, i) => { const f = X.frame(m.s, m.o), q = o.mats[i]; nI++;
       if ((!q || Math.hypot(q.p.x - f.x, q.p.z - f.z) > 0.01 || Math.abs(q.p.y - m.y) > 0.01) && !badI) badI = o.name + ' ' + i; }); });
   ok('ホームの人を描いた位置', badI === null && nI === P.length, '登録簿と同じ(全員)', badI || nI + '人');
+  /* 人の遠近(2026-10-12):近く(駅の中)は細かい形・ホームの外接球の縁から 120〜350m は粗い形・その先は描かない。
+     カメラが外接球の中にあるとき(距離が負)に近くの形が消えないこと(近距離の条件を入れたときに一度起きた)も見る */
+  { const st = X.STA[2], f = X.frame(st.x, 0), y = X.railY(st.x) + 3;
+    const nm = (k) => { let o = null; X.scene.traverse((q) => { if (q.name === k) o = q; }); return o; };
+    const N = nm('ホームの人 ' + st.n), F = nm('ホームの人(遠く) ' + st.n), res = [];
+    for (const d of [0, 350, 700]) { const g = X.frame(st.x, d); X.camera.position.set(g.x, y + (d ? 30 : 0), g.z); X.lodStruct();
+      res.push([!!(N && N.visible), !!(F && F.visible)]); }
+    const want = [[true, false], [false, true], [false, false]];
+    ok('ホームの人の遠近', N && F && JSON.stringify(res) === JSON.stringify(want), '駅の中=近く・横350m=遠く・横700m=無し', JSON.stringify(res));
+  }
+  /* 人の種類(2026-10-12 利用者指示:老若男女・学生・会社員・主婦など。鞄もスマホも持たないのは不自然)。検証側の決まり:
+     型が6種以上・鞄(リュック・肩掛け・書類鞄・買い物袋)を持つ人が85%以上・スマホを見る人が20%以上・
+     スマホを持つ人は右腕を上げている(下ろした右腕と同時に無い)・描いたインスタンスの部品のビットが登録簿と同じ */
+  { const BIT = { ARMR: 4, ARMUP: 5, PACK: 11, SBAG: 12, CASE: 13, PHONE: 14, SHOP: 15 }, has = (m, b) => ((m >> b) & 1) === 1;
+    const types = new Set(P.map((m) => m.type)), bag = P.filter((m) => [BIT.PACK, BIT.SBAG, BIT.CASE, BIT.SHOP].some((b) => has(m.look.mask, b))).length;
+    const ph = P.filter((m) => has(m.look.mask, BIT.PHONE)).length;
+    const badArm = P.find((m) => has(m.look.mask, BIT.PHONE) !== has(m.look.mask, BIT.ARMUP) || (has(m.look.mask, BIT.ARMUP) && has(m.look.mask, BIT.ARMR)));
+    let badM = null;
+    X.scene.traverse((o) => { if (!o.name || o.name.indexOf('ホームの人 ') !== 0) return;
+      const A = o.geometry && o.geometry.attributes && o.geometry.attributes.iMW; const L = P.filter((m) => 'ホームの人 ' + m.st.n === o.name);
+      if (!A || !A.array) { if (!badM) badM = o.name + ' 部品のビットが無い'; return; }
+      L.forEach((m, i) => { if (A.array[i * 3] !== m.look.mask && !badM) badM = o.name + ' ' + i; }); });
+    ok('ホームの人の種類・鞄・スマホ', types.size >= 6 && bag >= 0.85 * P.length && ph >= 0.2 * P.length && !badArm && badM === null,
+      '型6種以上・鞄85%以上・スマホ20%以上・腕と部品が合う',
+      types.size + '種・鞄' + (100 * bag / P.length).toFixed(0) + '%・スマホ' + (100 * ph / P.length).toFixed(0) + '%' + (badArm ? '・腕の不一致' : '') + (badM ? '・' + badM : ''));
+  }
 }
 console.log('=== 駅の構造の検証 ===');
 console.log('');

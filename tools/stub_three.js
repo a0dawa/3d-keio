@@ -251,7 +251,7 @@ const REAL = {
   Vector3: V3, Vector2: V2, Vector4: V4, Object3D: Obj3D, Group, Scene, Mesh, BufferGeometry: BufGeo, DirectionalLight: DirLight,
   PerspectiveCamera: PerspCam, CanvasTexture: Tex, Texture: Tex, WebGLRenderer: Renderer,
   Matrix4: M4, InstancedMesh: Inst, Color, Fog,
-  Float32BufferAttribute: Attr, BufferAttribute: Attr, HemisphereLight: HemiLight,
+  Float32BufferAttribute: Attr, BufferAttribute: Attr, InstancedBufferAttribute: Attr, HemisphereLight: HemiLight,
   BoxGeometry: param('Box'), CylinderGeometry: param('Cyl'), PlaneGeometry: param('Plane'),
   SphereGeometry: param('Sph'), ConeGeometry: param('Cone'), CircleGeometry: param('Cir'),
   MeshLambertMaterial: Mat('lambert'), MeshBasicMaterial: Mat('basic'),
