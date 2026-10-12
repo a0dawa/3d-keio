@@ -19,7 +19,8 @@ const X = require('./stub_three')(path,
   'PSD:PSD,K8:K8,DECK_END:DECK_END,LODS:LODS,POLE_S:POLE_S,WIRE_CAT:WIRE_CAT,' +
   'GUIDES:GUIDES,depList:depList,pidsSetTime:pidsSetTime,' +
   'PEOPLE:(typeof PEOPLE!=="undefined"?PEOPLE:[]),scene:scene,STD:STD,POLES:(typeof POLES!=="undefined"?POLES:[]),' +
-  'TURNOUTS:TURNOUTS,prjXY:prjXY,INO:INO,INO_PLAT:INO_PLAT,XR:XR,VIA_COLS:VIA_COLS,lodStruct:lodStruct,camera:camera');
+  'TURNOUTS:TURNOUTS,prjXY:prjXY,INO:INO,INO_PLAT:INO_PLAT,XR:XR,VIA_COLS:VIA_COLS,lodStruct:lodStruct,camera:camera,' +
+  'trains:trains,stepWorld:stepWorld,FLOW:FLOW,stopPosOf:stopPosOf,CAR_HALF:CAR_HALF,placeTrain:placeTrain,trainPSD:trainPSD');
 
 /* ---- 検証側が独立に持つ寸法 -------------------------------------------- */
 const REF = {
@@ -631,6 +632,61 @@ const w = (s, n) => String(s) + ' '.repeat(Math.max(0, n -
       '型6種以上・鞄85%以上・スマホ20%以上・腕と部品が合う',
       types.size + '種・鞄' + (100 * bag / P.length).toFixed(0) + '%・スマホ' + (100 * ph / P.length).toFixed(0) + '%' + (badArm ? '・腕の不一致' : '') + (badM ? '・' + badM : ''));
   }
+}
+/* ---- 乗り降り(2026-10-12 利用者指示:扉が開いたらまず車内の人がホームに降りて階段やエレベーターへ進み、降車が終わったら
+   ホームで待っていた人が乗る。自然な歩き方でぶつからないように)。明大前に下りの各停を停めて 150秒動かす。検証側の決まり:
+   ・扉が開いて 10秒のうちに 20人以上が降りる。降りる人の最初の位置は扉の中心から 1.0m 以内・ホームの縁より線路の側(車内)
+   ・降りた人は階段の井戸(登録簿 STAIRS の範囲)かエレベーターの前(1.8m 以内)で消える
+   ・乗る人が歩き出すとき、同じ扉から降りた人がその扉の 1.5m 以内にいない(降車が先)。乗る人は扉の中心から 1.0m 以内・車内で消える
+   ・歩く人どうし・歩く人と立っている人の中心が 0.3m 以上離れる。歩く人はホームの床の上の物(柱・ベンチ・自販機・EV・階段の囲い)に入らない
+   ・列車が出て 120秒のうちに、乗った人の場所に人が戻る(階段から歩いて来る) ---- */
+{
+  const RF = { ALIGHT_MIN: 20, DOOR_TOL: 1.0, EXIT_EV: 1.8, GAP: 0.3, CLEAR: 1.5, BACK: 120 };
+  const st = X.STA.find((z) => z.n === '明大前'), t = X.trains.find((u) => u.dir > 0 && u.kind === '各停');
+  for (const u of X.trains) if (u !== t) { u.x = u.dir > 0 ? -30000 : 30000; u.st = 'wait'; }
+  t.x = X.stopPosOf(st, 1) - X.CAR_HALF; t.st = 'dwell'; t.dwell = 58; t.atSt = st; t.v = 0; X.placeTrain(t);
+  const OBJ = X.STRUCT.filter((o) => ['ホームの柱', 'ベンチ', '自動販売機', 'エレベーター', '階段の囲い'].indexOf(o.tag) >= 0 && Math.abs((o.s0 + o.s1) / 2 - st.x) < 130);
+  const seen = new Map(); let bad = null, nOff10 = 0, tOpen = null, minG = 1e9, depT = null, hiddenAtDep = null;
+  for (let k = 0; k < 3600 && !bad; k++) {
+    X.stepWorld(0.05); const T = k * 0.05;
+    if (tOpen === null && t.dr > 0.95) tOpen = T;
+    if (depT === null && t.st !== 'dwell') { depT = T; hiddenAtDep = X.PEOPLE.filter((m) => m.st === st && !m.shown); }
+    const row = X.trainPSD(t) || seen.row; if (row) seen.row = row;
+    const A = X.FLOW.walkers.filter((w) => !(w.wait > 0) && w.st === st);
+    for (const w of A) {
+      if (!seen.has(w)) {                                  // 現れたとき
+        seen.set(w, { t0: T });
+        const rw = seen.row, ds = rw ? Math.min(...rw.open.map((c) => Math.abs(c - w.s))) : 99;
+        if (w.kind === '降') { if (tOpen !== null && T - tOpen <= 10) nOff10++;
+          const e = Math.sign(w.o - w.q.off), edge = w.q.edge(w.s, e);
+          if (ds > RF.DOOR_TOL || e * (w.o - edge) <= 0) bad = '降りる人が扉の外から s=' + (w.s - st.x).toFixed(1); }
+        if (w.kind === '乗') {
+          const D = w.m.door, e = Math.sign(w.m.o - w.q.off), oe = w.q.edge(D, e);
+          const near = A.find((o) => o.kind === '降' && o.door && o.door.c === D && Math.hypot(o.s - D, o.o - oe) < RF.CLEAR);
+          if (near) bad = '降車が済む前に乗り始めた 扉 s=' + (D - st.x).toFixed(1);
+        }
+      }
+      const r = seen.get(w); r.last = [w.s, w.o, w.k, w.path.length]; r.w = w;
+      // 床の上の物(最後の井戸・EV へ入る区間と、車内の区間を除く)
+      const onPlat = w.kind === '降' ? (w.k >= 1 && w.k < w.path.length - 2) : w.kind === '戻' ? (w.k >= 2) : (w.k < w.path.length - 2);
+      if (onPlat) for (const o of OBJ) if (w.s > o.s0 - 0.1 && w.s < o.s1 + 0.1 && w.o > o.o0 - 0.1 && w.o < o.o1 + 0.1) { bad = (bad || w.kind + 'が' + o.tag + 'に入る s=' + (w.s - st.x).toFixed(1)); break; }
+    }
+    for (let i = 0; i < A.length; i++) for (let j = i + 1; j < A.length; j++) if (A[i].q === A[j].q) minG = Math.min(minG, Math.hypot(A[i].s - A[j].s, A[i].o - A[j].o));
+    for (const w of A) for (const m of X.PEOPLE) if (m.q === w.q && m.shown && m !== w.m) minG = Math.min(minG, Math.hypot(m.s - w.s, m.o - w.o));
+    for (const [w, r] of seen) if (w.kind && !r.end && X.FLOW.walkers.indexOf(w) < 0) {   // 消えたとき
+      r.end = T; const [s, o, kk, n] = r.last;
+      if (w.kind === '降' && kk < n - 2) bad = bad || '降りた人が出口の前で消えた';
+      if (w.kind === '降') { const okExit = X.STAIRS.some((q) => q.st === st && (q.kind === '階段' ? (s >= q.s0 - 0.5 && s <= q.s1 + 0.5 && o >= q.o0 - 0.3 && o <= q.o1 + 0.3) : Math.hypot(s - (q.s0 + q.s1) / 2, o - (q.o0 + q.o1) / 2) < RF.EXIT_EV + 1.0));
+        if (!okExit) bad = bad || '降りた人が階段・EV でない所で消えた s=' + (s - st.x).toFixed(1) + ' o=' + o.toFixed(2); }
+      if (w.kind === '乗') { const e = Math.sign(w.m.o - w.q.off), oe = w.q.edge(w.m.door, e);
+        if (Math.abs(s - w.m.door) > RF.DOOR_TOL || e * (o - oe) <= 0) bad = bad || '乗る人が扉の外で消えた'; }
+    }
+  }
+  const back = hiddenAtDep ? hiddenAtDep.filter((m) => m.shown).length : 0, nH = hiddenAtDep ? hiddenAtDep.length : 0;
+  const nOff = [...seen.keys()].filter((w) => w && w.kind === '降').length, nOn = [...seen.keys()].filter((w) => w && w.kind === '乗').length;
+  ok('乗り降り(降りる→階段・EV/降車の後に乗る)', bad === null && nOff10 >= RF.ALIGHT_MIN && nOn > 0 && minG >= RF.GAP && depT !== null && back === nH && nH > 0,
+    '10秒で' + RF.ALIGHT_MIN + '人以上降りる・扉から/階段・EVへ・降車の後に乗る・間 ' + RF.GAP + 'm 以上・発車後 ' + RF.BACK + '秒で戻る',
+    (bad || '') + ' 降' + nOff + '(10秒で' + nOff10 + ')・乗' + nOn + '・最も近い ' + minG.toFixed(2) + 'm・戻った ' + back + '/' + nH);
 }
 console.log('=== 駅の構造の検証 ===');
 console.log('');

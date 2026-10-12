@@ -1172,6 +1172,7 @@ function lodStruct(){
   if(CITY.treeLod) CITY.treeLod();                // 木の近く/遠く(8章)
   if(typeof pedsDraw==='function') pedsDraw();    // 歩く人(近い人だけ)
   if(typeof carsDraw==='function') carsDraw();    // 自動車(近い車だけ)
+  if(typeof flowDraw==='function') flowDraw();    // 乗り降りの人(近い人だけ)
 }
 
 /* ============ 4. 地表・道路・水緑・施設(平面図準拠) ============ */
@@ -6905,17 +6906,18 @@ NIGHT_HOOKS.push(on=>{ M_PEOPLE.emissive.copy(on?glow(0x3a3a3a):srgb(0x000000));
       for(const m of PEOPLE) if(m.q===q&&Math.abs(m.s-s)<0.55&&Math.abs(m.o-o)<0.55) return false;
       return true;
     };
-    const put=(s,o,face)=>{ if(!free(s,o)) return; const L=personLook();
-      PEOPLE.push({q:q,s:s,o:o,y:railY(s)+STD.PLAT,face:face,h:L.h,w:L.w,c:L.up,look:L,type:L.type}); };
-    // ホームドアの開口の後ろに並ぶ(扉の位置ごとに 45%)
+    const put=(s,o,face,ex)=>{ if(!free(s,o)) return null; const L=personLook();
+      const m=Object.assign({q:q,s:s,o:o,y:railY(s)+STD.PLAT,face:face,h:L.h,w:L.w,c:L.up,look:L,type:L.type},ex||{}); PEOPLE.push(m); return m; };
+    /* ホームドアの開口の両脇に並ぶ(扉の位置ごとに 55%。2026-10-12:降りる人が真ん中を通れるように扉の中心から 0.85m ずつ
+       左右へ分かれる)。row・door を残す(乗り降りの動き FLOW がこの人たちを乗せる) */
     for(const e of[-1,1]){
       const edge=q.off+e*q.hw;
       const row=PSD.find(r=>!r.noStop&&Math.abs(r.off-edge)<1.2&&r.open.some(c=>c>q.x0&&c<q.x1));
       if(!row) continue;
       for(const c of row.open){
-        if(c<q.x0||c>q.x1||Math.random()>0.45) continue;
-        const n=1+Math.floor(Math.random()*3), ds=(Math.random()-0.5)*0.5;
-        for(let k=0;k<n;k++){ const sp=c+ds+(Math.random()-0.5)*0.15; put(sp, q.edge(sp,e)-e*(1.15+0.62*k), e); }
+        if(c<q.x0||c>q.x1||Math.random()>0.55) continue;
+        for(const sd of[-1,1]){ const n=Math.floor(Math.random()*2.6);
+          for(let k=0;k<n;k++){ const sp=c+sd*(0.85+(Math.random()-0.5)*0.1); put(sp, q.edge(sp,e)-e*(1.6+0.62*k), e, {row:row,door:c,qk:k}); } }
       }
     }
     // まばらに立つ人(向きはどちらかの縁)
@@ -6931,15 +6933,212 @@ NIGHT_HOOKS.push(on=>{ M_PEOPLE.emissive.copy(on?glow(0x3a3a3a):srgb(0x000000));
     const L2=list.map(function(m){
       const f=frame(m.s,m.o), n=frame(m.s,m.o+m.face);            // 縁(線路)の方を向く
       bx.x0=Math.min(bx.x0,f.x);bx.x1=Math.max(bx.x1,f.x);bx.y0=Math.min(bx.y0,m.y);bx.y1=Math.max(bx.y1,m.y+2);bx.z0=Math.min(bx.z0,f.z);bx.z1=Math.max(bx.z1,f.z);
-      return {x:f.x,y:m.y,z:f.z,yaw:Math.atan2(-(n.z-f.z),n.x-f.x),look:m.look};
+      return (m.rec={x:f.x,y:m.y,z:f.z,yaw:Math.atan2(-(n.z-f.z),n.x-f.x),look:m.look});
     });
     const sph=new THREE.Sphere(new THREE.Vector3((bx.x0+bx.x1)/2,(bx.y0+bx.y1)/2,(bx.z0+bx.z1)/2),Math.hypot(bx.x1-bx.x0,bx.y1-bx.y0,bx.z1-bx.z0)/2+2);
     // 近く(PEOPLE_NEAR まで)は細かい形、その先 PEOPLE_FAR までは粗い形。どちらも駅ごとに1回の描画
     const im=peopleMesh(L2,'ホームの人 '+st.n), imF=peopleMesh(L2,'ホームの人(遠く) '+st.n,true);
+    list.forEach((m,i)=>{ m.im=im; m.imF=imF; m.ii=i; m.shown=true; });   // 乗り降りで隠す・戻すための番号
     for(const m of [im,imF]){ m.geometry.boundingSphere=sph; m.frustumCulled=true; scene.add(m); }
     lodAdd(im,bx,PEOPLE_NEAR); lodAdd(imF,bx,PEOPLE_FAR,PEOPLE_NEAR);
   }
 }
+
+/* ---- 乗り降り(2026-10-12 利用者指示)------------------------------------------------------
+   列車が停まって扉が開くと、まず車内の人がホームへ降り(扉ごとに0〜3人)、ホームの通り道(線路側の縁から約1〜1.35m 内・階段の
+   井戸の外)を通って最も近い階段(高齢者の半分はエレベーター)へ進み、井戸の中へ降りて(仙川は上がって)消える。その扉の降車が
+   済んだら(扉から 1.5m 以内に降りる人がいない)、扉の両脇に並んでいた人が並んだ順に乗る。列車が出ると、乗った人の場所へ
+   5〜40秒のうちに階段から新しい人が歩いて来て並ぶ。歩く人どうし・立っている人とはぶつからないよう、前方 1m 以内の人から
+   横へよけ(押しのける力)、真正面に近い人がいれば速さを落とす。登録簿 FLOW(walkers=歩いている人) */
+const FLOW={walkers:[], ev:new Map(), respawn:[], T:0};
+const FLOW_NEAR=120, FLOW_FAR=350;
+function flowPlat(row){                          // その扉の列の面するホーム(PLATS)と縁の向き e(+1=北の縁)
+  for(const q of PLATS){
+    if(row.open[0]<q.x0-5||row.open[row.open.length-1]>q.x1+5) continue;
+    if(row.off<q.off-q.hw-0.4||row.off>q.off+q.hw+0.4) continue;
+    return {q:q,e:Math.sign(row.off-q.off)||1};
+  }
+  return null;
+}
+function flowExits(q){                           // そのホームの出口:階段の入口(e0)とエレベーターの扉の前
+  if(q.exits) return q.exits;
+  const X=[];
+  for(const w of STAIRS){
+    if(w.s1<q.x0||w.s0>q.x1||w.o1<q.off-q.hw||w.o0>q.off+q.hw) continue;
+    const oc=(w.o0+w.o1)/2;
+    if(w.kind==='階段'){ const f=w.dir||1, e0=f>0?w.s0:w.s1; X.push({kind:'階段',s:e0,o:oc,f:f,up:!!w.up,w:w}); }
+    else X.push({kind:'EV',s:(w.s0+w.s1)/2,o:oc,f:0,w:w});
+  }
+  return (q.exits=X);
+}
+function flowLane(q,e){                          // 通り道の o:縁から 0.95〜1.0m 内(扉の脇の列=縁から 1.6m より前)
+  let ext=0;
+  for(const x of flowExits(q)) ext=Math.max(ext,e*(x.w.o0-q.off),e*(x.w.o1-q.off));
+  return q.off+e*clamp(ext+0.45,q.hw-1.0,q.hw-0.95);
+}
+// 歩く人を作る:path=[[s,o,y?],...](最後の点で消える/着く)。done=着いたときに呼ぶ
+function flowWalker(st,q,look,path,v,done,kind){
+  const last=path[path.length-1];
+  const w={st:st,q:q,look:look,path:path,k:0,s:path[0][0],o:path[0][1],y:path[0][2],v:v,done:done,kind:kind,ph:Math.random()*6.28,mv:0,born:FLOW.T,
+    goal:[last[0],last[1]]};
+  FLOW.walkers.push(w); return w;
+}
+function flowPathToExit(q,e,s0,o0,x){           // 降りた人:通り道へ出て、出口へ
+  const yP=railY(s0)+STD.PLAT, ln=flowLane(q,e)+(Math.random()-0.5)*0.3, P=[[s0,o0,yP]];
+  if(x.kind==='階段'){
+    const a=x.s-x.f*1.2, oi=x.o+(Math.random()-0.5)*Math.max(0,(x.w.o1-x.w.o0)-0.8);   // 入口は井戸の幅の中でばらす
+    P.push([s0,ln],[a,ln],[a,oi],[x.s,oi],[x.s+x.f*3.0,oi,yP+(x.up?1.6:-1.6)]);   // 井戸の中へ降りる(仙川は上がる)
+  }else{
+    const o1=x.o+e*1.3*Math.sign(ln-x.o||1);
+    P.push([s0,ln],[x.s,ln],[x.s,o1],[x.s,x.o]);
+  }
+  return P;
+}
+function flowNearestExit(q,s,elder){
+  const X=flowExits(q); if(!X.length) return null;
+  const ev=X.filter(x=>x.kind==='EV'), st=X.filter(x=>x.kind==='階段');
+  const pool=(elder&&ev.length&&Math.random()<0.5)?ev:(st.length?st:ev);
+  return pool.reduce((b,x)=>Math.abs(x.s-s)<Math.abs(b.s-s)?x:b,pool[0]);
+}
+function flowHide(m,hide){                        // ホームに立っている人を隠す/戻す(駅のインスタンスの番号 m.ii)
+  if(!m.im) return;
+  if(hide){ _pM.makeScale(0,0,0); for(const im of[m.im,m.imF]){ im.setMatrixAt(m.ii,_pM); im.instanceMatrix.needsUpdate=true; } }
+  else for(const im of[m.im,m.imF]){ personInst(im,m.ii,m.rec); im.instanceMatrix.needsUpdate=true; }
+  m.shown=!hide;
+}
+function stepFlow(dt){
+  FLOW.T+=dt;
+  // 停まって扉が開いた列車ごとに、降りる人を出し、乗る人を決める
+  for(const t of trains){
+    let E=FLOW.ev.get(t);
+    if(t.st!=='dwell'||!t.atSt){ if(E){ flowClose(E); FLOW.ev.delete(t); } continue; }
+    if(E&&E.st!==t.atSt){ flowClose(E); FLOW.ev.delete(t); E=null; }
+    if(E||!(t.dr>0.95)) continue;
+    const row=trainPSD(t); if(!row) continue;
+    const pq=flowPlat(row); if(!pq) continue;
+    const q=pq.q, e=pq.e, st=t.atSt, busy=['笹塚','明大前','桜上水','千歳烏山'].indexOf(st.n)>=0;
+    E={t:t,st:st,row:row,q:q,e:e,t0:FLOW.T,doors:new Map(),board:[]};
+    for(const c of row.open){
+      if(c<q.x0+0.5||c>q.x1-0.5) continue;
+      const n=Math.floor(Math.random()*(busy?3.4:2.6)), D={c:c,n:0,left:[]};
+      for(let k=0;k<n;k++){
+        const look=personLook(), x=flowNearestExit(q,c,look.type==='高齢者'); if(!x) continue;
+        const oe=q.edge(c,e), wk=flowWalker(st,q,look,flowPathToExit(q,e,c+(Math.random()-0.5)*0.3,oe+e*0.7,x),
+          (look.type==='高齢者'?0.9:1.15+Math.random()*0.3),null,'降');
+        wk.door=D; wk.wait=k*0.9; D.left.push(wk);
+      }
+      E.doors.set(c,D);
+    }
+    // 乗る人:その列の扉の両脇に並んでいる人
+    for(const m of PEOPLE) if(m.row===row&&m.shown&&E.doors.has(m.door)) E.board.push(m);
+    E.board.sort((a,b)=>a.qk-b.qk);
+    FLOW.ev.set(t,E);
+  }
+  // 乗る人:その扉の降車が済んだら、並んだ順に(0.9秒ずつ)
+  for(const E of FLOW.ev.values()){
+    for(const m of E.board){
+      if(m.boarding) continue;
+      const D=E.doors.get(m.door); if(!D) continue;
+      const de=E.q.edge(m.door,E.e);                                   // 扉の前(ホームの縁)から降りた人が離れるまで待つ
+      const busyDoor=D.left.some(w=>FLOW.walkers.indexOf(w)>=0&&(w.k<2||w.wait>0||Math.hypot(w.s-m.door,w.o-de)<1.9));
+      if(busyDoor||FLOW.T-E.t0<3+m.qk*0.9) continue;
+      if(E.t.dwell!==undefined&&E.t.dwell<4) continue;                 // 発車の4秒前からは乗らない
+      m.boarding=true; flowHide(m,true);
+      const oe=E.q.edge(m.door,E.e), yP=railY(m.s)+STD.PLAT, sd=Math.sign(m.s-m.door)||1;
+      flowWalker(E.st,E.q,m.look,[[m.s,m.o,yP],[m.door+sd*0.25,oe-E.e*0.6],[m.door,oe+E.e*0.9]],1.2,null,'乗').m=m;
+    }
+  }
+  // 戻ってくる人(乗った人の場所へ、階段から)
+  for(let i=FLOW.respawn.length-1;i>=0;i--){
+    const r=FLOW.respawn[i]; if(FLOW.T<r.at) continue;
+    const m=r.m, q=m.q, x=flowNearestExit(q,m.s,false); if(!x){ FLOW.respawn.splice(i,1); flowHide(m,false); continue; }
+    const e=Math.sign(m.o-q.off)||1, ln=flowLane(q,e), yP=railY(m.s)+STD.PLAT;
+    // 列の場所へは扉と反対の脇から横に入る(前の列の人の真後ろを通らない)
+    const sa=m.door!==undefined?m.s+(Math.sign(m.s-m.door)||1)*0.55:m.s;
+    const tail=sa!==m.s?[[sa,ln],[sa,m.o],[m.s,m.o]]:[[m.s,ln],[m.s,m.o]];
+    const P=(x.kind==='階段'?[[x.s+x.f*3.0,x.o,yP+(x.up?1.6:-1.6)],[x.s,x.o,yP],[x.s-x.f*1.2,x.o],[x.s-x.f*1.2,ln]]:[[x.s,x.o,yP],[x.s,ln]]).concat(tail);
+    if(FLOW.walkers.some(w=>w.q===q&&Math.hypot(w.s-P[0][0],w.o-P[0][1])<1.2)){ r.at=FLOW.T+0.5; continue; }   // 前の人が出口から離れてから
+    FLOW.respawn.splice(i,1);
+    m.look=personLook(); m.rec.look=m.look;                      // 別の人
+    flowWalker(m.st||null,q,m.look,P,1.2,()=>{ m.boarding=false; flowHide(m,false); },'戻').m=m;
+  }
+  // 歩く:次の点へ向かい、前方の人をよける
+  const A=FLOW.walkers;
+  for(let i=A.length-1;i>=0;i--){
+    const w=A[i];
+    if(w.wait>0){ w.wait-=dt; w.mv=0; continue; }
+    const tg=w.path[w.k+1];
+    if(!tg){ A.splice(i,1); if(w.done) w.done(); continue; }
+    let ds=tg[0]-w.s, dO=tg[1]-w.o; const L=Math.hypot(ds,dO);
+    if(L<0.25){ w.k++; if(tg[2]!==undefined) w.y=tg[2]; continue; }
+    ds/=L; dO/=L;
+    /* 押しのける力:前方 1m 以内の歩く人と立っている人から横へよける。速さを落とすのは、同じ向きに進む前の人に追い付いた
+       ときだけ(動いている人が前方の幅 0.9m の帯にいるとき。止まっている人はよけて通る)。3秒止まったら、少しの間は横へよけながらゆっくり進む(譲り合いで固まらない) */
+    let ps=0, po=0, slow=1;
+    const push=(s,o,fs,fo)=>{ const rs=s-w.s, ro=o-w.o, d=Math.hypot(rs,ro); if(d<1e-3||d>1.0) return; const ah=rs*ds+ro*dO;
+      const rr=fs===undefined?0.6:0.55, kr=fs===undefined?9:5;     // 近すぎる人からは向きによらず離れる(横に並んだときも。立っている人からは強く)
+      if(d<rr){ ps-=rs/d*(rr-d)*kr; po-=ro/d*(rr-d)*kr; }
+      if(ah<-0.1) return;
+      const lat=-rs*dO+ro*ds, f=(1.0-d)*1.6; ps+=dO*Math.sign(lat||1)*f; po+=-ds*Math.sign(lat||1)*f;   // 横へ(相手と反対の側へ)
+      if(fs!==undefined&&ah>0&&Math.abs(lat)<0.45&&d<0.75) slow=Math.min(slow,Math.max(0,(d-0.45)/0.3)); };
+    const inWell=w.k>=w.path.length-2&&w.kind!=='乗';
+    for(const o of A) if(o!==w&&o.q===w.q&&!(o.wait>0)) push(o.s,o.o,o.mv?o.fs:undefined,o.fo);   // 井戸の中でも歩く人どうしはよける
+    if(!inWell) for(const m of PEOPLE) if(m.q===w.q&&m.shown&&m!==w.m) push(m.s,m.o);
+    // 床の上の物(柱・ベンチ・自販機・EV・階段の囲い)から 0.4m 離れる。行き先の出口(EV・階段の井戸)の近くの物は除く
+    if(!w.q.flowOB){ const yP=railY((w.q.x0+w.q.x1)/2)+STD.PLAT;
+      w.q.flowOB=STRUCT.filter(o=>['ホームの柱','ベンチ','自動販売機','エレベーター','階段の囲い'].indexOf(o.tag)>=0&&o.s1>w.q.x0-2&&o.s0<w.q.x1+2&&
+        o.o1>w.q.off-w.q.hw-0.5&&o.o0<w.q.off+w.q.hw+0.5&&o.y0<yP+1.8&&o.y1>yP+0.05); }
+    for(const b of w.q.flowOB){
+      if(w.k>=w.path.length-2&&Math.hypot((b.s0+b.s1)/2-w.goal[0],(b.o0+b.o1)/2-w.goal[1])<4) continue;   // 最後の区間(出口へ入る)だけ
+      const ns=clamp(w.s,b.s0,b.s1), no=clamp(w.o,b.o0,b.o1), rs=w.s-ns, ro=w.o-no, d=Math.hypot(rs,ro);
+      if(d>=0.4) continue;
+      if(d<1e-4){ const es=Math.min(w.s-b.s0,b.s1-w.s), eo=Math.min(w.o-b.o0,b.o1-w.o);   // 中に入っていたら近い縁へ
+        if(es<eo) ps+=(w.s-b.s0<b.s1-w.s?-1:1)*3; else po+=(w.o-b.o0<b.o1-w.o?-1:1)*3; }
+      else { ps+=rs/d*(0.4-d)*8; po+=ro/d*(0.4-d)*8; }
+    }
+    if(w.ghost>0){ w.ghost-=dt; slow=Math.max(slow,0.5); }          // 固まったら横へよけながらゆっくり進む
+    if(slow<0.05){ w.still=(w.still||0)+dt; if(w.still>3){ w.ghost=1.0; w.still=0; } } else w.still=0;
+    const sp=w.v*slow*dt, vs=ds+ps*0.6, vo=dO+po*0.6, n=Math.hypot(vs,vo)||1;
+    w.s+=vs/n*sp; w.o+=vo/n*sp; w.mv=slow>0.05?1:0;
+    // 押しのける力で足りないときの最後の歯止め:歩く人の 0.34m・立っている人の 0.36m より内へは入らない(自分だけを外へ戻す。
+    // 相手を動かすと、その相手が立っている人へ押し込まれる。立っている人を最後に見る)
+    for(const o of A) if(o!==w&&o.q===w.q&&!(o.wait>0)){ const rs=w.s-o.s, ro=w.o-o.o, d=Math.hypot(rs,ro);
+      if(d<0.34&&d>1e-4){ w.s=o.s+rs/d*0.34; w.o=o.o+ro/d*0.34; } }
+    if(!inWell) for(const m of PEOPLE) if(m.q===w.q&&m.shown&&m!==w.m){ const rs=w.s-m.s, ro=w.o-m.o, d=Math.hypot(rs,ro);
+      if(d<0.36&&d>1e-4){ w.s=m.s+rs/d*0.36; w.o=m.o+ro/d*0.36; } }
+    for(const b of w.q.flowOB){                                         // 床の上の物には入らない(近い縁の 0.15m 外へ)
+      if(w.k>=w.path.length-2&&Math.hypot((b.s0+b.s1)/2-w.goal[0],(b.o0+b.o1)/2-w.goal[1])<4) continue;
+      if(w.s<=b.s0-0.15||w.s>=b.s1+0.15||w.o<=b.o0-0.15||w.o>=b.o1+0.15) continue;
+      const c=[[b.s0-0.15-w.s,0],[b.s1+0.15-w.s,0],[0,b.o0-0.15-w.o],[0,b.o1+0.15-w.o]].sort((u,v)=>Math.hypot(...u)-Math.hypot(...v))[0];
+      w.s+=c[0]; w.o+=c[1]; }
+    if(tg[2]!==undefined){ const tot=Math.hypot(tg[0]-w.path[w.k][0],tg[1]-w.path[w.k][1])||1, y0=w.path[w.k][2]!==undefined?w.path[w.k][2]:w.y;
+      w.y=y0+(tg[2]-y0)*clamp(1-L/tot,0,1); }
+    else w.y=railY(w.s)+STD.PLAT;
+    w.fs=vs/n; w.fo=vo/n;
+  }
+}
+function flowClose(E){                           // 列車が出た:乗った(隠した)人の場所へ、あとで階段から人が来る
+  for(const m of E.board) if(m.boarding&&!m.shown) FLOW.respawn.push({m:m,at:FLOW.T+3+Math.random()*20});
+}
+// 描く直前の今のカメラで、近い人だけをインスタンスへ書く(lodStruct から)
+function flowDraw(){
+  if(!FLOW.near) return;
+  const cp=camera.position; let nn=0, nf=0;
+  for(const w of FLOW.walkers){
+    if(w.wait>0) continue;
+    const f=frame(w.s,w.o), d=Math.hypot(f.x-cp.x,f.z-cp.z,w.y-cp.y);
+    if(d>FLOW_FAR*LOD_STRUCT) continue;
+    const g=frame(w.s+(w.fs||0),w.o+(w.fo||0));
+    const r={x:f.x,y:w.y,z:f.z,yaw:Math.atan2(-(g.z-f.z),g.x-f.x),look:w.look,walk:[w.mv,w.ph]};
+    if(d<FLOW_NEAR*LOD_STRUCT){ if(nn<FLOW.cap) personInst(FLOW.near,nn++,r); } else if(nf<FLOW.cap) personInst(FLOW.far,nf++,r);
+  }
+  for(const [im,n] of [[FLOW.near,nn],[FLOW.far,nf]]){
+    im.count=n; im.instanceMatrix.needsUpdate=true; if(im.instanceColor) im.instanceColor.needsUpdate=true;
+    const A=im.geometry.attributes; A.iMW.needsUpdate=true; A.iC0.needsUpdate=true; A.iC1.needsUpdate=true; A.iC2.needsUpdate=true;
+  }
+}
+FLOW.cap=600; FLOW.near=peopleMesh([], '乗り降りの人', false, FLOW.cap); FLOW.far=peopleMesh([], '乗り降りの人(遠く)', true, FLOW.cap);
+for(const im of [FLOW.near,FLOW.far]){ im.frustumCulled=false; scene.add(im); }
 
 /* ---- 自動車(利用者指示)------------------------------------------------------------
    線路を横切る実際の道路(ROAD_XING。PLATEAU の道路区域から検出)ごとに、道路の向き(中心から向きを変えて道路の面が
@@ -7697,6 +7896,7 @@ function stepWorld(dt){
     stepCarDoors(t,dt);   // 客用扉:停車中はホーム側だけ開く
   }
   stepSwitches(dt);       // 分岐器:近づく列車の進路へ転換(載っている間は動かさない)
+  stepFlow(dt);           // 乗り降り:降りる人→階段・EV、その後に並んだ人が乗る
   stepPSD(dt);            // ホームドア:停車中(発車3秒前まで)だけ開く
   for(const c of parkedCars) lodCar(c);   // 留置中の編成もLODを見直す
   stepXRail(dt);          // 井の頭線・世田谷線
