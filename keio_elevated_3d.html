@@ -3989,6 +3989,48 @@ function cutTris(P){
   for(const t of T0) rec(t[0],t[1],t[2],0);
   return {V:V,T:T};
 }
+/* ---- 建物の窓(2026-10-12 利用者指示:昼も窓を付ける。夜の窓明かりが建物の外=屋根より上や壁の無い所に出ないように) ----
+   窓は**壁の面そのものにシェーダで描く**(以前は夜だけ、建物の外接矩形の側面の殻に窓格子を加算していたので、L字の建物や
+   三角屋根の建物では壁の無い所・軒より上にも窓が光っていた)。世界座標で壁に沿う横の位置 u と高さ y から窓の格子を決め、
+   窓は壁の上端(top=軒・陸屋根の上端)の 0.3m 下までに収める。昼は暗いガラス、夜は部屋ごとに灯る(4割は消灯)。
+   灯る部屋の乱数は壁の位置と向きだけで決める(建物ごとの種にすると、データで重なる壁が交互に灯って砂目になった)。
+   種類(戸建て・共同住宅・業務と商業・倉庫と工場)ごとに窓の間隔・幅・階高・高さの帯を変える。
+   属性:近くの形(頂点)は aBld=(種類,上端,種)、箱のインスタンスは iBld=(種類,種)で上端は箱の上面。殻が無いので描画も減る */
+const BLD_WIN=[ // [窓の間隔, 窓の幅, 階高, 窓の下端, 窓の上端(階の床から)] [m]
+  [3.4,1.5,2.9,0.85,2.0],    // 0 戸建て・店舗併用住宅
+  [3.0,1.9,2.9,0.75,2.1],    // 1 共同住宅
+  [1.8,1.45,3.6,0.9,2.7],    // 2 業務・商業・官公庁
+  [4.0,2.6,4.5,2.6,3.6]];    // 3 倉庫・工場
+const BLD_WIN_U={uWinNight:{value:0}};
+// シェーダと同じ式(検証用):壁の点(壁に沿う u・高さ y)が窓の中か。top=その壁の上端
+function bldWinAt(t,u,y,top){
+  const W=BLD_WIN[t], cu=((u/W[0])%1+1)%1, fl=Math.floor(y/W[2]), cy=y-fl*W[2];
+  return Math.abs(cu-0.5)<W[1]/2/W[0]&&cy>W[3]&&cy<W[4]&&fl*W[2]+W[4]<=top-0.3&&y>0.5;
+}
+function bldWinPatch(mat){
+  mat.userData.bldWin=true;
+  const par=BLD_WIN.map((r,i)=>(i?'else ':'')+(i<BLD_WIN.length-1?'if(t<'+(i+0.5)+')':'')+'{P='+r[0].toFixed(3)+';ww='+r[1].toFixed(3)+';fh='+r[2].toFixed(3)+';y0='+r[3].toFixed(3)+';y1='+r[4].toFixed(3)+';}').join(' ');
+  mat.onBeforeCompile=function(sh){
+    Object.assign(sh.uniforms,BLD_WIN_U);
+    sh.vertexShader='attribute vec3 aBld; attribute vec2 iBld; varying vec3 vBld; varying vec3 vBW; varying vec3 vBN;\n'+
+      sh.vertexShader.replace('#include <begin_vertex>','#include <begin_vertex>\n { vec4 w=vec4(transformed,1.); vec3 n=objectNormal;\n'+
+      '#ifdef USE_INSTANCING\n w=instanceMatrix*w; n=mat3(instanceMatrix)*n; vBld=vec3(iBld.x,(modelMatrix*instanceMatrix*vec4(0.,.5,0.,1.)).y,iBld.y);\n'+
+      '#else\n vBld=aBld;\n#endif\n w=modelMatrix*w; vBW=w.xyz; vBN=normalize(mat3(modelMatrix)*n); }');
+    sh.fragmentShader='uniform float uWinNight; varying vec3 vBld; varying vec3 vBW; varying vec3 vBN;\n'+
+      'void bwPar(float t,out float P,out float ww,out float fh,out float y0,out float y1){ '+par+' }\n'+
+      sh.fragmentShader.replace('#include <color_fragment>','#include <color_fragment>\n float bwWin=0.; vec2 bwCell=vec2(0.);\n'+
+      ' if(abs(vBN.y)<.5){ float P,ww,fh,y0,y1; bwPar(vBld.x,P,ww,fh,y0,y1); vec2 tw=normalize(vec2(-vBN.z,vBN.x)); float u=dot(vBW.xz,tw);\n'+
+      '   float cu=fract(u/P), fl=floor(vBW.y/fh), cy=vBW.y-fl*fh;\n'+
+      '   if(abs(cu-.5)<ww*.5/P&&cy>y0&&cy<y1&&fl*fh+y1<=vBld.y-.3&&vBW.y>.5){ bwWin=1.; bwCell=vec2(floor(u/P)+floor(tw.x*3.+.5)*7.+floor(tw.y*3.+.5)*13.,fl); } }\n'+
+      ' diffuseColor.rgb=mix(diffuseColor.rgb,vec3(.05,.065,.085),bwWin*.85);')
+      .replace('#include <emissivemap_fragment>','#include <emissivemap_fragment>\n if(uWinNight>0.&&bwWin>0.){ float hh=fract(sin(dot(mod(bwCell,vec2(4096.,64.)),vec2(12.9898,78.233)))*43758.5453);\n'+
+      '   if(hh>.42) totalEmissiveRadiance+=vec3(1.,.88,.68)*uWinNight*(.45+.55*fract(hh*7.13)); }');
+  };
+  mat.customProgramCacheKey=()=>'bldWin';
+}
+// 用途(PLATEAU の use)→ 窓の種類。不明は高さで
+const winTypeOf=(use,h)=>use===1||use===2?0:use===3?1:(use>=4&&use<=6)?2:(use>=7)?3:(h<9.5?0:(h<25?1:2));
+const ROOF_GRAY=[0x5d6166,0x6b6f73,0x50545a,0x787b7e,0x62656a];   // 三角屋根(スレート・瓦)は灰色(利用者指示)
 const CITY_LODS=[];                       // まとまりごとの [近・中・遠] の Mesh と外接球
 function cityLod(){
   const p=camera.position;
@@ -4054,14 +4096,23 @@ if(PLB){
     const h=b.h, pal=PAL_USE[b.use||0]||PALS[h<9.5?0:(h<25?1:2)], hex=pal[Math.abs(Math.round(cx*7+cz*13))%pal.length];
     const r=Math.hypot(best.w,best.d)/2, k=Math.floor(s/CHL);
     let c=CH.get(k); if(!c){c={B:[],bx:[1e9,-1e9,1e9,-1e9,0]}; CH.set(k,c);}
-    c.B.push({P:P,h:h,l2:b.l2||null,cx:cx,cz:cz,ox:ox,oz:oz,w:best.w,d:best.d,a:a,hex:hex,big:best.w*best.d>=120||h>=9.5});   // 遠くでも描く:120m²以上か9.5m以上(集合住宅・大きな家)
+    /* 窓の種類と種。三角屋根:LOD2 が無い戸建て(床面積 250m² 以下・高さ 4.5〜12m)は近くで切妻屋根にする(利用者指示)。
+       PLATEAU の高さは最も高い所(棟)までなので、軒=高さ−屋根の高さ(短辺の 0.29 倍=約30°・2.4m まで) */
+    const wt=winTypeOf(b.use||0,h), seed=Math.abs(Math.round(cx*3.1+cz*7.7))%997;
+    const gable=!b.l2&&wt===0&&best.w*best.d<=250&&h>=4.5&&h<=12, rh=gable?Math.min(2.4,0.29*Math.min(best.w,best.d)):0;
+    let eave=h-rh;
+    if(b.l2){ let m=1e9; for(const S of b.l2) if(S.t===1) for(const v of S.V) m=Math.min(m,v[1]); eave=m<1e8?m:h; }   // LOD2:屋根面の最も低い所
+    const roofHex=(gable||b.l2)?ROOF_GRAY[seed%ROOF_GRAY.length]:null;
+    c.B.push({P:P,h:h,l2:b.l2||null,cx:cx,cz:cz,ox:ox,oz:oz,w:best.w,d:best.d,a:a,ux:best.ux,uz:best.uz,hex:hex,wt:wt,seed:seed,
+      gable:gable,rh:rh,eave:eave,roofHex:roofHex,big:best.w*best.d>=120||h>=9.5});   // 遠くでも描く:120m²以上か9.5m以上(集合住宅・大きな家)
     c.bx[0]=Math.min(c.bx[0],ox-r); c.bx[1]=Math.max(c.bx[1],ox+r); c.bx[2]=Math.min(c.bx[2],oz-r); c.bx[3]=Math.max(c.bx[3],oz+r); c.bx[4]=Math.max(c.bx[4],h);
     // 足跡の格子(樹木・街灯が中や縁に入らない)。外接矩形+余白が掛かるセル全部に入れる
     for(let gx=Math.floor((ox-r-PLB_PAD)/PLB_CELL);gx<=Math.floor((ox+r+PLB_PAD)/PLB_CELL);gx++)
       for(let gz=Math.floor((oz-r-PLB_PAD)/PLB_CELL);gz<=Math.floor((oz+r+PLB_PAD)/PLB_CELL);gz++){
         const kk=gx+','+gz; let l=PLB_GRID.get(kk); if(!l){l=[];PLB_GRID.set(kk,l);} l.push(P);
       }
-    CITY.buildings.push({s:s,off:off,x:ox,z:oz,w:best.w,d:best.d,h:h,a:a,r:r,poly:P,plateau:true,lod2:b.l2?b.l2.length:0,use:b.use||0,hex:hex});
+    CITY.buildings.push({s:s,off:off,x:ox,z:oz,w:best.w,d:best.d,h:h,a:a,r:r,poly:P,plateau:true,lod2:b.l2?b.l2.length:0,use:b.use||0,hex:hex,
+      wt:wt,roof:gable?'切妻':(b.l2?'LOD2':'陸屋根'),eave:eave,chunk:k});
     nIn++;
   }
   /* 中・遠は単位の箱のインスタンス(まとまりごとに外接球を持たせる)。屋根は頂点カラーで少し暗く */
@@ -4071,31 +4122,36 @@ if(PLB){
       for(let j=0;j<4;j++){P.push(f[j][0],f[j][1],f[j][2]);N.push(f[4][0],f[4][1],f[4][2]);C.push(v,v,v);} I.push(o,o+1,o+2,o,o+2,o+3);}
     return facesGeo(P,N,I,C);};
   const MAT_B=mkMat('MeshLambertMaterial',{color:0xffffff,vertexColors:true});
+  bldWinPatch(MAT_B);                                  // 窓(壁の面にシェーダで)
   const m4=new THREE.Matrix4(), q=new THREE.Quaternion(), e=new THREE.Euler(), col=new THREE.Color(), v3=new THREE.Vector3(), sc=new THREE.Vector3();
   const sphere=(bx)=>new THREE.Sphere(new THREE.Vector3((bx[0]+bx[1])/2,bx[4]/2,(bx[2]+bx[3])/2),Math.hypot(bx[1]-bx[0],bx[4],bx[3]-bx[2])/2);
   const inst=(list,bx)=>{
     if(!list.length) return null;
-    const g=boxGeo(), im=new THREE.InstancedMesh(g,MAT_B,list.length);
+    const g=boxGeo(), im=new THREE.InstancedMesh(g,MAT_B,list.length), ib=new Float32Array(list.length*2);
     list.forEach((b,j)=>{e.set(0,-b.a,0);q.setFromEuler(e);m4.compose(v3.set(b.ox,b.h/2,b.oz),q,sc.set(b.w,b.h,b.d));
-      im.setMatrixAt(j,m4); im.setColorAt(j,setSrgb(col,b.hex));});
+      im.setMatrixAt(j,m4); im.setColorAt(j,setSrgb(col,b.hex)); ib[2*j]=b.wt; ib[2*j+1]=b.seed;});
+    g.setAttribute('iBld',new THREE.InstancedBufferAttribute(ib,2));   // 窓の種類と種(上端は箱の上面)
     g.boundingSphere=sphere(bx); im.frustumCulled=true;
     im.instanceMatrix.needsUpdate=true; if(im.instanceColor) im.instanceColor.needsUpdate=true;
     scene.add(im); return im;
   };
   /* 近くは足跡の押し出し。近づいたまとまりで初めて作る(全部を先に作ると頂点だけで数百MBになる) */
   const detail=(C)=>{
-    const P=[],N=[],I=[],Cc=[], c=new THREE.Color();
-    const quad=(a,b,cc,d,n,cl)=>{const o=P.length/3; for(const p of [a,b,cc,d]){P.push(p[0],p[1],p[2]);N.push(n[0],n[1],n[2]);Cc.push(cl.r,cl.g,cl.b);}
+    const P=[],N=[],I=[],Cc=[],AB=[], c=new THREE.Color();
+    let cur=[0,0,0];                                   // 今積んでいる建物の窓の種類・壁の上端・種(頂点の属性 aBld)
+    const quad=(a,b,cc,d,n,cl)=>{const o=P.length/3; for(const p of [a,b,cc,d]){P.push(p[0],p[1],p[2]);N.push(n[0],n[1],n[2]);Cc.push(cl.r,cl.g,cl.b);AB.push(cur[0],cur[1],cur[2]);}
       // 法線の向きに表を向ける
       const ux=b[0]-a[0],uy=b[1]-a[1],uz=b[2]-a[2],vx=cc[0]-a[0],vy=cc[1]-a[1],vz=cc[2]-a[2];
       if((uy*vz-uz*vy)*n[0]+(uz*vx-ux*vz)*n[1]+(ux*vy-uy*vx)*n[2]>=0) I.push(o,o+1,o+2,o,o+2,o+3); else I.push(o,o+2,o+1,o,o+3,o+2);};
-    const tri=(a,b2,cc,n,cl)=>{const o=P.length/3; for(const q of [a,b2,cc]){P.push(q[0],q[1],q[2]);N.push(n[0],n[1],n[2]);Cc.push(cl.r,cl.g,cl.b);}
+    const tri=(a,b2,cc,n,cl)=>{const o=P.length/3; for(const q of [a,b2,cc]){P.push(q[0],q[1],q[2]);N.push(n[0],n[1],n[2]);Cc.push(cl.r,cl.g,cl.b);AB.push(cur[0],cur[1],cur[2]);}
       const ux=b2[0]-a[0],uy=b2[1]-a[1],uz=b2[2]-a[2],vx=cc[0]-a[0],vy=cc[1]-a[1],vz=cc[2]-a[2];
       if((uy*vz-uz*vy)*n[0]+(uz*vx-ux*vz)*n[1]+(ux*vy-uy*vx)*n[2]>=0) I.push(o,o+1,o+2); else I.push(o,o+2,o+1);};
     for(const b of C.B){
       setSrgb(c,b.hex); const roof=c.clone().multiplyScalar(0.86), Q=b.P, h=b.h;
+      const gray=b.roofHex!==null?setSrgb(new THREE.Color(),b.roofHex):roof;
+      cur=[b.wt,b.eave,b.seed];
       if(b.l2){
-        /* LOD2:屋根面・壁面をそのまま。屋根は上向き、壁は建物の重心から外向きに表を向ける */
+        /* LOD2:屋根面・壁面をそのまま。屋根は上向き、壁は建物の重心から外向きに表を向ける。傾いた屋根面は灰色(陸屋根はそのまま) */
         for(const S of b.l2){
           const r=polyTri3(S.V); let n=r.n;
           if(S.t===1){ if(n[1]<0) n=[-n[0],-n[1],-n[2]]; }
@@ -4103,23 +4159,41 @@ if(PLB){
             let mx=0,mz=0; for(const v of S.V){mx+=v[0];mz+=v[2];} mx=mx/S.V.length-b.cx; mz=mz/S.V.length-b.cz;
             if(n[0]*mx+n[2]*mz<0) n=[-n[0],-n[1],-n[2]];
           }
-          for(const t of r.T) tri(S.V[t[0]],S.V[t[1]],S.V[t[2]],n,S.t===1?roof:c);
+          if(S.t!==1){ let my=-1e9; for(const v of S.V) my=Math.max(my,v[1]); cur=[b.wt,Math.min(b.eave,my),b.seed]; }   // 壁ごとの上端(低い棟の壁)
+          // 色は面の向きで:上向きで傾いた面は(データで壁とされていても)三角屋根の灰色、平らな上向きは陸屋根
+          for(const t of r.T) tri(S.V[t[0]],S.V[t[1]],S.V[t[2]],n,(S.t===1||n[1]>0.3)?(n[1]<0.97?gray:roof):c);
         }
         continue;
       }
+      const eave=b.gable?b.eave:h;                    // 壁の上端(切妻は軒まで)
       for(let i=0;i<Q.length;i++){
         const a=Q[i], d=Q[(i+1)%Q.length], mx=(a[0]+d[0])/2-b.cx, mz=(a[1]+d[1])/2-b.cz;
         let nx=d[1]-a[1], nz=-(d[0]-a[0]); const l=Math.hypot(nx,nz)||1; nx/=l; nz/=l; if(nx*mx+nz*mz<0){nx=-nx;nz=-nz;}
-        quad([a[0],0,a[1]],[d[0],0,d[1]],[d[0],h,d[1]],[a[0],h,a[1]],[nx,0,nz],c);
+        quad([a[0],0,a[1]],[d[0],0,d[1]],[d[0],eave,d[1]],[a[0],eave,a[1]],[nx,0,nz],c);
+      }
+      if(b.gable){
+        /* 切妻屋根:外接矩形(長い辺の向きに棟)の上に、軒の出 0.35m。妻面(三角)は壁の色。軒の高さの平らな蓋は作らない
+           (足跡は外接矩形の内なので屋根が覆う) */
+        const lw=b.w>=b.d, ux=lw?b.ux:-b.uz, uz=lw?b.uz:b.ux, L=(lw?b.w:b.d)/2, E=(lw?b.d:b.w)/2, ov=0.35;
+        const vx=-uz, vz=ux, W=(u,v,y)=>[b.ox+u*ux+v*vx,y,b.oz+u*uz+v*vz], top=eave+b.rh;
+        for(const sg of[-1,1]){
+          const nl=Math.hypot(b.rh,E+ov), n=[sg*vx*b.rh/nl,(E+ov)/nl,sg*vz*b.rh/nl];
+          const k=(E+ov)/E;                                   // 軒の出のぶん屋根面を下げる(勾配はそのまま)
+          quad(W(-L-ov,sg*(E+ov),top-b.rh*k),W(L+ov,sg*(E+ov),top-b.rh*k),W(L+ov,0,top),W(-L-ov,0,top),n,gray);
+          quad(W(L+ov,sg*(E+ov),top-b.rh*k),W(-L-ov,sg*(E+ov),top-b.rh*k),W(-L-ov,0,top),W(L+ov,0,top),[-n[0],-n[1],-n[2]],gray.clone().multiplyScalar(0.6));   // 軒裏
+          tri(W(sg*L,-E,eave),W(sg*L,E,eave),W(sg*L,0,top),[sg*ux,0,sg*uz],c);                     // 妻面
+        }
+        continue;
       }
       const o=P.length/3;
-      for(const p of Q){P.push(p[0],h,p[1]);N.push(0,1,0);Cc.push(roof.r,roof.g,roof.b);}
+      for(const p of Q){P.push(p[0],h,p[1]);N.push(0,1,0);Cc.push(roof.r,roof.g,roof.b);AB.push(cur[0],cur[1],cur[2]);}
       for(const t of earTri(Q)){
         const A0=Q[t[0]],A1=Q[t[1]],A2=Q[t[2]], up=(A1[1]-A0[1])*(A2[0]-A0[0])-(A1[0]-A0[0])*(A2[1]-A0[1]);   // 上向きなら正
         if(up>=0) I.push(o+t[0],o+t[1],o+t[2]); else I.push(o+t[0],o+t[2],o+t[1]);
       }
     }
     const g=facesGeo(P,N,I,Cc); g.boundingSphere=sphere(C.bx);
+    g.setAttribute('aBld',new THREE.Float32BufferAttribute(AB,3));     // 窓の種類・壁の上端・種
     const m=new THREE.Mesh(g,MAT_B); m.visible=false; scene.add(m);
     m.castShadow=true; m.receiveShadow=true;        // 後から作るので applyShadows() の一括設定に載らない
     return m;
@@ -4179,8 +4253,10 @@ if(PLB){
         }
         if(!put) continue;
         h=rr(kd[3]);
-        BB.push([p.x,p.z,h,w,d,p.a,pal[(Math.random()*pal.length)|0]]);i++;
-        occAdd(p.x,p.z,rad); CITY.buildings.push({s:x,off:z,x:p.x,z:p.z,w:w,d:d,h:h,r:rad});
+        // 窓の種類:戸建て=0・アパート=1・店舗と倉庫=3(駅前は中高層と商店=2)
+        const wt=kd===KIND_GEN[0]||kd===KIND_STA[2]?0:kd===KIND_GEN[1]?1:kd===KIND_GEN[2]?3:2;
+        BB.push([p.x,p.z,h,w,d,p.a,pal[(Math.random()*pal.length)|0],wt,(i*37)%997]);i++;
+        occAdd(p.x,p.z,rad); CITY.buildings.push({s:x,off:z,x:p.x,z:p.z,w:w,d:d,h:h,r:rad,wt:wt,roof:'陸屋根',eave:h});
       }
     }
   }
@@ -4188,12 +4264,15 @@ if(PLB){
      視錐台・影の範囲と比べるので、まとまりごとに形を作り、置いた全棟を包む外接球を持たせる
      (1つにまとめると、画面の外や影の範囲の外の1万棟まで毎回描く)。底面は作らない */
   const CITY_CH=480, by=new Map(), mat=mkMat('MeshLambertMaterial',{color:0xffffff});
+  bldWinPatch(mat);                                    // 窓(壁の面にシェーダで)
   BB.forEach((b,j)=>{const k=Math.floor(CITY.buildings[j].s/CITY_CH); if(!by.has(k)) by.set(k,[]); by.get(k).push(b);});
   for(const L of by.values()){
     const P=[],Nn=[],I=[];
     for(const [n,f] of boxFaces(-0.5,0.5,-0.5,0.5,-0.5,0.5,['top','px','nx','pz','nz'])){
       const o=P.length/3; for(let j=0;j<4;j++){P.push(f[j][0],f[j][1],f[j][2]);Nn.push(f[4][0],f[4][1],f[4][2]);} I.push(o,o+1,o+2,o,o+2,o+3);}
-    const g=facesGeo(P,Nn,I), im=new THREE.InstancedMesh(g,mat,L.length);
+    const g=facesGeo(P,Nn,I), im=new THREE.InstancedMesh(g,mat,L.length), ib=new Float32Array(L.length*2);
+    L.forEach((b,j)=>{ib[2*j]=b[7]; ib[2*j+1]=b[8];});
+    g.setAttribute('iBld',new THREE.InstancedBufferAttribute(ib,2));
     let x0=1e9,x1=-1e9,z0=1e9,z1=-1e9,hm=0;
     L.forEach((b,j)=>{e.set(0,-b[5],0);q.setFromEuler(e);m4.compose(new THREE.Vector3(b[0],b[2]/2,b[1]),q,new THREE.Vector3(b[3],b[2],b[4]));
       im.setMatrixAt(j,m4);im.setColorAt(j,setSrgb(col,b[6]));
@@ -4394,68 +4473,11 @@ const glow=h=>srgb(h).multiplyScalar(LIGHT_GAIN);
 const NIGHT=(function(){
   const G=new THREE.Group(); G.visible=false; G.name='night'; scene.add(G);
 
-  /* ---- 窓格子のテクスチャ(消えている部屋を混ぜる) ---- */
-  function winTex(cols,rows){
-    const cw=12,ch=12;
-    const cv=document.createElement('canvas');cv.width=cols*cw;cv.height=rows*ch;
-    const cx=cv.getContext('2d');
-    cx.fillStyle='#000000';cx.fillRect(0,0,cv.width,cv.height);
-    const warm=['#ffe7b4','#ffd890','#fff3d2','#ffdca0','#cfe0ff'];
-    for(let r=0;r<rows;r++)for(let c=0;c<cols;c++){
-      if(Math.random()<0.42) continue;                 // 消灯している部屋
-      cx.fillStyle=warm[(Math.random()*warm.length)|0];
-      cx.fillRect(c*cw+3,r*ch+3,cw-6,ch-7);
-    }
-    return canvasTex(cv);
-  }
-  /* ---- 単位立方体の側面4枚。UVは面ごとに0〜1(窓格子が面ごとに1回入る) ---- */
-  function sideShell(){
-    const P=[],U=[],I=[];
-    const F=[[[-.5,-.5, .5],[ .5,-.5, .5],[ .5,.5, .5],[-.5,.5, .5]],
-             [[ .5,-.5,-.5],[-.5,-.5,-.5],[-.5,.5,-.5],[ .5,.5,-.5]],
-             [[ .5,-.5, .5],[ .5,-.5,-.5],[ .5,.5,-.5],[ .5,.5, .5]],
-             [[-.5,-.5,-.5],[-.5,-.5, .5],[-.5,.5, .5],[-.5,.5,-.5]]];
-    F.forEach(function(q,fi){
-      const b=fi*4;
-      q.forEach(v=>P.push(v[0],v[1],v[2]));
-      U.push(0,0, 1,0, 1,1, 0,1);
-      I.push(b,b+1,b+2, b,b+2,b+3);
-    });
-    const g=new THREE.BufferGeometry();
-    g.setAttribute('position',new THREE.Float32BufferAttribute(P,3));
-    g.setAttribute('uv',new THREE.Float32BufferAttribute(U,2));
-    g.setIndex(I);g.computeVertexNormals();return g;
-  }
-  // 加算合成なので黒=透明。奥行きは書かない(建物の面と取り合わない)
+  /* ---- 建物の窓明かり:窓は壁の面にシェーダで描く(8章 bldWinPatch)。夜は BLD_WIN_U.uWinNight で灯す ---- */
+  NIGHT_STAT.win=CITY.buildings.filter(b=>b.wt!==undefined).length;
+  // 加算合成なので黒=透明。奥行きは書かない(暈けが物の面と取り合わない)
   const lit=o=>mkMat('MeshBasicMaterial',Object.assign(
     {blending:THREE.AdditiveBlending,transparent:true,depthWrite:false,fog:false},o));
-
-  /* ---- 建物の窓明かり ---- */
-  {
-    const SHELL=sideShell();
-    // 低層と高層で窓の段数を変える(1枚のテクスチャだと高層の窓が間延びする)
-    const lots=[{t:winTex(4,4),  pick:b=>b.h<=12, mesh:null},
-                {t:winTex(4,11), pick:b=>b.h>12,  mesh:null}];
-    const m4=new THREE.Matrix4(),q=new THREE.Quaternion(),e=new THREE.Euler(),col=new THREE.Color();
-    for(const lo of lots){
-      const list=CITY.buildings.filter(lo.pick);
-      if(!list.length) continue;
-      const im=new THREE.InstancedMesh(SHELL,lit({map:lo.t}),list.length);
-      list.forEach(function(b,i){
-        e.set(0,-(b.a!==undefined?b.a:frame(b.s,b.off).a),0);q.setFromEuler(e);
-        // わずかに外へ出して、建物の面と同じ奥行きにならないようにする
-        m4.compose(new THREE.Vector3(b.x,b.h/2,b.z),q,
-                   new THREE.Vector3(b.w*1.006,b.h*1.002,b.d*1.006));
-        im.setMatrixAt(i,m4);
-        const v=0.30+Math.random()*0.80;      // 建物ごとの灯りの強さ
-        im.setColorAt(i,col.setRGB(v,v*0.94,v*0.82).multiplyScalar(LIGHT_GAIN));
-      });
-      im.instanceMatrix.needsUpdate=true;
-      if(im.instanceColor)im.instanceColor.needsUpdate=true;
-      G.add(im);lo.mesh=im;
-    }
-    NIGHT_STAT.win=lots.reduce((a,l)=>a+(l.mesh?l.mesh.count:0),0);
-  }
 
   /* ---- 街灯(高架の側道の外側と甲州街道) ---- */
   {
@@ -4544,6 +4566,7 @@ const NIGHT=(function(){
     NIGHT_ON=!!on; for(const c of CARS_ALL) carLit(c);     // 留置車も含めて車体の照らし方を見直す
     for(const f of NIGHT_HOOKS) f(!!on);
     STA_LIT_U.uStaLit.value=on?CAR_LIT:0;                    // 駅の照明の下の線路
+    BLD_WIN_U.uWinNight.value=on?0.55*LIGHT_GAIN:0;          // 建物の窓明かり
     for(const [k,hex] of EMI){
       const m=MAT[k]; if(!m||!m.emissive) continue;
       m.emissive.copy(on?glow(hex):srgb(0x000000));

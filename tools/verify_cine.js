@@ -24,7 +24,7 @@ const X = require('./stub_three')(path,
   'MAT:MAT, CITY:CITY, STA:STA, frame:frame, railY:railY, mainOff:mainOff,' +
   'SKY:()=>SKY, SKY_TEX:SKY_TEX, skyDome:skyDome, env:()=>scene.environment,' +
   'sunFollow:sunFollow, SH_MAP:SH_MAP, DOM:DOM, srgb:srgb, zRunDown:zRunDown,' +
-  'NIGHT:NIGHT, NIGHT_STAT:NIGHT_STAT, PLATS:PLATS, trains:trains, stopPosOf:stopPosOf, CAR_HALF:CAR_HALF,' +
+  'NIGHT:NIGHT, NIGHT_STAT:NIGHT_STAT, BLD_WIN_U:BLD_WIN_U, PLATS:PLATS, trains:trains, stopPosOf:stopPosOf, CAR_HALF:CAR_HALF,' +
   'STA_LIT_U:(typeof STA_LIT_U!=="undefined"?STA_LIT_U:null), MAT_BALLAST:MAT_BALLAST, deckHalf:deckHalf,' +
   'K8M:K8M, TRIMMAT:TRIMMAT, M_BOG:M_BOG, M_PN:M_PN, M_SH:M_SH, M_PANS:M_PANS,' +
   'LU:(typeof LU!=="undefined"?LU:null), CARS_ALL:(typeof CARS_ALL!=="undefined"?CARS_ALL:[]), platRange:platRange,' +
@@ -210,6 +210,9 @@ const TPROP = {};
   const ngtVis = N.group.visible, ngtEmi = lum(X.MAT.plat.emissive);
   ok('夜に灯りが点く', ngtVis === true && ngtEmi > 0, '表示ON・emissive>0',
     ngtVis + ' / ' + ngtEmi.toFixed(4));
+  // 建物の窓明かりは壁の面のシェーダ(2026-10-12)。昼は0、夜は灯る(強さは灯りの倍率 2.5 を掛けて 1 以上)
+  { const U = X.BLD_WIN_U; C.setTime('noon'); const d = U.uWinNight.value; C.setTime('night'); const n = U.uWinNight.value;
+    ok('建物の窓明かり(昼は消え・夜に灯る)', d === 0 && n >= 1.0, '昼 0・夜 ≥1.0', d + ' / ' + n.toFixed(2)); }
   /* 夜の駅に入る電車も照らされる(利用者指示:駅は明るいのに進入する電車が暗いまま)。
      世界を進めて、ホームの範囲にいる車両の車体の発光(uLit)が 0.2 以上、ホームから 100m 以上離れた車両は 0、
      昼は全車 0。発光は車体の色を掛ける(シェーダに diffuseColor×uLit が入る) */

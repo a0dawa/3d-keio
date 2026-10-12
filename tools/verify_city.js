@@ -437,6 +437,42 @@ if (LAND) {
   }
 }
 
+/* ---- 4c2. 建物の窓と三角屋根(2026-10-12 利用者指示) -------------------------------------
+   ・窓は壁の面にシェーダで描く:建物の全ての形(近く=頂点の aBld、中・遠の箱=インスタンスの iBld)が窓の材質(bldWin)で描かれる
+   ・窓は壁の上端より上に出ない:近くの形の壁の三角形で、窓の上端の基準(aBld の2番目)がその三角形の最も高い点を超えない
+     (以前は夜だけ外接矩形の殻に窓を貼っていたので、L字や三角屋根の建物では壁の無い所・軒より上に窓が光っていた)
+   ・三角屋根(傾いた屋根面)は灰色:上向きで傾いた面(法線の上成分 0.3〜0.97)の色の彩度が低く暗い。戸建ての切妻屋根が十分ある */
+{
+  let bM = null, nM = 0, bT = null, nW = 0, nR = 0, bR = null; const WG = new Map();
+  for (const C of X.CITY_LODS) {
+    for (const m of [C.m[1], C.m[2]]) {
+      if (!m) continue; nM++;
+      if (!(m.material && m.material.userData && m.material.userData.bldWin) || !m.geometry.attributes.iBld) { if (!bM) bM = '箱のインスタンス'; }
+    }
+    const m = C.m[0] || C.make(C); nM++;
+    const g = m.geometry, Pa = g.attributes.position.array, Na = g.attributes.normal.array, Ca = g.attributes.color.array, A = g.attributes.aBld, Ia = g.index.array;
+    if (!(m.material && m.material.userData && m.material.userData.bldWin) || !A || A.array.length !== Pa.length) { if (!bM) bM = '近くの形'; continue; }
+    for (let t = 0; t < Ia.length; t += 3) {
+      const v = [Ia[t], Ia[t + 1], Ia[t + 2]], ny = Na[v[0] * 3 + 1];
+      if (Math.abs(ny) < 0.5) {                       // 壁:同じ面(種・向き・上端の基準が同じ三角形)ごとに最も高い点を集める
+        nW++;
+        const top = A.array[v[0] * 3 + 1], my = Math.max(...v.map((k) => Pa[k * 3 + 1]));
+        const kk = A.array[v[0] * 3 + 2] + '|' + top.toFixed(3) + '|' + Na[v[0] * 3].toFixed(2) + ',' + Na[v[0] * 3 + 2].toFixed(2);
+        const q = WG.get(kk); if (!q || q.my < my) WG.set(kk, { my: my, top: top, x: Pa[v[0] * 3], z: Pa[v[0] * 3 + 2] });
+      } else if (ny > 0.3 && ny < 0.97) {             // 傾いた屋根面
+        nR++;
+        const c = [0, 1, 2].map((k) => Ca[v[0] * 3 + k]), mx = Math.max(...c), mn = Math.min(...c), lum = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+        if ((mx - mn > 0.25 * mx || lum > 0.25) && !bR) bR = 'rgb(' + c.map((u) => u.toFixed(2)).join(',') + ')';
+      }
+    }
+  }
+  for (const q of WG.values()) if (q.top > q.my + 0.001 && !bT) bT = '(' + q.x.toFixed(0) + ',' + q.z.toFixed(0) + ') 窓の上端の基準 ' + q.top.toFixed(2) + ' > 壁 ' + q.my.toFixed(2);
+  ok('建物の窓(壁の面に)', bM === null && nM > 0, '近く・中・遠の全ての形が窓の材質', bM ? bM + 'に窓が無い' : nM + '形');
+  ok('窓は壁の上端より上に出ない', bT === null && nW > 0, '壁の面の最も高い点以下', bT || '壁の三角形 ' + nW + '・面 ' + WG.size);
+  const nG = B.filter((e) => e.roof === '切妻').length;
+  ok('三角屋根は灰色', bR === null && nR > 0 && (B.some((e) => e.plateau) ? nG >= 1000 : true), '傾いた屋根面は暗い灰・切妻屋根 1000棟以上', bR || '屋根面 ' + nR + '・切妻 ' + nG + '棟');
+}
+
 /* ---- 4d. 建物の色は用途で ------------------------------------------------------
    plateau_bldg.js の用途(use64)を検証側で読み、登録簿の建物(足跡の1点目で対応)の用途がデータと一致し、
    住宅・業務・工場倉庫の色の組が互いに重ならない(用途で塗り分けている)ことを見る */
