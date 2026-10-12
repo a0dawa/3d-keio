@@ -1170,6 +1170,8 @@ function lodStruct(){
   }
   if(typeof cityLod==='function') cityLod();      // PLATEAU の建物の3段(8章)
   if(CITY.treeLod) CITY.treeLod();                // 木の近く/遠く(8章)
+  if(typeof pedsDraw==='function') pedsDraw();    // 歩く人(近い人だけ)
+  if(typeof carsDraw==='function') carsDraw();    // 自動車(近い車だけ)
 }
 
 /* ============ 4. 地表・道路・水緑・施設(平面図準拠) ============ */
@@ -6867,20 +6869,24 @@ function personLook(){
   return L;
 }
 /* 人のインスタンスを作る(駅のホーム・歩道で共用)。list=[{x,y,z,yaw,look,walk:[量,位相]}] */
-function peopleMesh(list,name,far){
-  const g=(far?PERSON_GEO_FAR:PERSON_GEO).clone(), n=list.length, im=new THREE.InstancedMesh(g,M_PEOPLE,n);
-  const aMW=new Float32Array(n*3), aC=[new Float32Array(n*4),new Float32Array(n*4),new Float32Array(n*4)], c=new THREE.Color();
-  const M4=new THREE.Matrix4(), Q=new THREE.Quaternion(), E=new THREE.Euler(), V=new THREE.Vector3(), S=new THREE.Vector3();
-  list.forEach(function(m,i){
-    const L=m.look;
-    E.set(0,m.yaw,0); Q.setFromEuler(E); M4.compose(V.set(m.x,m.y,m.z),Q,S.set(L.w,L.h,L.w)); im.setMatrixAt(i,M4);
-    im.setColorAt(i,setSrgb(c,L.up));
-    aMW.set([L.mask,m.walk?m.walk[0]:0,m.walk?m.walk[1]:0],i*3);
-    const v=[]; for(const h of [L.low,L.legHex||L.low,L.hair,L.bag]){ setSrgb(c,h); v.push(c.r,c.g,c.b); }   // 12成分を3つの vec4 へ
-    for(let k=0;k<3;k++) aC[k].set(v.slice(k*4,k*4+4),i*4);
-  });
-  g.setAttribute('iMW',new THREE.InstancedBufferAttribute(aMW,3));
-  for(let k=0;k<3;k++) g.setAttribute('iC'+k,new THREE.InstancedBufferAttribute(aC[k],4));
+const _pc=new THREE.Color(), _pM=new THREE.Matrix4(), _pQ=new THREE.Quaternion(), _pE=new THREE.Euler(), _pV=new THREE.Vector3(), _pS=new THREE.Vector3();
+// インスタンス i に人 m={x,y,z,yaw,look,walk} を書く(位置・向き・部品・色)。歩く人は毎コマ書き直す
+function personInst(im,i,m){
+  const L=m.look, g=im.geometry;
+  _pE.set(0,m.yaw,0); _pQ.setFromEuler(_pE); _pM.compose(_pV.set(m.x,m.y,m.z),_pQ,_pS.set(L.w,L.h,L.w)); im.setMatrixAt(i,_pM);
+  im.setColorAt(i,setSrgb(_pc,L.up));
+  g.attributes.iMW.array.set([L.mask,m.walk?m.walk[0]:0,m.walk?m.walk[1]:0],i*3);
+  if(!L.c12){ L.c12=[]; for(const h of [L.low,L.legHex||L.low,L.hair,L.bag]){ setSrgb(_pc,h); L.c12.push(_pc.r,_pc.g,_pc.b); } }   // 12成分を3つの vec4 へ
+  for(let k=0;k<3;k++) g.attributes['iC'+k].array.set(L.c12.slice(k*4,k*4+4),i*4);
+}
+function peopleMesh(list,name,far,cap){
+  const n=cap||list.length, g=(far?PERSON_GEO_FAR:PERSON_GEO).clone(), im=new THREE.InstancedMesh(g,M_PEOPLE,Math.max(1,n));
+  g.setAttribute('iMW',new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1,n)*3),3));
+  for(let k=0;k<3;k++) g.setAttribute('iC'+k,new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1,n)*4),4));
+  // インスタンスの色の枠を初めに作る(後から作るとシェーダがインスタンスの色無しのまま組まれ、上着が白になる)
+  _pc.setRGB(1,1,1); for(let i=0;i<Math.max(1,n);i++) im.setColorAt(i,_pc);
+  list.forEach((m,i)=>personInst(im,i,m));
+  im.count=list.length;
   im.instanceMatrix.needsUpdate=true; if(im.instanceColor) im.instanceColor.needsUpdate=true;
   im.name=name; return im;
 }
@@ -6951,17 +6957,32 @@ M_ROADCAR.onBeforeCompile=sh=>{                // 車体の色(インスタン�
 };
 M_ROADCAR.customProgramCacheKey=()=>'roadcar';
 const M_CARLAMP=mkMat('MeshBasicMaterial',{vertexColors:true});
-const CAR_GEO=(function(){                    // 前=+x。車体(白=色)・窓・タイヤ
+/* 車の形(前=+x。白=インスタンスの色):乗用車・軽バン・トラック・バス(2026-10-12 利用者指示:トラックやバスも)。
+   長さ VEH[種類].L。灯火は長さに合わせて前後へ(灯火の形を x 方向に L/4.44 倍) */
+function vehGeo(kind){
   const P=[],N=[],Cc=[],I=[], col=new THREE.Color();
   const box=(x0,x1,y0,y1,z0,z1,hex,top)=>{ for(const [k,q] of boxFaces(x0,x1,y0,y1,z0,z1,['top','px','nx','pz','nz'])){const v=P.length/3;
     const h=(k==='top'&&top!==undefined)?top:hex; if(h===null) col.setRGB(1,1,1); else setSrgb(col,h);
     for(let i=0;i<4;i++){P.push(q[i][0],q[i][1],q[i][2]);N.push(q[4][0],q[4][1],q[4][2]);Cc.push(col.r,col.g,col.b);}
     I.push(v,v+1,v+2,v,v+2,v+3);} };
-  box(-2.2,2.2,0.28,0.86,-0.84,0.84,null);                       // 車体
-  box(-1.25,0.95,0.86,1.42,-0.76,0.76,0x27313a,null);             // 客室(窓。屋根は車体の色)
-  for(const x of[-1.35,1.35]) for(const z of[-0.80,0.80]) box(x-0.31,x+0.31,0,0.6,z-0.11,z+0.11,0x1b1d20);   // タイヤ
+  const tyre=(xs,z)=>{for(const x of xs) for(const s of[-1,1]) box(x-0.36,x+0.36,0,0.72,s*z-0.13,s*z+0.13,0x1b1d20);};
+  if(kind==='car'){
+    box(-2.2,2.2,0.28,0.86,-0.84,0.84,null); box(-1.25,0.95,0.86,1.42,-0.76,0.76,0x27313a,null);
+    for(const x of[-1.35,1.35]) for(const z of[-0.80,0.80]) box(x-0.31,x+0.31,0,0.6,z-0.11,z+0.11,0x1b1d20);
+  }else if(kind==='van'){                            // 軽バン・ワゴン(背が高い)
+    box(-1.7,1.7,0.28,1.0,-0.74,0.74,null); box(-1.6,1.25,1.0,1.85,-0.72,0.72,0x27313a,null); box(-1.6,0.4,1.25,1.85,-0.725,0.725,null);
+    for(const x of[-1.1,1.1]) for(const z of[-0.68,0.68]) box(x-0.27,x+0.27,0,0.54,z-0.1,z+0.1,0x1b1d20);
+  }else if(kind==='truck'){                          // 中型トラック:運転台(色)と白い荷箱
+    box(2.0,3.8,0.45,2.55,-1.08,1.08,null); box(3.2,3.82,1.45,2.3,-1.0,1.0,0x27313a); box(-3.8,1.9,0.55,3.1,-1.15,1.15,0xeceae4);
+    box(-3.8,3.6,0.38,0.62,-0.9,0.9,0x2b2d30); tyre([-2.4,-1.3,2.9],0.95);
+  }else{                                             // 路線バス(京王バスの白地に赤と紺の帯)
+    box(-5.25,5.25,0.35,3.05,-1.25,1.25,0xf1efe9); box(-5.2,5.2,1.55,2.45,-1.258,1.258,0x2a3440,0xf1efe9);
+    box(-5.25,5.25,0.85,1.05,-1.262,1.262,0xc4243a,0xf1efe9); box(-5.25,5.25,1.05,1.15,-1.262,1.262,0x23306a,0xf1efe9);
+    box(5.22,5.27,1.2,2.8,-1.15,1.15,0x2a3440); box(-3.4,1.6,3.05,3.35,-0.8,0.8,0xbfc3c8); tyre([-3.2,3.3],1.1);
+  }
   return facesGeo(P,N,I,Cc);
-})();
+}
+const VEH={car:{L:4.4,geo:vehGeo('car')},van:{L:3.4,geo:vehGeo('van')},truck:{L:7.6,geo:vehGeo('truck')},bus:{L:10.5,geo:vehGeo('bus')}};
 /* 前照灯(+x 側)・尾灯(−x 側)。夜だけ描く:灯の芯(小さな八面体)と、どの向きからも見える暈け(大きな八面体・加算) */
 function carLampGeo(r,kF,kR){
   const P=[],N=[],Cc=[],I=[], col=new THREE.Color();
@@ -6973,8 +6994,20 @@ function carLampGeo(r,kF,kR){
 }
 const CARLAMP_GEO=carLampGeo(0.12,1,1), CARGLOW_GEO=carLampGeo(0.7,0.35,0.30);
 const M_CARGLOW=mkMat('MeshBasicMaterial',{vertexColors:true,transparent:true,depthWrite:false,blending:THREE.AdditiveBlending});
+/* 車線(2026-10-12 利用者指示で作り直し):
+   ・車と歩く人は線路から 50m 以内だけ(それより先は描かない)。線路を横切る道路の車線は |off|≦50 の所まで
+   ・線路に並ぶ幹線(PLATEAU の幹線の道路区域が線路から 6〜50m に 60m 以上続く所。甲州街道・井の頭通り)にも車線
+   ・環七・環八・甲州街道・井の頭通りは渋滞(車間 2〜4m・のろのろ進んでは止まる波)。トラック・バスも走る
+   ・幅 8m 以上の道は両端に歩道(縁石付き、幅は道の 18%・1.5〜3m)。車線は車道の中へ寄せる
+   車線は「輪」:端で反対の端から入り直し、前の車(輪の上で次の車)との間を空けて止まる。lane.pos(u)=(位置・進行方向) */
+const SIDEWALKS=[], PEDS=[];      // 歩道の帯・歩く人(登録簿)
+const ROAD_NEAR=50;              // 車と人を描く線路からの距離[m]
 {
-  const CARCOL=[0xf2f2f0,0x1d1f22,0xb9bdc2,0x2b4a7a,0x8a1c22,0xf2f2f0,0x6d7378,0xe8e2d2,0x355e3b,0x1d1f22];
+  const CARCOL=[0xf2f2f0,0x1d1f22,0xb9bdc2,0x2b4a7a,0x8a1c22,0xf2f2f0,0x6d7378,0xe8e2d2,0x355e3b,0x1d1f22,0xf2f2f0,0xd8d8d6];
+  const HEAVY_X=[KAN7_X,KANPACHI_X,KYU_INOKA_X];        // 渋滞する横切る幹線(環七・環八・井の頭通り)
+  const swW=w=>w>=8?Math.min(3.0,Math.max(1.5,w*0.18)):0;   // 歩道の幅
+  const pushSW=(f,a,b,side,ws,heavy)=>{ if(b-a>8) SIDEWALKS.push({f:f,a:a,b:b,side:side,w:ws,heavy:heavy}); };
+  // 横切る道路
   for(const X0 of ROAD_XING){
     const sc=(X0[0]+X0[1])/2, P0=frame(sc,0);
     const run=(dx,dz)=>{let t=0; while(t<200){const x=P0.x+dx*(t+2), z=P0.z+dz*(t+2); if(!roadHit(x,z,0)||expyHit(x,z,1.2)) break; t+=2;} return t;};
@@ -6982,57 +7015,198 @@ const M_CARGLOW=mkMat('MeshBasicMaterial',{vertexColors:true,transparent:true,de
     for(let a=0;a<180;a+=3){ const r=a*Math.PI/180, dx=Math.cos(r), dz=Math.sin(r), lp=run(dx,dz), ln=run(-dx,-dz);
       if(!best||lp+ln>best.len) best={dx:dx,dz:dz,len:lp+ln,lp:lp,ln:ln}; }
     if(!best||best.len<40) continue;
-    // 道路の幅(向きに直角)
     const nx=best.dz, nz=-best.dx; let wl=0, wr=0;
     while(wl<20&&roadHit(P0.x+nx*(wl+0.5),P0.z+nz*(wl+0.5),0)) wl+=0.5;
     while(wr<20&&roadHit(P0.x-nx*(wr+0.5),P0.z-nz*(wr+0.5),0)) wr+=0.5;
     const cx=P0.x+nx*(wl-wr)/2, cz=P0.z+nz*(wl-wr)/2, wd=wl+wr;   // 中心線を幅の真ん中へ
-    const two=wd>=5.5, off=two?Math.min(wd/4,1.8):0;
+    const ws=swW(wd), cw=wd-2*ws, two=cw>=5.5, off=two?Math.min(cw/4,1.8):0, heavy=HEAVY_X.some(h=>Math.abs(sc-h)<40);
+    const near=u=>Math.abs(prjXY(cx+best.dx*u,cz+best.dz*u).off)<=ROAD_NEAR;
     for(const dir of two?[1,-1]:[(RD_LANES.length%2)?1:-1]){
-      // 車線の範囲:線路の所から外へ 2m ごとに、車の両脇(車線の中心から ±0.9m)が道路の面の上にある所まで(片側150m まで)
       const lx=dir*best.dz, lz=-dir*best.dx, ok=u=>{
         const x=cx+best.dx*u+lx*off, z=cz+best.dz*u+lz*off;
-        return [-0.9,0.9].every(w=>roadHit(x+lx*w,z+lz*w,0))&&!expyHit(x,z,1.2);};
+        return near(u)&&[-0.9,0.9].every(w=>roadHit(x+lx*w,z+lz*w,0))&&!expyHit(x,z,1.2);};
       if(!ok(0)) continue;
       let L1=0, L0=0; while(L1<150&&ok(L1+2)) L1+=2; while(L0>-150&&ok(L0-2)) L0-=2;
-      L1-=3; L0+=3;
-      if(L1-L0<40) continue;
-      const lane={cx:cx,cz:cz,dx:best.dx,dz:best.dz,L0:L0,L1:L1,dir:dir,off:off,w:wd};
-      RD_LANES.push(lane);
-      const n=Math.max(1,Math.round((L1-L0)/(two?80:160))), v=7+Math.random()*4;   // 2車線は約80m に1台
-      for(let k=0;k<n;k++) RD_CARS.push({lane:lane,u:L0+(L1-L0)*(k+Math.random()*0.6)/n,v:v,c:CARCOL[Math.floor(Math.random()*CARCOL.length)],k:0.92+Math.random()*0.16});
+      L1-=1; L0+=1;
+      if(L1-L0<30) continue;
+      RD_LANES.push({kind:'横',cx:cx,cz:cz,dx:best.dx,dz:best.dz,L0:L0,L1:L1,dir:dir,off:off,w:wd,heavy:heavy,
+        pos(u){const sx=this.dir*this.dx, sz=this.dir*this.dz; return {x:this.cx+this.dx*u+sz*this.off, z:this.cz+this.dz*u-sx*this.off, fx:sx, fz:sz};}});
+    }
+    if(ws>0){                                        // 歩道:両端の内側 ws/2 を中心線に
+      let A=0,B=0; while(B<150&&near(B+2)&&roadHit(cx+best.dx*(B+2),cz+best.dz*(B+2),0)) B+=2; while(A>-150&&near(A-2)&&roadHit(cx+best.dx*(A-2),cz+best.dz*(A-2),0)) A-=2;
+      for(const sd of[-1,1]){ const o=sd*(wd/2-ws/2);
+        pushSW(u=>({x:cx+best.dx*u+nx*o, z:cz+best.dz*u+nz*o, fx:best.dx, fz:best.dz}),A,B,sd,ws,heavy); }
     }
   }
-  const im=new THREE.InstancedMesh(CAR_GEO,M_ROADCAR,Math.max(1,RD_CARS.length)), lm=new THREE.InstancedMesh(CARLAMP_GEO,M_CARLAMP,Math.max(1,RD_CARS.length));
-  const gm=new THREE.InstancedMesh(CARGLOW_GEO,M_CARGLOW,Math.max(1,RD_CARS.length));
-  im.frustumCulled=false; lm.frustumCulled=false; gm.frustumCulled=false; im.name='自動車'; lm.name='自動車の灯火'; gm.name='自動車の灯火の暈け';
-  lm.visible=false; gm.visible=false;
-  const C=new THREE.Color(); RD_CARS.forEach((c,i)=>{ setSrgb(C,c.c); im.setColorAt(i,C); });
-  if(im.instanceColor) im.instanceColor.needsUpdate=true;
-  im.count=RD_CARS.length; lm.count=RD_CARS.length; gm.count=RD_CARS.length;
-  scene.add(im); scene.add(lm); scene.add(gm);
+  // 線路に並ぶ幹線
+  const maj=ROADS_PL.filter(R=>R.k===1&&R.sec!==2);
+  const onMaj=(s,o)=>{const f=frame(s,o); return maj.some(R=>f.x>R.bb[0]&&f.x<R.bb[1]&&f.z>R.bb[2]&&f.z<R.bb[3]&&polyDist(R.P,f.x,f.z)<0);};
+  for(const sg of[-1,1]){
+    let cur=null; const runs=[];
+    for(let s=DOM.x0;s<=DOM.x1;s+=4){
+      let o0=null,o1=null; for(let o=6;o<=60;o+=1){ if(onMaj(s,sg*o)){ if(o0===null) o0=o; o1=o; } else if(o0!==null) break; }
+      const okb=o0!==null&&o0<=ROAD_NEAR-4&&o1-o0>=6&&!(s>DECK_END&&o0<cutHalf(s,sg)+1);
+      if(okb){ if(!cur){cur={S:[]};} cur.S.push([s,o0,o1]); } else if(cur){ runs.push(cur); cur=null; }
+    }
+    if(cur) runs.push(cur);
+    for(const r of runs){
+      if(r.S.length<16) continue;                     // 60m 以上
+      const S0=r.S[0][0], S1=r.S[r.S.length-1][0];
+      // 縁(内と外)をなめらかに(前後 5点の平均)
+      const sm=(k,j)=>{let a=0,n=0; for(let i=Math.max(0,k-5);i<=Math.min(r.S.length-1,k+5);i++){a+=r.S[i][j];n++;} return a/n;};
+      const T=r.S.map((q,k)=>[q[0],sm(k,1),sm(k,2)]);
+      const at=(s,j)=>{const k=clamp((s-S0)/4,0,T.length-1), i=Math.floor(k), f=k-i, q=T[i], w=T[Math.min(T.length-1,i+1)]; return q[j]+(w[j]-q[j])*f;};
+      const wdm=T.reduce((a,q)=>a+q[2]-q[1],0)/T.length, ws=swW(wdm), heavy=true;
+      const oIn=s=>sg*(at(s,1)+ws), oOut=s=>sg*Math.min(at(s,2)-ws,ROAD_NEAR), oc=s=>(oIn(s)+oOut(s))/2;
+      const mk=(dir)=>({kind:'並',sg:sg,S0:S0,S1:S1,L0:S0+2,L1:S1-2,dir:dir,off:1,w:wdm,heavy:heavy,oc:oc,
+        pos(u){const o=oc(u)+(this.dir>0?-1:1)*Math.max(1.6,Math.abs(oOut(u)-oIn(u))/4), f=frame(u,o), g=frame(u+this.dir,o); const d=Math.hypot(g.x-f.x,g.z-f.z)||1;
+          return {x:f.x,z:f.z,fx:(g.x-f.x)/d,fz:(g.z-f.z)/d};}});
+      // +s(西行き)は南寄り=進行方向の左(左側通行)。車の両脇が道路の面の上にある最も長い区間だけを車線にする
+      for(const dir of[1,-1]){ const L=mk(dir); let best=null, a=null;
+        for(let u=L.L0;u<=L.L1+1e-6;u+=2){ const q=L.pos(u), okp=[-0.9,0.9].every(w=>roadHit(q.x+q.fz*w,q.z-q.fx*w,0))&&!expyHit(q.x,q.z,1.2);
+          if(okp){ if(a===null) a=u; if(!best||u-a>best[1]-best[0]) best=[a,u]; } else a=null; }
+        if(best&&best[1]-best[0]>=40){ L.L0=best[0]+1; L.L1=best[1]-1; RD_LANES.push(L); } }
+      if(ws>0){ const fsw=(oo)=>u=>{const f=frame(u,oo(u)), g=frame(u+1,oo(u+1)); const d=Math.hypot(g.x-f.x,g.z-f.z)||1; return {x:f.x,z:f.z,fx:(g.x-f.x)/d,fz:(g.z-f.z)/d};};
+        pushSW(fsw(s=>sg*(at(s,1)+ws/2)),S0,S1,-sg,ws,true);
+        if(at((S0+S1)/2,2)<=ROAD_NEAR) pushSW(fsw(s=>sg*(at(s,2)-ws/2)),S0,S1,sg,ws,true); }
+    }
+  }
+  // 車を置く:渋滞の車線は車間 2〜4m で詰める。ほかは約80m(1車線の道は160m)に1台。トラック・バスは幹線に多い
+  const pickKind=heavy=>{const r=Math.random(); return heavy?(r<0.62?'car':r<0.74?'van':r<0.9?'truck':'bus'):(r<0.78?'car':r<0.92?'van':'truck');};
+  for(const L of RD_LANES){
+    const len=L.L1-L.L0;
+    if(L.heavy){ let u=L.L0+Math.random()*3;
+      while(true){ const k=pickKind(true), Lh=VEH[k].L; if(u+Lh>L.L1) break;
+        RD_CARS.push({lane:L,u:u+Lh/2,v:0,kind:k,c:CARCOL[Math.floor(Math.random()*CARCOL.length)],k:1}); u+=Lh+3+Math.random()*2; } }
+    else{ const n=Math.max(1,Math.round(len/(L.off>0?80:160))), v=7+Math.random()*4;
+      for(let j=0;j<n;j++){ const k=pickKind(false); RD_CARS.push({lane:L,u:L.L0+len*(j+Math.random()*0.6)/n,v:v,kind:k,c:CARCOL[Math.floor(Math.random()*CARCOL.length)],k:0.95+Math.random()*0.1}); } }
+  }
+  for(const c of RD_CARS){ c.L=VEH[c.kind].L*c.k; c.v0=c.lane.heavy?3.0:(7+Math.random()*4); c.ph=Math.random()*6.28; }
+  // 種類ごとのインスタンス(車体)と、灯火(全台で1つ。長さに合わせて伸ばす)
+  RD_CARS.meshes={};
+  for(const k in VEH){ const list=RD_CARS.filter(c=>c.kind===k); if(!list.length) continue;
+    const im=new THREE.InstancedMesh(VEH[k].geo,M_ROADCAR,list.length); im.frustumCulled=false; im.name='自動車('+k+')';
+    const C=new THREE.Color(); list.forEach((c,i)=>{ c.mi=i; setSrgb(C,k==='bus'?0xffffff:c.c); im.setColorAt(i,C); });
+    if(im.instanceColor) im.instanceColor.needsUpdate=true; scene.add(im); RD_CARS.meshes[k]=im; }
+  const im=RD_CARS.meshes.car||Object.values(RD_CARS.meshes)[0];
+  const lm=new THREE.InstancedMesh(CARLAMP_GEO,M_CARLAMP,Math.max(1,RD_CARS.length)), gm=new THREE.InstancedMesh(CARGLOW_GEO,M_CARGLOW,Math.max(1,RD_CARS.length));
+  lm.frustumCulled=false; gm.frustumCulled=false; lm.name='自動車の灯火'; gm.name='自動車の灯火の暈け';
+  lm.visible=false; gm.visible=false; lm.count=RD_CARS.length; gm.count=RD_CARS.length;
+  scene.add(lm); scene.add(gm);
   lm.userData.night=true; gm.userData.night=true;                  // 光る物は影を落とさない
   NIGHT_HOOKS.push(on=>{ lm.visible=on; gm.visible=on; });
   RD_CARS.mesh=im; RD_CARS.lamps=lm; RD_CARS.glow=gm;
 }
-const _cM=new THREE.Matrix4(), _cQ=new THREE.Quaternion(), _cE=new THREE.Euler(), _cV=new THREE.Vector3(), _cS=new THREE.Vector3();
-function roadCarPos(c){                      // 車の位置(世界座標)と向き(進行方向)
-  const L=c.lane, sx=L.dir*L.dx, sz=L.dir*L.dz, lx=sz, lz=-sx;    // 進行方向の左 = (dz,−dx)(左側通行)
-  return {x:L.cx+L.dx*c.u+lx*L.off, z:L.cz+L.dz*c.u+lz*L.off, fx:sx, fz:sz};
-}
+const _cM=new THREE.Matrix4(), _cQ=new THREE.Quaternion(), _cE=new THREE.Euler(), _cV=new THREE.Vector3(), _cS=new THREE.Vector3(), _cC=new THREE.Color();
+let RD_T=0;
+function roadCarPos(c){ return c.lane.pos(c.u); }   // 車の位置(世界座標)と向き(進行方向)
 function stepRoadCars(dt){
-  const im=RD_CARS.mesh, lm=RD_CARS.lamps, gm=RD_CARS.glow; if(!im) return;
-  RD_CARS.forEach(function(c,i){
-    const L=c.lane;
-    c.u+=L.dir*c.v*dt;
-    if(c.u>L.L1) c.u=L.L0+(c.u-L.L1); else if(c.u<L.L0) c.u=L.L1-(L.L0-c.u);   // 端で反対の端から入り直す
-    const p=roadCarPos(c);
+  const lm=RD_CARS.lamps, gm=RD_CARS.glow; if(!lm) return;
+  RD_T+=dt;
+  // 車線ごとに、輪の上の次の車(前の車)との間を見て進む。渋滞の車線は速さが波のように変わる(進んでは止まる)
+  const byLane=new Map(); for(const c of RD_CARS){ let a=byLane.get(c.lane); if(!a){a=[];byLane.set(c.lane,a);} a.push(c); }
+  for(const [L,A] of byLane){
+    const R=L.L1-L.L0, pos=c=>L.dir>0?c.u-L.L0:L.L1-c.u;           // 進む向きに測った位置 0〜R
+    A.sort((p,q)=>pos(p)-pos(q));
+    for(let i=0;i<A.length;i++){
+      const c=A[i], f=A[(i+1)%A.length];
+      let gap=(pos(f)-pos(c)+R)%R; if(A.length===1) gap=R;
+      gap-=(c.L+f.L)/2;
+      const vt=L.heavy?c.v0*Math.max(0,Math.sin(0.35*RD_T+c.ph*0.15-pos(c)*0.04)*0.8+0.45):c.v0;
+      c.v=Math.max(0,Math.min(vt,(gap-2.0)/1.0));
+      c.u+=L.dir*c.v*dt;
+      if(c.u>L.L1) c.u=L.L0+(c.u-L.L1); else if(c.u<L.L0) c.u=L.L1-(L.L0-c.u);   // 端で反対の端から入り直す
+    }
+  }
+  carsDraw();
+}
+/* 描く車だけをインスタンスへ書く(描く直前の今のカメラから CAR_DRAW 以内。lodStruct からも呼ぶ)。車は動くので
+   インスタンスの外接球で間引けず、全台を毎回描いていた。インスタンスの番号は毎回詰め直す(色も書き直す) */
+const CAR_DRAW=300;
+function carsDraw(all){                       // all:距離によらず全台(検証用)
+  const lm=RD_CARS.lamps, gm=RD_CARS.glow; if(!lm) return;
+  const cp=camera.position, n={}; let nl=0;
+  for(const k in RD_CARS.meshes) n[k]=0;
+  for(let i=0;i<RD_CARS.length;i++){
+    const c=RD_CARS[i], p=roadCarPos(c);
+    if(!all&&Math.hypot(p.x-cp.x,p.z-cp.z)>CAR_DRAW*LOD_STRUCT){ c.mi=-1; continue; }
+    const im=RD_CARS.meshes[c.kind], j=n[c.kind]++; c.mi=j;
     _cE.set(0,Math.atan2(-p.fz,p.fx),0); _cQ.setFromEuler(_cE); _cV.set(p.x,ROAD_Y[1]+0.01,p.z); _cS.set(c.k,1,1);
-    _cM.compose(_cV,_cQ,_cS); im.setMatrixAt(i,_cM); lm.setMatrixAt(i,_cM); gm.setMatrixAt(i,_cM);
-  });
-  im.instanceMatrix.needsUpdate=true; lm.instanceMatrix.needsUpdate=true; gm.instanceMatrix.needsUpdate=true;
+    _cM.compose(_cV,_cQ,_cS); im.setMatrixAt(j,_cM); im.setColorAt(j,setSrgb(_cC,c.kind==='bus'?0xffffff:c.c));
+    _cS.set(c.L/4.44,1,1); _cM.compose(_cV,_cQ,_cS); lm.setMatrixAt(nl,_cM); gm.setMatrixAt(nl,_cM); nl++;
+  }
+  for(const k in RD_CARS.meshes){ const im=RD_CARS.meshes[k]; im.count=n[k]; im.instanceMatrix.needsUpdate=true; if(im.instanceColor) im.instanceColor.needsUpdate=true; }
+  lm.count=nl; gm.count=nl; lm.instanceMatrix.needsUpdate=true; gm.instanceMatrix.needsUpdate=true;
 }
 stepRoadCars(0);
+/* 歩道と歩く人(2026-10-12 利用者指示)。歩道は縁石の高さ 0.15m の帯(上面と両側の縁石の面)。人は歩道の上を行き来し
+   (歩く量1=脚と腕を振る)、帯の端で向きを変える。線路から 50m 以内だけ。近く(カメラから 70m)は細かい形、250m までは粗い形
+   で、毎コマ近い人だけを書き直して描く(遠い人は描かない)。登録簿 SIDEWALKS・PEDS */
+const PED_NEAR=70, PED_FAR=250;
+{
+  // s の 480m ごとのまとまりに積む(まとまりごとの外接球で画面の外を間引く)
+  const CH=new Map(), c=new THREE.Color(), yT=ROAD_Y[1]+0.15;
+  let P,N,I,Cc;
+  const use=(x,z)=>{const k=Math.floor(prjXY(x,z).s/480); let q=CH.get(k); if(!q){q={P:[],N:[],I:[],C:[]};CH.set(k,q);} P=q.P;N=q.N;I=q.I;Cc=q.C;};
+  const quad=(a,b,cc,d,n,hex)=>{const o=P.length/3; setSrgb(c,hex); for(const q of [a,b,cc,d]){P.push(q[0],q[1],q[2]);N.push(n[0],n[1],n[2]);Cc.push(c.r,c.g,c.b);} I.push(o,o+1,o+2,o,o+2,o+3);};
+  for(const W of SIDEWALKS){
+    W.seg=[];                                        // 道路の面の上・掘割の外の区間だけ
+    for(let u=W.a;u<W.b-0.01;u+=2){
+      const u1=Math.min(W.b,u+2), p0=W.f(u), p1=W.f(u1);
+      if(!roadHit(p0.x,p0.z,0)||!roadHit(p1.x,p1.z,0)||cutHit(p0.x,p0.z,1)||cutHit(p1.x,p1.z,1)) continue;
+      if([p0,p1].some(q=>Math.abs(prjXY(q.x,q.z).off)>ROAD_NEAR-W.w/2-0.5)) continue;     // 帯の外の縁まで線路から 50m 以内
+      W.seg.push([u,u1]); use(p0.x,p0.z);
+      const h=W.w/2, n0=[p0.fz,-p0.fx], n1=[p1.fz,-p1.fx];
+      const A=[p0.x+n0[0]*h,yT,p0.z+n0[1]*h], B=[p1.x+n1[0]*h,yT,p1.z+n1[1]*h], C2=[p1.x-n1[0]*h,yT,p1.z-n1[1]*h], D=[p0.x-n0[0]*h,yT,p0.z-n0[1]*h];
+      quad(D,C2,B,A,[0,1,0],0xc9c6be);                                         // 上面
+      for(const sd of[-1,1]){ const e0=[p0.x+sd*n0[0]*h,0,p0.z+sd*n0[1]*h], e1=[p1.x+sd*n1[0]*h,0,p1.z+sd*n1[1]*h];   // 縁石の面
+        quad([e0[0],ROAD_Y[1],e0[2]],[e1[0],ROAD_Y[1],e1[2]],[e1[0],yT,e1[2]],[e0[0],yT,e0[2]],[sd*n0[0],0,sd*n0[1]],0xa8a6a0); }
+    }
+  }
+  const MS=mkMat('MeshLambertMaterial',{vertexColors:true,side:THREE.DoubleSide});
+  for(const q of CH.values()){
+    const g=facesGeo(q.P,q.N,q.I,q.C), m=new THREE.Mesh(g,MS); g.computeBoundingSphere&&g.computeBoundingSphere();
+    m.name='歩道'; m.receiveShadow=true; m.userData.flat=true; scene.add(m);
+  }
+  // 歩く人:歩道の長さ 9m(幹線)/16m に1人
+  for(const W of SIDEWALKS){                      // 続いている区間をつないだ帯ごと
+    W.runs=[]; for(const q of W.seg||[]){ const r=W.runs[W.runs.length-1]; if(r&&Math.abs(r[1]-q[0])<1e-6) r[1]=q[1]; else W.runs.push([q[0],q[1]]); } }
+  for(const W of SIDEWALKS) for(const q of W.runs) {
+    if(q[1]-q[0]<6) continue;
+    const n=Math.floor((q[1]-q[0])/(W.heavy?9:16)+Math.random());
+    for(let k=0;k<n;k++) PEDS.push({sw:W,a:q[0],b:q[1],u:q[0]+Math.random()*(q[1]-q[0]),dir:Math.random()<0.5?1:-1,
+      lat:(Math.random()-0.5)*Math.max(0,W.w-1.0),v:1.0+Math.random()*0.5,ph:Math.random()*6.28,look:personLook()});
+  }
+  for(const m of PEDS) if(m.look.type==='子ども') m.v*=0.8;
+  PEDS.near=peopleMesh([], '歩く人', false, PEDS.length); PEDS.far=peopleMesh([], '歩く人(遠く)', true, PEDS.length);
+  for(const im of [PEDS.near,PEDS.far]){ im.frustumCulled=false; scene.add(im); }
+}
+function pedPos(m){                              // 歩く人の位置と向き(世界座標)
+  const p=m.sw.f(m.u), x=p.x+p.fz*m.lat, z=p.z-p.fx*m.lat;
+  return {x:x,y:ROAD_Y[1]+0.15,z:z,yaw:Math.atan2(-p.fz*m.dir,p.fx*m.dir)};
+}
+function stepPeds(dt){
+  for(const m of PEDS){
+    m.u+=m.dir*m.v*dt;
+    if(m.u>m.b-0.4){ m.u=m.b-0.4; m.dir=-1; } else if(m.u<m.a+0.4){ m.u=m.a+0.4; m.dir=1; }   // 歩道の端で引き返す
+  }
+}
+// 描く直前の今のカメラで、近い人だけをインスタンスへ書く(lodStruct から)
+function pedsDraw(){
+  if(!PEDS.near) return;
+  PEOPLE_U.uPeopleT.value=RD_T;
+  const cp=camera.position; let nn=0, nf=0;
+  for(const m of PEDS){
+    const p=pedPos(m), d=Math.hypot(p.x-cp.x,p.z-cp.z,p.y-cp.y);
+    if(d>PED_FAR*LOD_STRUCT) continue;
+    const r={x:p.x,y:p.y,z:p.z,yaw:p.yaw,look:m.look,walk:[1,m.ph]};
+    if(d<PED_NEAR*LOD_STRUCT) personInst(PEDS.near,nn++,r); else personInst(PEDS.far,nf++,r);
+  }
+  for(const [im,n] of [[PEDS.near,nn],[PEDS.far,nf]]){
+    im.count=n; im.instanceMatrix.needsUpdate=true; if(im.instanceColor) im.instanceColor.needsUpdate=true;
+    const A=im.geometry.attributes; A.iMW.needsUpdate=true; A.iC0.needsUpdate=true; A.iC1.needsUpdate=true; A.iC2.needsUpdate=true;
+  }
+}
 // 列車の客用扉:停車中(発車3秒前まで)、ホームに面した側だけ開く。
 // どちらの面がホーム側かは、その駅・その方向のホームドア(PSD)の位置から決まる。
 /* 停車中の列車が面しているホームドアの列(その列車が走る線=trainOff から 2.5m 以内)。
@@ -7514,7 +7688,8 @@ let last=performance.now();
    実時間のループと撮影モードの両方から呼ぶ。撮影では固定の dt を与えるので、
    何度流しても同じ絵が出る(動画の作り直しで結果が変わらない)。 */
 function stepWorld(dt){
-  stepRoadCars(dt);       // 自動車(線路を横切る道路)
+  stepRoadCars(dt);       // 自動車(線路を横切る道路・並ぶ幹線)
+  stepPeds(dt);           // 歩道を歩く人
   if(!trainsOn) return;
   for(const t of trains){
     driveTrain(t,dt);     // 各駅停車の自動運転(加速P4/60km/h上限/減速B5/停車25秒)

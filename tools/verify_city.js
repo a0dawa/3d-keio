@@ -21,7 +21,9 @@ const X = require('./stub_three')(path,
   'GAUGE_INO:GAUGE_INO,GAUGE_SETA:GAUGE_SETA,RAIL_W:RAIL_W,prjXY:prjXY,frame:frame,' +
   'VIA_COLS:VIA_COLS,EXPY:EXPY,railY:railY,DECK_END:DECK_END,ROADS_PL:ROADS_PL,CITY_LODS:CITY_LODS,' +
   'RD_CARS:(typeof RD_CARS!=="undefined"?RD_CARS:[]),RD_LANES:(typeof RD_LANES!=="undefined"?RD_LANES:[]),' +
-  'stepRoadCars:(typeof stepRoadCars!=="undefined"?stepRoadCars:()=>{}),' +
+  'stepRoadCars:(typeof stepRoadCars!=="undefined"?stepRoadCars:()=>{}),carsDraw:carsDraw,camera:camera,' +
+  'PEDS:(typeof PEDS!=="undefined"?PEDS:[]),SIDEWALKS:(typeof SIDEWALKS!=="undefined"?SIDEWALKS:[]),pedPos:(typeof pedPos!=="undefined"?pedPos:null),' +
+  'stepPeds:(typeof stepPeds!=="undefined"?stepPeds:()=>{}),KANPACHI_X:KANPACHI_X,' +
   'STRUCT:STRUCT,groundMesh:groundMesh,scene:scene,ROAD_LAMPS:(typeof ROAD_LAMPS!=="undefined"?ROAD_LAMPS:[])');
 
 /* ---- 期待値(検証側が独立して持つ) ----------------------------------------
@@ -680,40 +682,90 @@ if (LAND) {
 }
 
 /* ---- 出力 ---------------------------------------------------------------- */
-/* ---- 自動車(利用者指示):線路を横切る実際の道路を走る。検証側の決まり:2分間、描いたインスタンスの位置が
-   いつも道路の面(PLATEAU の道路区域。自動車専用の橋梁は除く)の上・高架の柱から2.5m 以上・自動車道の橋脚から2m 以上、
-   2車線の道では進行方向の左を走る(日本は左側通行)。車は40台以上・動いている ---- */
+/* ---- 自動車と歩く人(利用者指示)。検証側の決まり:2分間、描いたインスタンスの位置がいつも道路の面(PLATEAU の道路区域。
+   自動車専用の橋梁は除く)の上・高架の柱から2.5m 以上・自動車道の橋脚から2m 以上、2車線の道では進行方向の左を走る(左側通行)。
+   2026-10-12 利用者指示:車と人は線路から 50m 以内だけ・トラックやバスも・環七・環八・甲州街道・井の頭通りは渋滞・歩道を人が歩く。
+   ・線路から 50m(REF_RD.NEAR)以内。車種はトラック・バスとも 5台以上
+   ・渋滞の道(環七・環八の交わる所 ±40m と、線路に並ぶ幹線):車線の長さあたりの台数が多く(15m に1台以上)、平均の速さが 4m/s 未満。
+     ほかの道は 5m/s 以上。同じ車線の車どうしが重ならない(車の長さの半分の和+1m 以上)
+   ・歩く人は歩道(登録簿 SIDEWALKS の帯の幅の内)の上・線路から 50m 以内で、歩いている(脚を振る量1・2分で位置が変わる) ---- */
 if (X.ROADS_PL.length) {
-  const C = X.RD_CARS, im = C.mesh;
+  const REF_RD = { NEAR: 50, MIN_TRUCK: 5, MIN_BUS: 5, HEAVY_SP: 15, HEAVY_V: 4, FREE_V: 5, GAP: 1.0, HEAVY_X: [X.KAN7_X, X.KANPACHI_X, X.KYU_INOKA_X] };   // 環七・環八・井の頭通り
+  const C = X.RD_CARS, M = C.meshes || {};
   ok('自動車の台数', C.length >= 40 && X.RD_LANES.length >= 20, '40台以上・20車線以上', C.length + '台・' + X.RD_LANES.length + '車線');
+  const nk = (k) => C.filter((c) => c.kind === k).length;
+  ok('トラック・バスも走る', nk('truck') >= REF_RD.MIN_TRUCK && nk('bus') >= REF_RD.MIN_BUS, 'トラック・バス各 5台以上', 'トラック' + nk('truck') + '・バス' + nk('bus') + '・乗用車' + nk('car') + '・軽バン' + nk('van'));
   const inPoly = (P, x, z) => { let c = false; for (let i = 0, j = P.length - 1; i < P.length; j = i++) {
     const a = P[i], b = P[j]; if ((a[1] > z) !== (b[1] > z) && x < (b[0] - a[0]) * (z - a[1]) / (b[1] - a[1]) + a[0]) c = !c; } return c; };
   const ground = X.ROADS_PL.filter((R) => !(R.k === 2 && R.sec === 2));
   const onRoad = (x, z) => ground.some((R) => x >= R.bb[0] && x <= R.bb[1] && z >= R.bb[2] && z <= R.bb[3] && inPoly(R.P, x, z));
   const cols = []; for (const c of X.VIA_COLS) for (const o of c.offs) { const f = X.frame(c.s, o); cols.push([f.x, f.z]); }
-  let bad = null, left = 0, right = 0, moved = 0;
-  const prev = C.map((c, i) => im.mats[i] ? { x: im.mats[i].p.x, z: im.mats[i].p.z } : null);
+  // 描くのは近い車だけ(carsDraw)。検証では全台を書かせて測る。遠い車を描かないことも見る
+  { const cp = X.camera.position; cp.set(-9000, 50, 3000); X.carsDraw(); const nDraw = Object.values(M).reduce((a, m) => a + m.count, 0);
+    ok('遠い車は描かない', nDraw < C.length, 'カメラから遠い車はインスタンスに書かない', nDraw + '/' + C.length + '台'); }
+  X.carsDraw(true);
+  const posOf = (c) => { const q = M[c.kind] && M[c.kind].mats && M[c.kind].mats[c.mi]; return q ? { x: q.p.x, z: q.p.z } : null; };
+  let bad = null, left = 0, right = 0, moved = 0, far = 0, ovl = null;
+  const prev = C.map(posOf);
+  const vs = { h: [0, 0], f: [0, 0] };
   for (let k = 0; k < 240 && !bad; k++) {
-    X.stepRoadCars(0.5);
+    X.stepRoadCars(0.5); X.carsDraw(true);
     C.forEach((c, i) => {
       if (bad) return;
-      const q = im.mats[i]; if (!q) { bad = '位置が無い ' + i; return; }
-      const x = q.p.x, z = q.p.z;
+      const q = posOf(c); if (!q) { bad = '位置が無い ' + i; return; }
+      const x = q.x, z = q.z;
       if (!onRoad(x, z)) bad = '道路の外 x=' + x.toFixed(0) + ' z=' + z.toFixed(0);
       else if (cols.some((p) => Math.hypot(p[0] - x, p[1] - z) < 2.5)) bad = '高架の柱に近い x=' + x.toFixed(0);
       else if (X.EXPY.piers.some((p) => Math.hypot(p[0] - x, p[1] - z) < 2.0)) bad = '自動車道の橋脚に近い';
+      if (Math.abs(X.prjXY(x, z).off) > REF_RD.NEAR + 0.5) far++;
       const pv = prev[i], dx = x - pv.x, dz = z - pv.z, d = Math.hypot(dx, dz);
-      if (d > 0.5 && d < 20 && c.lane.off > 0) {                     // 端での入り直し(大きく跳ぶ)は除く
+      const heavyRoad = c.lane.kind === '並' || REF_RD.HEAVY_X.some((h) => Math.abs(X.prjXY(c.lane.cx || x, c.lane.cz || z).s - h) < 40);
+      if (d < 20) { const g = heavyRoad ? vs.h : vs.f; g[0] += d / 0.5; g[1]++; }
+      if (d > 0.3 && d < 20 && c.lane.off > 0) {                     // 端での入り直し(大きく跳ぶ)は除く
         moved++;
-        // 車線の中心線から車への横の向き。進行方向の左 = (dz,−dx)
-        const L = c.lane, t = (x - L.cx) * L.dx + (z - L.cz) * L.dz, px = x - (L.cx + L.dx * t), pz = z - (L.cz + L.dz * t);
+        // 車の位置から道路の中心線への横の向き。中心線:横切る道は (cx,cz)+(dx,dz)t、並ぶ道は線路の s での中心 oc(s)
+        let px, pz;
+        if (c.lane.kind === '並') { const s = X.prjXY(x, z).s, f = X.frame(s, c.lane.oc(s)); px = x - f.x; pz = z - f.z; }
+        else { const L = c.lane, t = (x - L.cx) * L.dx + (z - L.cz) * L.dz; px = x - (L.cx + L.dx * t); pz = z - (L.cz + L.dz * t); }
         if (px * (dz / d) + pz * (-dx / d) > 0) left++; else right++;
       }
       prev[i] = { x: x, z: z };
     });
+    // 同じ車線で重ならない
+    if (!ovl) for (const L of X.RD_LANES) {
+      const A = C.filter((c) => c.lane === L).map((c) => ({ c: c, p: posOf(c) })).filter((q) => q.p);
+      for (let i = 0; i < A.length && !ovl; i++) for (let j = i + 1; j < A.length; j++) {
+        const d = Math.hypot(A[i].p.x - A[j].p.x, A[i].p.z - A[j].p.z);
+        if (d < (A[i].c.L + A[j].c.L) / 2 + REF_RD.GAP - 0.01 && d > 0.01) { ovl = '重なり ' + d.toFixed(1) + 'm'; break; }
+      }
+    }
   }
   ok('自動車は道路の上を走る', bad === null, '2分間:道路の面の上・柱から2.5m・橋脚から2m', bad || C.length + '台×240回');
   ok('自動車は左側通行', left > 0 && right === 0 && moved > 1000, '2車線の道で進行方向の左', '左' + left + '・右' + right);
+  ok('自動車は線路から50m 以内', far === 0, '|off|≦' + REF_RD.NEAR + 'm', far + '回はみ出し');
+  // 渋滞:幹線(環七・環八・線路に並ぶ幹線)の車線の密度と速さ
+  const hl = X.RD_LANES.filter((L) => L.kind === '並' || REF_RD.HEAVY_X.some((h) => Math.abs(X.prjXY(L.cx, L.cz).s - h) < 40));
+  const hlen = hl.reduce((a, L) => a + (L.L1 - L.L0), 0), hn = C.filter((c) => hl.indexOf(c.lane) >= 0).length;
+  const hv = vs.h[1] ? vs.h[0] / vs.h[1] : 99, fv = vs.f[1] ? vs.f[0] / vs.f[1] : 0;
+  ok('幹線は渋滞', hl.length >= 4 && hn * REF_RD.HEAVY_SP >= hlen && hv < REF_RD.HEAVY_V && fv >= REF_RD.FREE_V && ovl === null,
+    '幹線の車線 4本以上・' + REF_RD.HEAVY_SP + 'm に1台以上・平均 ' + REF_RD.HEAVY_V + 'm/s 未満(ほかは ' + REF_RD.FREE_V + '以上)・重ならない',
+    hl.length + '車線・' + (hlen / Math.max(1, hn)).toFixed(1) + 'm に1台・幹線 ' + hv.toFixed(2) + 'm/s・ほか ' + fv.toFixed(1) + 'm/s' + (ovl ? '・' + ovl : ''));
+  // 歩く人
+  const PD = X.PEDS || [];
+  let bP = null, mv = 0;
+  const p0 = PD.map((m) => X.pedPos(m));
+  for (let k = 0; k < 120 && !bP; k++) {
+    X.stepPeds(1.0);
+    for (const m of PD) {
+      const q = X.pedPos(m), W = m.sw, f = W.f(m.u), lat = (q.x - f.x) * f.fz - (q.z - f.z) * f.fx;
+      if (Math.abs(lat) > W.w / 2 + 1e-3 || !(m.u >= W.a && m.u <= W.b) || !(W.seg || []).some((s) => m.u >= s[0] - 0.01 && m.u <= s[1] + 0.01)) { bP = '歩道の外 u=' + m.u.toFixed(1); break; }
+      if (Math.abs(X.prjXY(q.x, q.z).off) > REF_RD.NEAR + 3.5) { bP = '線路から ' + X.prjXY(q.x, q.z).off.toFixed(0) + 'm'; break; }
+    }
+  }
+  PD.forEach((m, i) => { const q = X.pedPos(m); if (Math.hypot(q.x - p0[i].x, q.z - p0[i].z) > 1) mv++; });
+  const swSeg = (X.SIDEWALKS || []).reduce((a, W) => a + (W.seg || []).length, 0);
+  ok('歩道を人が歩く', PD.length >= 80 && swSeg > 40 && bP === null && mv >= 0.9 * PD.length, '歩道の帯 40区間以上・80人以上・歩道の上・線路から50m・歩いている',
+    'の帯 ' + swSeg + '区間・' + PD.length + '人' + (bP ? '・' + bP : '') + '・動いた ' + mv);
 }
 console.log('=== 街並みと交差鉄道の検証 ===');
 console.log('(置かれた1件ずつの世界座標を測り、道路・河川・鉄道・高架下と突き合わせ)\n');
