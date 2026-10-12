@@ -4695,7 +4695,7 @@ const K8C={
   led:k8lin(.012,.012,.014), under:k8lin(.08,.08,.09), roofc:k8lin(.50,.52,.55),
   bogie:k8lin(.235,.235,.245), underGray:k8lin(.23,.23,.235), faceBlack:k8lin(.02,.02,.025),
   white:k8lin(.85,.85,.83), interior:k8lin(.86,.86,.83), floor:k8lin(.35,.33,.30),
-  seat:k8lin(.24,.19,.43), strap:k8lin(.92,.92,.90), ac:k8lin(.62,.64,.65), acL:k8lin(.30,.31,.32),
+  seat:k8lin(.24,.19,.43), strap:k8lin(.92,.92,.90), ac:k8lin(.62,.64,.65), acL:k8lin(.30,.31,.32), acF:k8lin(.10,.11,.12),
   wheelC:k8lin(.50,.52,.55),
 };
 /* 多角形の寄せ集め(v4 の bmesh 相当)。面ごとに頂点を持つので法線は面の向き(平らな陰影) */
@@ -5354,23 +5354,33 @@ function k8UnderGeo(S){
     B.box(e[0],e[1],-1.18,1.18,S.Z_BOT-.02-e[2]*1.6,S.Z_BOT-.02,K8C.underGray);
   return B.geo();
 }
-// 冷房装置(長さ4.38m・上端4.055)。側面のルーバー帯は縞で描く
-function k8AcGeo(){
-  const B=new K8B(), Lh=K8.AC_L/2;
-  B.box(-Lh,Lh,-.95,.95,K8.Z_CROWN-.06,3.99,K8C.ac);
-  B.box(-Lh+.12,Lh-.12,-.88,.88,3.99,4.02,K8C.ac);
-  for(const cx of [-1.45,-.5,.5,1.45]) B.cyl([cx,0,4.00],[cx,0,K8.AC_TOP],.30,18,K8C.roofc);
-  for(const s of [-1,1]){                                    // ルーバー(側面の縦縞)
-    const y=s*.952;
-    for(let k=0;k<Math.floor(K8.AC_L*11);k++){
-      const x0=-Lh+(k+.62)/11, x1=-Lh+(k+1)/11;
-      if(x1>Lh) break;
-      const p=[[x0,y,3.80],[x1,y,3.80],[x1,y,3.97],[x0,y,3.97]];
-      B.poly(s>0?p:p.slice().reverse(),K8C.acL);
-    }
+/* 冷房装置(屋上集中式・各車1台)。2026-10-12 利用者指示で作り直した(以前は平らな箱の上に小さな円筒4つと縦縞)。
+   形:屋根に載る下の箱(側面に吸気の網の板)+上の筐体(四方を斜めに落とす)+上面の凝縮器のファン(丸い枠・暗い網・中心のハブ)。
+   8000系は日立 HRB504-4 形(ファン2つ)、9000系はファン1つの形(模型の屋根板の資料から)。寸法の細部は推定。
+   L=長さ・zt=上端・z0=屋根に載る下端・fans=ファンの中心 x・fr=ファンの半径 */
+function acGeoOf(L,zt,z0,fans,fr){
+  const B=new K8B(), Lh=L/2, W=.95, zm=zt-.17, zc=zt-.03, ch=.32, cw=.14;
+  B.box(-Lh,Lh,-W,W,z0,zm,K8C.ac);                                        // 下の箱
+  const b=[[-Lh,-W,zm],[Lh,-W,zm],[Lh,W,zm],[-Lh,W,zm]],                // 上の筐体:下面→上面は四方を斜めに
+        t=[[-Lh+ch,-W+cw,zc],[Lh-ch,-W+cw,zc],[Lh-ch,W-cw,zc],[-Lh+ch,W-cw,zc]];
+  for(let i=0;i<4;i++){const j=(i+1)%4; B.poly([b[i],b[j],t[j],t[i]],K8C.ac);}
+  B.poly(t,K8C.ac);
+  for(const fx of fans){                                                  // 凝縮器のファン
+    B.cyl([fx,0,zc],[fx,0,zt-.008],fr,24,K8C.ac);
+    B.cyl([fx,0,zt-.008],[fx,0,zt-.002],fr-.045,24,K8C.acF);
+    B.cyl([fx,0,zt-.008],[fx,0,zt],.09,12,K8C.ac);
+  }
+  const np=3, pw=(L-.5-(np-1)*.18)/np;                                    // 側面の吸気の網の板(3枚)と横の桟
+  for(const s of[-1,1]) for(let k=0;k<np;k++){
+    const x0=-Lh+.25+k*(pw+.18), x1=x0+pw, y=s*(W+.002), za=z0+.05, zb=zm-.03;
+    const q=(a,c,col)=>{const pp=[[x0,y,a],[x1,y,a],[x1,y,c],[x0,y,c]]; B.poly(s>0?pp.slice().reverse():pp,col);};
+    q(za,zb,K8C.acL);
+    for(let z=za+.03;z<zb-.01;z+=.035){const y2=s*(W+.004), pp=[[x0,y2,z],[x1,y2,z],[x1,y2,z+.008],[x0,y2,z+.008]]; B.poly(s>0?pp.slice().reverse():pp,K8C.ac);}
   }
   return B.geo();
 }
+// 8000系:長さ4.38m・上端4.055(公表)。日立 HRB504-4 形=凝縮器のファン2つ
+function k8AcGeo(){ return acGeoOf(K8.AC_L,K8.AC_TOP,K8.Z_CROWN-.06,[-1.0,1.0],.38); }
 // 幌(じゃばら)。連結面の中央(原点)
 function k8GangGeo(S){
   S=S||K8;
@@ -5943,23 +5953,8 @@ function k9Logo(w,h){
     cx.beginPath(); path(rr(x,x+.085,zb,zb+H,.030)); path(rr(x+t,x+.085-t,zb+tb,zb+H-tb,.012).reverse()); cx.fill('evenodd');   // O
   });
 }
-// 冷房装置(上端4.017 公表)
-function k9AcGeo(){
-  const B=new K8B(), Lh=K9.AC_L/2, z0=K9.Z_CROWN-.06, zt=K9.AC_TOP;
-  B.box(-Lh,Lh,-.95,.95,z0,zt-.06,K8C.ac);
-  B.box(-Lh+.12,Lh-.12,-.88,.88,zt-.06,zt-.035,K8C.ac);
-  for(const cx of [-1.4,-.47,.47,1.4]) B.cyl([cx,0,zt-.05],[cx,0,zt],.30,18,K8C.roofc);
-  for(const s of [-1,1]){
-    const y=s*.952;
-    for(let k=0;k<Math.floor(K9.AC_L*11);k++){
-      const x0=-Lh+(k+.62)/11, x1=-Lh+(k+1)/11;
-      if(x1>Lh) break;
-      const p=[[x0,y,z0+.14],[x1,y,z0+.14],[x1,y,zt-.08],[x0,y,zt-.08]];
-      B.poly(s>0?p:p.slice().reverse(),K8C.acL);
-    }
-  }
-  return B.geo();
-}
+// 9000系の冷房装置(上端4.017 公表・長さ4.20 推定)。凝縮器のファン1つの形
+function k9AcGeo(){ return acGeoOf(K9.AC_L,K9.AC_TOP,K9.Z_CROWN-.06,[0],.50); }
 const K9GEO=(function(){
   const rng=k8Rng(9000);
   const G={

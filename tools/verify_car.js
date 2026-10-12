@@ -40,6 +40,7 @@ const REF = {
   NOSE: [[1.80, 9.752], [2.52, 9.752], [3.09, 9.652], [3.53, 9.635], [3.71, 9.29]], NOSE_TOL: 0.035,
   BOGIE_X: 6.88, WB_M: 2.2, WB_T: 2.1, WHEEL_R: 0.43,
   AC_TOP: 4.055, AC_L: 4.38,
+  AC_FANS: 2,              // 冷房装置の凝縮器のファンの数(日立 HRB504-4 形。2026-10-12)
   PANTO_FROM_SHINJUKU: [2, 4, 5, 8, 9],                // パンタは新宿方から2・4・5・8・9両目
   CARS_8714F: ['8714', '8014', '8064', '8114', '8164', '8514', '8564', '8214', '8264', '8764'],
   // 9000系 9731F(10両。編成表の公表の並び)。パンタは デハ9000形・デハ9050形の京王八王子寄りに1基
@@ -223,6 +224,17 @@ const range = (pts, k) => { let lo = 1e9, hi = -1e9; for (const p of pts) { if (
   const ac = v4pts(X.K8GEO.ac);
   ok('冷房装置の上端', near(range(ac, 2)[1], REF.AC_TOP), REF.AC_TOP + 'm(公表値)', range(ac, 2)[1].toFixed(3) + 'm');
   ok('冷房装置の長さ', near(range(ac, 0)[1] - range(ac, 0)[0], REF.AC_L), REF.AC_L + 'm', (range(ac, 0)[1] - range(ac, 0)[0]).toFixed(3) + 'm');
+  /* 冷房装置の形(2026-10-12 利用者指示で作り直し。屋上集中式):上面の凝縮器のファン(暗い網)の数と、筐体の上面が四方へ
+     斜めに落ちていること(上面の端が下の箱の端より 0.2m 以上内) */
+  { const G0 = X.K8GEO.ac, P = G0.attributes.position.array, C = G0.attributes.color.array, top = REF.AC_TOP;
+    const xs = [];
+    for (let i = 0; i < P.length; i += 3) if (C[i] < 0.2 && C[i + 1] < 0.2 && P[i + 1] > top - 0.012) xs.push(P[i]);
+    const cl = []; for (const x of xs.sort((a, b) => a - b)) if (!cl.length || x - cl[cl.length - 1][1] > 0.3) cl.push([x, x]); else cl[cl.length - 1][1] = x;
+    const pts = v4pts(G0), xb = range(pts.filter((p) => p[2] < top - 0.2), 0), xt = range(pts.filter((p) => Math.abs(p[2] - (top - 0.03)) < 0.002 && Math.abs(p[1]) > 0.6), 0);
+    const inset = Math.min(xt[0] - xb[0], xb[1] - xt[1]);
+    ok('冷房装置の形(ファン・斜めの端)', cl.length === REF.AC_FANS && inset >= 0.2, 'ファン' + REF.AC_FANS + 'つ・上面の端が0.2m以上内', 'ファン' + cl.length + 'つ・' + inset.toFixed(2) + 'm');
+  }
+
   // 舟体の上面=トロリ線の高さ(すり板が架線に接する)
   const shoe = v4pts(X.K8GEO.panto.shoe);
   const top = range(shoe.filter((p) => Math.abs(p[1]) <= 0.62 + 1e-6), 2)[1];   // 舟体(ホーンを除く)

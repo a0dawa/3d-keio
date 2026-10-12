@@ -16,6 +16,7 @@ const X = require('./stub_three')(path,
 const REF = {
   LEN: 19.5, HWB: 2.768 / 2,                 // 車体長・車体半幅(公表)
   Z_FLR: 1.130, ROOF: 3.620,                 // 床面高さ・屋根高さ(公表)
+  AC_FANS: 1,                                 // 冷房装置の凝縮器のファンの数(ファン1つの形。2026-10-12)
   AC_TOP: 4.017, CEIL_H: 2.270,              // 冷房装置上面・天井高さ(公表)
   NOSE_R: 10.0, NOSE_R_TOL: 1.0,             // 前面の平面の半径(公表10,000mm)・許容
   FDOOR_W: 0.610,                            // 中央の非常扉の幅(公表)
@@ -82,6 +83,17 @@ const G = X.K9GEO;
   const R = Rs.length ? Rs.reduce((a, b) => a + b, 0) / Rs.length : 0;
   ok('前面の平面の半径', Math.abs(R - REF.NOSE_R) <= REF.NOSE_R_TOL, REF.NOSE_R + '±' + REF.NOSE_R_TOL + 'm(公表10,000mm)', R.toFixed(2) + 'm(' + Rs.length + '点)');
   ok('冷房装置の上端', near(range(v4pts(G.ac), 2)[1], REF.AC_TOP), REF.AC_TOP + 'm(公表)', range(v4pts(G.ac), 2)[1].toFixed(3) + 'm');
+  /* 冷房装置の形(2026-10-12 利用者指示で作り直し。屋上集中式):上面の凝縮器のファン(暗い網)の数と、筐体の上面が四方へ
+     斜めに落ちていること(上面の端が下の箱の端より 0.2m 以上内) */
+  { const G0 = G.ac, P = G0.attributes.position.array, C = G0.attributes.color.array, top = REF.AC_TOP;
+    const xs = [];
+    for (let i = 0; i < P.length; i += 3) if (C[i] < 0.2 && C[i + 1] < 0.2 && P[i + 1] > top - 0.012) xs.push(P[i]);
+    const cl = []; for (const x of xs.sort((a, b) => a - b)) if (!cl.length || x - cl[cl.length - 1][1] > 0.3) cl.push([x, x]); else cl[cl.length - 1][1] = x;
+    const pts = v4pts(G0), xb = range(pts.filter((p) => p[2] < top - 0.2), 0), xt = range(pts.filter((p) => Math.abs(p[2] - (top - 0.03)) < 0.002 && Math.abs(p[1]) > 0.6), 0);
+    const inset = Math.min(xt[0] - xb[0], xb[1] - xt[1]);
+    ok('冷房装置の形(ファン・斜めの端)', cl.length === REF.AC_FANS && inset >= 0.2, 'ファン' + REF.AC_FANS + 'つ・上面の端が0.2m以上内', 'ファン' + cl.length + 'つ・' + inset.toFixed(2) + 'm');
+  }
+
   // 天井の下面=床面+天井高さ(車内の幾何に、その高さの頂点がある)
   const room = v4pts(G.room), ceil = REF.Z_FLR + REF.CEIL_H;
   ok('天井高さ', room.some((p) => near(p[2], ceil, 1e-3)), '床面+' + REF.CEIL_H + 'm', room.some((p) => near(p[2], ceil, 1e-3)) ? '頂点あり' : '無い');
