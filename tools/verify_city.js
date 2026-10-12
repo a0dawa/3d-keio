@@ -10,7 +10,7 @@
 //   使い方: node tools/verify_city.js [keio_elevated_3d.html]
 const path = process.argv[2] || 'keio_elevated_3d.html';
 const X = require('./stub_three')(path,
-  'CITY:CITY,deckHalf:deckHalf,cutHalf:cutHalf,DOM:DOM,INO:INO,SETA:SETA,XR:XR,K8:K8,' +
+  'bldWinAt:(typeof bldWinAt!=="undefined"?bldWinAt:null),BLD_WIN_SRC:(typeof bldWinPatch!=="undefined"?bldWinPatch.toString():""),CITY:CITY,deckHalf:deckHalf,cutHalf:cutHalf,DOM:DOM,INO:INO,SETA:SETA,XR:XR,K8:K8,' +
   'KAN7_X:KAN7_X,NAKANO_X:NAKANO_X,HOSHA23_X:HOSHA23_X,KYU_INOKA_X:KYU_INOKA_X,H154_X:H154_X,H128_X:H128_X,' +
   'H133_X:H133_X,H215_X:H215_X,KANPACHI_X:KANPACHI_X,H216_X:H216_X,H217_X:H217_X,' +
   'JOSUI_X:JOSUI_X,BRIDGE:BRIDGE,XINGS:XINGS,WADA_S:WADA_S,WADA_OFF:WADA_OFF,' +
@@ -472,6 +472,17 @@ if (LAND) {
   ok('建物の窓(壁の面に)', bM === null && nM > 0, '近く・中・遠の全ての形が窓の材質', bM ? bM + 'に窓が無い' : nM + '形');
   ok('窓は壁の上端より上に出ない', bT === null && nW > 0, '壁の面の最も高い点以下', bT || '壁の三角形 ' + nW + '・面 ' + WG.size);
   const nG = B.filter((e) => e.roof === '切妻').length;
+  /* 窓の数(2026-10-12 利用者指示:多すぎる・北向きの壁は少なく)。シェーダと同じ式 bldWinAt を壁の上で数える。
+     検証側の決まり:戸建ての南向きの壁で窓は 10% 以下、北向きは南向きの半分以下。共同住宅・業務も北は南より少ない。
+     シェーダが向きで間引いていること(文字列に北の成分の式)も見る */
+  if (X.bldWinAt) {
+    const dens = (t, nx, nz, top) => { let a = 0, n = 0; for (let u = 0; u < 400; u += 0.1) for (let y = 0.05; y < top; y += 0.1) { n++; if (X.bldWinAt(t, u, y, top, nx, nz)) a++; } return a / n; };
+    const D = [0, 1, 2].map((t) => ({ s: dens(t, 0, 1, 9), n: dens(t, 0, -1, 9), e: dens(t, 1, 0, 9) }));
+    const shOK = /clamp\(-normalize\(vBN\.xz\)\.y/.test(X.BLD_WIN_SRC) && /hc>=pd/.test(X.BLD_WIN_SRC);
+    ok('窓は少なめ・北向きはさらに少ない', D[0].s <= 0.10 && D[0].n <= 0.5 * D[0].s && D[1].n < D[1].s && D[2].n < D[2].s && D[0].s > 0.03 && shOK,
+      '戸建ての南 ≤10%・北 ≤ 南の半分・共同住宅と業務も 北<南・シェーダが向きで間引く',
+      D.map((d, i) => ['戸建て', '共同住宅', '業務'][i] + ' 南' + (d.s * 100).toFixed(1) + '% 北' + (d.n * 100).toFixed(1) + '% 東' + (d.e * 100).toFixed(1) + '%').join(' / ') + (shOK ? '' : ' シェーダに向きの式が無い'));
+  }
   ok('三角屋根は灰色', bR === null && nR > 0 && (B.some((e) => e.plateau) ? nG >= 1000 : true), '傾いた屋根面は暗い灰・切妻屋根 1000棟以上', bR || '屋根面 ' + nR + '・切妻 ' + nG + '棟');
 }
 
@@ -684,13 +695,14 @@ if (LAND) {
 /* ---- 出力 ---------------------------------------------------------------- */
 /* ---- 自動車と歩く人(利用者指示)。検証側の決まり:2分間、描いたインスタンスの位置がいつも道路の面(PLATEAU の道路区域。
    自動車専用の橋梁は除く)の上・高架の柱から2.5m 以上・自動車道の橋脚から2m 以上、2車線の道では進行方向の左を走る(左側通行)。
-   2026-10-12 利用者指示:車と人は線路から 50m 以内だけ・トラックやバスも・環七・環八・甲州街道・井の頭通りは渋滞・歩道を人が歩く。
-   ・線路から 50m(REF_RD.NEAR)以内。車種はトラック・バスとも 5台以上
-   ・渋滞の道(環七・環八の交わる所 ±40m と、線路に並ぶ幹線):車線の長さあたりの台数が多く(15m に1台以上)、平均の速さが 4m/s 未満。
-     ほかの道は 5m/s 以上。同じ車線の車どうしが重ならない(車の長さの半分の和+1m 以上)
+   2026-10-12 利用者指示:車と人は線路から 50m 以内だけ(同日の指示で 100m に)・トラックやバスも・環七・環八・甲州街道・井の頭通りは渋滞
+   (同日の指示で密度を半分に)・ほかの道の車は1.5倍に・歩道を人が歩く。
+   ・線路から 100m(REF_RD.NEAR)以内。車種はトラック・バスとも 5台以上
+   ・渋滞の道(環七・環八の交わる所 ±40m と、線路に並ぶ幹線):車線の長さあたり 15〜26m に1台(以前の約9m の半分の密度)、平均の速さが 4m/s 未満。
+     ほかの道は 5m/s 以上で、2車線の道は 60m に1台以上(以前の 80m の1.5倍)。同じ車線の車どうしが重ならない(車の長さの半分の和+1m 以上)
    ・歩く人は歩道(登録簿 SIDEWALKS の帯の幅の内)の上・線路から 50m 以内で、歩いている(脚を振る量1・2分で位置が変わる) ---- */
 if (X.ROADS_PL.length) {
-  const REF_RD = { NEAR: 50, MIN_TRUCK: 5, MIN_BUS: 5, HEAVY_SP: 15, HEAVY_V: 4, FREE_V: 5, GAP: 1.0, HEAVY_X: [X.KAN7_X, X.KANPACHI_X, X.KYU_INOKA_X] };   // 環七・環八・井の頭通り
+  const REF_RD = { NEAR: 100, MIN_TRUCK: 5, MIN_BUS: 5, HEAVY_SP_MAX: 26, FREE_SP: 60, HEAVY_SP: 15, HEAVY_V: 4, FREE_V: 5, GAP: 1.0, HEAVY_X: [X.KAN7_X, X.KANPACHI_X, X.KYU_INOKA_X] };   // 環七・環八・井の頭通り
   const C = X.RD_CARS, M = C.meshes || {};
   ok('自動車の台数', C.length >= 40 && X.RD_LANES.length >= 20, '40台以上・20車線以上', C.length + '台・' + X.RD_LANES.length + '車線');
   const nk = (k) => C.filter((c) => c.kind === k).length;
@@ -698,7 +710,11 @@ if (X.ROADS_PL.length) {
   const inPoly = (P, x, z) => { let c = false; for (let i = 0, j = P.length - 1; i < P.length; j = i++) {
     const a = P[i], b = P[j]; if ((a[1] > z) !== (b[1] > z) && x < (b[0] - a[0]) * (z - a[1]) / (b[1] - a[1]) + a[0]) c = !c; } return c; };
   const ground = X.ROADS_PL.filter((R) => !(R.k === 2 && R.sec === 2));
-  const onRoad = (x, z) => ground.some((R) => x >= R.bb[0] && x <= R.bb[1] && z >= R.bb[2] && z <= R.bb[3] && inPoly(R.P, x, z));
+  // 隣り合う道路区域の多角形の継ぎ目(データの 0.1m ほどのすき間)は道路の上とみなす:多角形の内か、縁から 0.2m 以内
+  const SEAM = 0.2;
+  const edgeD = (P, x, z) => { let d = 1e9; for (let i = 0, j = P.length - 1; i < P.length; j = i++) { const a = P[j], b = P[i], dx = b[0] - a[0], dz = b[1] - a[1], L2 = dx * dx + dz * dz;
+    const u = L2 ? Math.max(0, Math.min(1, ((x - a[0]) * dx + (z - a[1]) * dz) / L2)) : 0; d = Math.min(d, Math.hypot(x - a[0] - dx * u, z - a[1] - dz * u)); } return d; };
+  const onRoad = (x, z) => ground.some((R) => x >= R.bb[0] - SEAM && x <= R.bb[1] + SEAM && z >= R.bb[2] - SEAM && z <= R.bb[3] + SEAM && (inPoly(R.P, x, z) || edgeD(R.P, x, z) < SEAM));
   const cols = []; for (const c of X.VIA_COLS) for (const o of c.offs) { const f = X.frame(c.s, o); cols.push([f.x, f.z]); }
   // 描くのは近い車だけ(carsDraw)。検証では全台を書かせて測る。遠い車を描かないことも見る
   { const cp = X.camera.position; cp.set(-9000, 50, 3000); X.carsDraw(); const nDraw = Object.values(M).reduce((a, m) => a + m.count, 0);
@@ -742,13 +758,15 @@ if (X.ROADS_PL.length) {
   }
   ok('自動車は道路の上を走る', bad === null, '2分間:道路の面の上・柱から2.5m・橋脚から2m', bad || C.length + '台×240回');
   ok('自動車は左側通行', left > 0 && right === 0 && moved > 1000, '2車線の道で進行方向の左', '左' + left + '・右' + right);
-  ok('自動車は線路から50m 以内', far === 0, '|off|≦' + REF_RD.NEAR + 'm', far + '回はみ出し');
+  ok('自動車は線路から100m 以内', far === 0, '|off|≦' + REF_RD.NEAR + 'm', far + '回はみ出し');
   // 渋滞:幹線(環七・環八・線路に並ぶ幹線)の車線の密度と速さ
   const hl = X.RD_LANES.filter((L) => L.kind === '並' || REF_RD.HEAVY_X.some((h) => Math.abs(X.prjXY(L.cx, L.cz).s - h) < 40));
   const hlen = hl.reduce((a, L) => a + (L.L1 - L.L0), 0), hn = C.filter((c) => hl.indexOf(c.lane) >= 0).length;
   const hv = vs.h[1] ? vs.h[0] / vs.h[1] : 99, fv = vs.f[1] ? vs.f[0] / vs.f[1] : 0;
-  ok('幹線は渋滞', hl.length >= 4 && hn * REF_RD.HEAVY_SP >= hlen && hv < REF_RD.HEAVY_V && fv >= REF_RD.FREE_V && ovl === null,
-    '幹線の車線 4本以上・' + REF_RD.HEAVY_SP + 'm に1台以上・平均 ' + REF_RD.HEAVY_V + 'm/s 未満(ほかは ' + REF_RD.FREE_V + '以上)・重ならない',
+  const fl = X.RD_LANES.filter((L) => hl.indexOf(L) < 0 && L.off > 0), flen = fl.reduce((a, L) => a + (L.L1 - L.L0), 0), fn = C.filter((c) => fl.indexOf(c.lane) >= 0).length;
+  ok('ほかの道の車(以前の1.5倍)', fn * REF_RD.FREE_SP >= flen && fl.length >= 10, '2車線の道で ' + REF_RD.FREE_SP + 'm に1台以上', fl.length + '車線・' + (flen / Math.max(1, fn)).toFixed(1) + 'm に1台');
+  ok('幹線は渋滞', hl.length >= 4 && hn * REF_RD.HEAVY_SP <= hlen && hn * REF_RD.HEAVY_SP_MAX >= hlen && hv < REF_RD.HEAVY_V && fv >= REF_RD.FREE_V && ovl === null,
+    '幹線の車線 4本以上・' + REF_RD.HEAVY_SP + '〜' + REF_RD.HEAVY_SP_MAX + 'm に1台(以前の半分)・平均 ' + REF_RD.HEAVY_V + 'm/s 未満(ほかは ' + REF_RD.FREE_V + '以上)・重ならない',
     hl.length + '車線・' + (hlen / Math.max(1, hn)).toFixed(1) + 'm に1台・幹線 ' + hv.toFixed(2) + 'm/s・ほか ' + fv.toFixed(1) + 'm/s' + (ovl ? '・' + ovl : ''));
   // 歩く人
   const PD = X.PEDS || [];
@@ -764,7 +782,7 @@ if (X.ROADS_PL.length) {
   }
   PD.forEach((m, i) => { const q = X.pedPos(m); if (Math.hypot(q.x - p0[i].x, q.z - p0[i].z) > 1) mv++; });
   const swSeg = (X.SIDEWALKS || []).reduce((a, W) => a + (W.seg || []).length, 0);
-  ok('歩道を人が歩く', PD.length >= 80 && swSeg > 40 && bP === null && mv >= 0.9 * PD.length, '歩道の帯 40区間以上・80人以上・歩道の上・線路から50m・歩いている',
+  ok('歩道を人が歩く', PD.length >= 80 && swSeg > 40 && bP === null && mv >= 0.9 * PD.length, '歩道の帯 40区間以上・80人以上・歩道の上・線路から' + REF_RD.NEAR + 'm・歩いている',
     'の帯 ' + swSeg + '区間・' + PD.length + '人' + (bP ? '・' + bP : '') + '・動いた ' + mv);
 }
 console.log('=== 街並みと交差鉄道の検証 ===');
