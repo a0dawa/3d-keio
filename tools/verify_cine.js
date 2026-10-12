@@ -657,6 +657,10 @@ const TPROP = {};
   } else menu = 'weatherClick なし';
   ok('天候のメニュー(大雨と雷の併用)', menu === null, '大雨+雷・雷だけ・雷を消す・他を選ぶと雷が消える', menu || '8通りOK');
   C.setWeather('clear'); C.setSeason('summer'); C.setTime('noon');
+  // 同じ空(時刻・天候が同じ)なら環境マップを作り直さない(読み込みで同じ空を3回作っていた)。違えば作り直す
+  const e0 = X.env(); C.setTime('noon'); C.setWeather('clear'); C.setSeason('summer');
+  const e1 = X.env(); C.setWeather('cloudy'); const e2 = X.env(); C.setWeather('clear');
+  ok('同じ空は作り直さない', e0 === e1 && e2 !== e1 && X.env() !== e2, '同じ=そのまま・違う=作り直す', (e0 === e1 ? 'そのまま' : '作り直した') + '・' + (e2 !== e1 ? '作り直した' : 'そのまま'));
 }
 
 /* ---- 5c. 駅のフォーカスの列車(到着/発車) -----------------------------------

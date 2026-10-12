@@ -825,10 +825,16 @@ function makeEnv(){
 }
 let ENV_TEX=makeEnv();
 scene.environment=ENV_TEX;
+// 空の色と太陽の向きの組。同じなら rebuildSky() は何もしない(読み込みのとき、既定の空・時刻・天候で同じ空を3回作っていた。
+// 環境マップ(PMREM)の作り直しは1回 0.3〜0.5秒)
+const skySig=()=>[SKY.TOP,SKY.HOR,SKY.BOT,SKY.SUN,SUN_N.x,SUN_N.y,SUN_N.z].join();
+let SKY_SIG=skySig();
 /* 空の色・太陽の向きを変えた後に呼ぶ。キャンバスを描き直して空ドームの map を
    更新し、環境マップ(PMREM)も作り直す。古い方は必ず dispose する
    (時刻を切り替えるたびに GPU のテクスチャが積み上がる)。 */
 function rebuildSky(){
+  const sg=skySig(); if(sg===SKY_SIG) return;
+  SKY_SIG=sg;
   skyPaint(SKY_CV);
   SKY_TEX.needsUpdate=true;
   const old=ENV_TEX;
@@ -1231,9 +1237,24 @@ function roadHit(px,pz,r){                 // 点(半径 r)が道路の面に掛
     }
   return false;
 }
-function expyHit(px,pz,r){                 // 点(半径 r)が自動車道の橋脚(2m角)に掛かるか
-  for(const p of EXPY.piers) if(Math.abs(px-p[0])<1.0+r&&Math.abs(pz-p[1])<1.0+r) return true;
+/* 水面と橋脚も道路と同じ格子(PLR_CELL)に外接矩形で登録して引く。置ける所を探す cityFree は数十万回呼ばれ、
+   毎回 463 枚の水面と全部の橋脚を見ていた(読み込みの約 2.7秒)。結果は同じ */
+const WTR_GRID=new Map(), EXPY_GRID=new Map();
+function gridPut(G,x0,x1,z0,z1,o){
+  for(let gx=Math.floor(x0/PLR_CELL);gx<=Math.floor(x1/PLR_CELL);gx++)
+    for(let gz=Math.floor(z0/PLR_CELL);gz<=Math.floor(z1/PLR_CELL);gz++){ const k=gx+','+gz; let l=G.get(k); if(!l){l=[];G.set(k,l);} l.push(o); }
+}
+function gridAny(G,px,pz,r,f){             // 点の周り ±|r| に掛かる格子の物で f が真になるものがあるか(同じ物は1回だけ見る)
+  const ra=Math.abs(r); let seen=null;
+  for(let gx=Math.floor((px-ra)/PLR_CELL);gx<=Math.floor((px+ra)/PLR_CELL);gx++)
+    for(let gz=Math.floor((pz-ra)/PLR_CELL);gz<=Math.floor((pz+ra)/PLR_CELL);gz++){
+      const l=G.get(gx+','+gz); if(!l) continue;
+      for(const o of l){ if(seen&&seen.has(o)) continue; if(f(o)) return true; (seen||(seen=new Set())).add(o); }
+    }
   return false;
+}
+function expyHit(px,pz,r){                 // 点(半径 r)が自動車道の橋脚(2m角)に掛かるか
+  return gridAny(EXPY_GRID,px,pz,Math.abs(r)+1.0,p=>Math.abs(px-p[0])<1.0+r&&Math.abs(pz-p[1])<1.0+r);
 }
 /* 多角形が事業区間の帯(s:DOM±150・|off|<DOM.z+60)に掛かるか。頂点だけでなく辺の 20m ごとの点も見る
    (帯を横切る長い道路は頂点が帯の外にしか無い) */
@@ -1248,8 +1269,7 @@ function polyInDom(P){
   return false;
 }
 function waterHit(px,pz,r){                // 点(半径 r)が水面(河川・池)に掛かるか
-  for(const W of LU.water) if(px>W.bb[0]-r&&px<W.bb[1]+r&&pz>W.bb[2]-r&&pz<W.bb[3]+r&&polyDist(W.P,px,pz)<r) return true;
-  return false;
+  return gridAny(WTR_GRID,px,pz,r,W=>px>W.bb[0]-r&&px<W.bb[1]+r&&pz>W.bb[2]-r&&pz<W.bb[3]+r&&polyDist(W.P,px,pz)<r);
 }
 function plrDecode(b64,magic){             // 2進 → [{k,sec,P}](plateau_land.py の enc_polys の逆)
   const s=atob(b64), u8=new Uint8Array(s.length);
@@ -1349,7 +1369,7 @@ if(PLL){
       for(const p of R.P){x0=Math.min(x0,p[0]);x1=Math.max(x1,p[0]);z0=Math.min(z0,p[1]);z1=Math.max(z1,p[1]);}
       R.bb=[x0,x1,z0,z1]; LANDS_PL.push(R);
       let c;
-      if(R.k===3){ LU.water.push(R); c=W; }
+      if(R.k===3){ LU.water.push(R); gridPut(WTR_GRID,R.bb[0],R.bb[1],R.bb[2],R.bb[3],R); c=W; }
       else{
         const key=Math.floor((x0+x1)/2/CHS)+','+Math.floor((z0+z1)/2/CHS);
         c=CH.get(key); if(!c){c={P:[],N:[],I:[],C:[]}; CH.set(key,c);}
@@ -1431,7 +1451,7 @@ if(PLL){
       piers.forEach((p,i)=>{m4.compose(v.set(p[0],p[2]/2,p[1]),q,sc.set(2.0,p[2],2.0)); inst.setMatrixAt(i,m4);});
       inst.instanceMatrix.needsUpdate=true; scene.add(inst);
     }
-    EXPY.piers=piers;
+    EXPY.piers=piers; for(const q of piers) gridPut(EXPY_GRID,q[0]-1,q[0]+1,q[1]-1,q[1]+1,q);
   }
   /* 幹線の歩道際の街灯(夜の灯り 8b章が使う):縁を 34m ごとに。内側 0.8m が道路で、外側 1.5m が
      どの道路でもない所(交差部の区切りの線ではなく、本当の縁) */
@@ -3768,7 +3788,7 @@ const realOff=(s,o0,hit)=>{ if(!PLL) return o0;
   for(let d=0;d<=260;d+=2) for(const sg of [1,-1]){const o=o0+sg*d, f=frame(s,o); if(hit(f.x,f.z)) return o;}
   return o0; };
 const onMajor=(x,z)=>{const l=PLR_GRID.get(Math.floor(x/PLR_CELL)+','+Math.floor(z/PLR_CELL));
-  return !!l&&l.some(R=>R.k===1&&polyDist(R.P,x,z)<0);};
+  return !!l&&l.some(R=>R.k===1&&x>R.bb[0]&&x<R.bb[1]&&z>R.bb[2]&&z<R.bb[3]&&polyDist(R.P,x,z)<0);};
 const onExpy=(x,z)=>EXPY.deck.some(D=>polyDist(D.P,x,z)<0);
 tag('甲州街道(国道20号)',2300,22,realOff(2300,158,onMajor),1);
 tag('旧甲州街道',5200,18,realOff(5200,93,onMajor),1);
@@ -3838,9 +3858,6 @@ keepLine(SETA,12,XR.SETA_U0-10,XR.SETA_U1+10);
 function cityFree(s,off,rad,px,pz,roadIn){       // roadIn:道路の面への食い込みを許す量[m](実データの建物)
   // 高架下+側道。掘割(DECK_END より西)は側ごとの幅(仙川は北に広い単式ホームがあり、南は狭い)
   if(Math.abs(off)<(s>DECK_END?cutHalf(s,off<0?-1:1):deckHalf(s))+5.2+rad) return false;
-  if(PLL&&px!==undefined&&roadHit(px,pz,rad-(roadIn||0))) return false;   // 実データの道路の面
-  if(PLL&&px!==undefined&&expyHit(px,pz,rad)) return false;     // 自動車道の橋脚
-  if(PLL&&px!==undefined&&waterHit(px,pz,rad)) return false;    // 河川・池の水面
   for(const q of KEEP){
     if(q.k==='b'){ if(Math.abs(s-q.c)<q.hw+rad && Math.abs(off)<q.oh) return false; }
     else if(q.k==='s'){ if(Math.abs(off-q.o)<q.hw+rad && s>q.s0 && s<q.s1) return false; }
@@ -3852,6 +3869,10 @@ function cityFree(s,off,rad,px,pz,roadIn){       // roadIn:道路の面への食
       if(Math.abs(dn)<q.hw+rad && du>q.u0-rad && du<q.u1+rad) return false;
     }
   }
+  // 実データの面の判定は重いので最後に(占有域で落ちる候補には要らない)
+  if(PLL&&px!==undefined&&roadHit(px,pz,rad-(roadIn||0))) return false;   // 実データの道路の面
+  if(PLL&&px!==undefined&&expyHit(px,pz,rad)) return false;     // 自動車道の橋脚
+  if(PLL&&px!==undefined&&waterHit(px,pz,rad)) return false;    // 河川・池の水面
   return true;
 }
 // すでに置いた物との重なり(世界座標の格子ハッシュ。建物と樹木で共有する)
@@ -3899,7 +3920,7 @@ function polyDist(P,x,z){
 }
 function plbHit(px,pz,r){                  // 点(半径 r)が建物の足跡に掛かるか(r ≤ PLB_PAD)
   const l=PLB_GRID.get(Math.floor(px/PLB_CELL)+','+Math.floor(pz/PLB_CELL));
-  if(l) for(const P of l) if(polyDist(P,px,pz)<r) return true;
+  if(l) for(const P of l) if(px>P.bb[0]-r&&px<P.bb[1]+r&&pz>P.bb[2]-r&&pz<P.bb[3]+r&&polyDist(P,px,pz)<r) return true;   // 外接矩形の外は多角形の外(結果は同じ)
   return false;
 }
 function plbDecode(b64){                   // 2進 → [{P:[[x,z]…], h, st}](plateau_import.py の encode の逆)
@@ -4113,7 +4134,8 @@ if(PLB){
     c.B.push({P:P,h:h,l2:b.l2||null,cx:cx,cz:cz,ox:ox,oz:oz,w:best.w,d:best.d,a:a,ux:best.ux,uz:best.uz,hex:hex,wt:wt,seed:seed,
       gable:gable,rh:rh,eave:eave,roofHex:roofHex,big:best.w*best.d>=120||h>=9.5});   // 遠くでも描く:120m²以上か9.5m以上(集合住宅・大きな家)
     c.bx[0]=Math.min(c.bx[0],ox-r); c.bx[1]=Math.max(c.bx[1],ox+r); c.bx[2]=Math.min(c.bx[2],oz-r); c.bx[3]=Math.max(c.bx[3],oz+r); c.bx[4]=Math.max(c.bx[4],h);
-    // 足跡の格子(樹木・街灯が中や縁に入らない)。外接矩形+余白が掛かるセル全部に入れる
+    // 足跡の格子(樹木・街灯が中や縁に入らない)。外接矩形+余白が掛かるセル全部に入れる。外接矩形 bb は plbHit の前さばき
+    P.bb=[1e9,-1e9,1e9,-1e9]; for(const v of P){P.bb[0]=Math.min(P.bb[0],v[0]);P.bb[1]=Math.max(P.bb[1],v[0]);P.bb[2]=Math.min(P.bb[2],v[1]);P.bb[3]=Math.max(P.bb[3],v[1]);}
     for(let gx=Math.floor((ox-r-PLB_PAD)/PLB_CELL);gx<=Math.floor((ox+r+PLB_PAD)/PLB_CELL);gx++)
       for(let gz=Math.floor((oz-r-PLB_PAD)/PLB_CELL);gz<=Math.floor((oz+r+PLB_PAD)/PLB_CELL);gz++){
         const kk=gx+','+gz; let l=PLB_GRID.get(kk); if(!l){l=[];PLB_GRID.set(kk,l);} l.push(P);
@@ -7240,7 +7262,8 @@ const ROAD_NEAR=50;              // 車と人を描く線路からの距離[m]
   }
   // 線路に並ぶ幹線
   const maj=ROADS_PL.filter(R=>R.k===1&&R.sec!==2);
-  const onMaj=(s,o)=>{const f=frame(s,o); return maj.some(R=>f.x>R.bb[0]&&f.x<R.bb[1]&&f.z>R.bb[2]&&f.z<R.bb[3]&&polyDist(R.P,f.x,f.z)<0);};
+  const MAJ_G=new Map(); for(const R of maj) gridPut(MAJ_G,R.bb[0],R.bb[1],R.bb[2],R.bb[3],R);   // 毎回全部の幹線を見ていた(約 2秒)
+  const onMaj=(s,o)=>{const f=frame(s,o); return gridAny(MAJ_G,f.x,f.z,0,R=>f.x>R.bb[0]&&f.x<R.bb[1]&&f.z>R.bb[2]&&f.z<R.bb[3]&&polyDist(R.P,f.x,f.z)<0);};
   for(const sg of[-1,1]){
     let cur=null; const runs=[];
     for(let s=DOM.x0;s<=DOM.x1;s+=4){
@@ -7326,6 +7349,13 @@ const CAR_DRAW=300;
 function carsDraw(all){                       // all:距離によらず全台(検証用)
   const lm=RD_CARS.lamps, gm=RD_CARS.glow; if(!lm) return;
   const cp=camera.position, n={}; let nl=0;
+  // カメラが描く距離より高い(全体俯瞰など)なら1台も描かない。位置の計算と行列の書き込みを省く
+  if(!all&&cp.y>CAR_DRAW*LOD_STRUCT+ROAD_Y[1]){
+    if(RD_CARS.drawn){ for(const k in RD_CARS.meshes) RD_CARS.meshes[k].count=0; lm.count=0; gm.count=0; RD_CARS.drawn=false; }
+    for(const c of RD_CARS) c.mi=-1;
+    return;
+  }
+  RD_CARS.drawn=true;
   for(const k in RD_CARS.meshes) n[k]=0;
   for(let i=0;i<RD_CARS.length;i++){
     const c=RD_CARS[i], p=roadCarPos(c);
