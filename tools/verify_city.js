@@ -473,6 +473,30 @@ if (LAND) {
   ok('三角屋根は灰色', bR === null && nR > 0 && (B.some((e) => e.plateau) ? nG >= 1000 : true), '傾いた屋根面は暗い灰・切妻屋根 1000棟以上', bR || '屋根面 ' + nR + '・切妻 ' + nG + '棟');
 }
 
+/* ---- 4c3. 木の形(2026-10-12 利用者指示:単純すぎて浮いている) ------------------------------------
+   まとまりごとに近く・遠くの2つの形。近くは樹冠の塊が3つ以上(三角形が遠くの2倍以上)、季節の色(インスタンスの色)は樹冠だけ
+   (幹 aTint=0 は暗い茶のまま)、樹冠は占有半径(sc=1 で 2.3m)の内 */
+{
+  let bad = null, n = 0;
+  const TC = X.CITY.treeChunks;
+  for (const c of TC.values()) {
+    n++;
+    if (!c.m || !c.mn) { bad = '近く/遠くの形が無い'; break; }
+    const gN = c.mn.geometry, gF = c.m.geometry, tN = gN.index.array.length / 3, tF = gF.index.array.length / 3;
+    if (!gN.attributes.aTint || !gF.attributes.aTint) { bad = '樹冠の印(aTint)が無い'; break; }
+    if (!(tF > 0) || tN < 2 * tF) { bad = '近くの形が粗い ' + tN + '/' + tF; break; }
+    const P = gN.attributes.position.array, T = gN.attributes.aTint.array, C = gN.attributes.color.array;
+    let rx = 0, trunk = null;
+    for (let i = 0; i < T.length; i++) {
+      if (T[i] > 0.5) rx = Math.max(rx, Math.hypot(P[i * 3], P[i * 3 + 2]));
+      else if (C[i * 3] > 0.3 || C[i * 3] < C[i * 3 + 2]) trunk = 'rgb(' + C[i * 3].toFixed(2) + ',' + C[i * 3 + 1].toFixed(2) + ',' + C[i * 3 + 2].toFixed(2) + ')';
+    }
+    if (rx > 2.3 + 1e-6) { bad = '樹冠の半径 ' + rx.toFixed(2) + 'm > 2.3'; break; }
+    if (trunk) { bad = '幹の色 ' + trunk; break; }
+  }
+  ok('木の形(近く・遠く・樹冠)', bad === null && n > 0, '近くは遠くの2倍以上・樹冠は半径2.3m 内・幹は茶', bad || n + 'まとまり');
+}
+
 /* ---- 4d. 建物の色は用途で ------------------------------------------------------
    plateau_bldg.js の用途(use64)を検証側で読み、登録簿の建物(足跡の1点目で対応)の用途がデータと一致し、
    住宅・業務・工場倉庫の色の組が互いに重ならない(用途で塗り分けている)ことを見る */

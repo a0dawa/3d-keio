@@ -207,6 +207,14 @@ class BufGeo {
   setIndex(a) { this.index = soft({ array: a, count: a.length }); return this; }
   computeVertexNormals() {} dispose() {}
   translate() { return this; } rotateX() { return this; } rotateY() { return this; } scale() { return this; }
+  // three.js と同じく属性と添字を持った別の実体を返す(複製した形の頂点も測れるように)
+  clone() {
+    const g = new BufGeo();
+    for (const k of Object.keys(this.attributes)) g.attributes[k] = this.attributes[k];
+    if (this.index) g.setIndex(this.index.array);
+    if (this.boundingSphere) g.boundingSphere = this.boundingSphere;
+    return g;
+  }
 }
 const param = (type) => class extends BufGeo {
   constructor(...a) { super(); this.type = type; this.p = a; return soft(this); }

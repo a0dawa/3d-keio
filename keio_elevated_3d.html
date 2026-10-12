@@ -1168,6 +1168,7 @@ function lodStruct(){
     if(L.o.visible!==v) L.o.visible=v;
   }
   if(typeof cityLod==='function') cityLod();      // PLATEAU の建物の3段(8章)
+  if(CITY.treeLod) CITY.treeLod();                // 木の近く/遠く(8章)
 }
 
 /* ============ 4. 地表・道路・水緑・施設(平面図準拠) ============ */
@@ -4032,6 +4033,7 @@ function bldWinPatch(mat){
 const winTypeOf=(use,h)=>use===1||use===2?0:use===3?1:(use>=4&&use<=6)?2:(use>=7)?3:(h<9.5?0:(h<25?1:2));
 const ROOF_GRAY=[0x5d6166,0x6b6f73,0x50545a,0x787b7e,0x62656a];   // 三角屋根(スレート・瓦)は灰色(利用者指示)
 const CITY_LODS=[];                       // まとまりごとの [近・中・遠] の Mesh と外接球
+const TREE_NEAR=150;                       // 木を細かい形で描く距離[m](まとまりの外接球の縁から)
 function cityLod(){
   const p=camera.position;
   for(const C of CITY_LODS){
@@ -4297,7 +4299,7 @@ if(PLB){
   }
   while(PARK.length>2500) PARK.splice(Math.floor(Math.random()*PARK.length),1);
   const N=2300+PARK.length;
-  /* 木は幹と樹冠を1つの形(頂点カラー:幹=茶・樹冠=白)にし、s の 960m ごとのまとまりのインスタンスにする。
+  /* 木は幹と樹冠を1つの形(頂点カラー:幹=茶・樹冠=白)にし、s の 480m ごとのまとまりのインスタンスにする。
      まとまりごとに外接球を持たせて画面の外・影の範囲の外を間引く(1つにまとめると数千本を毎回描く)。
      色(季節)はインスタンスの色で、幹にも掛かる(暗い茶になる)。登録簿の木 i は TREE_CH[ci].m の j 番目 */
   const T=[], col=new THREE.Color();
@@ -4360,36 +4362,63 @@ if(PLB){
     const x=DOM.x0+Math.random()*(DOM.x1-DOM.x0),z=(Math.random()*2-1)*DOM.z;
     put(x,z,.55+Math.random()*.5,Math.random()<.5?0x7fa268:0x6f9160);   // 庭木は小ぶり
   }
-  // 1本の形(sc=1):幹 高さ2.2・半径0.32→0.22(5角・蓋なし)、樹冠 円錐 底2.1〜頂7.3・半径2.3(7角)
-  const treeGeo=()=>{const P=[],Nn=[],I=[],C=[];
-    const v=(x,y,z,nx,ny,nz,c)=>{P.push(x,y,z);Nn.push(nx,ny,nz);C.push(c[0],c[1],c[2]);return P.length/3-1;};
-    const TR=[0.62,0.46,0.34], CR=[1,1,1];
-    for(let k=0;k<5;k++){const a0=k/5*2*Math.PI,a1=(k+1)/5*2*Math.PI,c0=Math.cos(a0),s0=Math.sin(a0),c1=Math.cos(a1),s1=Math.sin(a1);
-      const A=v(.32*c0,0,.32*s0,c0,0,s0,TR),B=v(.32*c1,0,.32*s1,c1,0,s1,TR),Cc=v(.22*c1,2.2,.22*s1,c1,0,s1,TR),D=v(.22*c0,2.2,.22*s0,c0,0,s0,TR);
+  /* 木の形(2026-10-12 利用者指示:単純すぎて浮いている → 広葉樹らしく)。sc=1 で 幹 高さ3.0(樹冠の中まで)・樹冠 2.4〜7.4・半径 2.3 以内
+     (占有半径 2.3*sc は以前と同じ)。樹冠はでこぼこにした正二十面体の塊を重ね、下ほど暗く上ほど明るい色の傾きで陰を付ける。
+     近く(TREE_NEAR 内のまとまり)=塊3つと幹6角、遠く=塊1つと幹3角。まとまりは s の 480m ごと(近くの形を描く木を絞る)。木ごとに向き・高さ(0.85〜1.25倍)・太さ(0.85〜1倍)を変える。
+     インスタンスの色(季節の着色)は樹冠だけに掛ける(属性 aTint=1。幹は茶のまま) */
+  const ICO=(()=>{const t=(1+Math.sqrt(5))/2, V=[[-1,t,0],[1,t,0],[-1,-t,0],[1,-t,0],[0,-1,t],[0,1,t],[0,-1,-t],[0,1,-t],[t,0,-1],[t,0,1],[-t,0,-1],[-t,0,1]]
+    .map(v=>{const l=Math.hypot(...v);return v.map(u=>u/l);});
+    const F=[[0,11,5],[0,5,1],[0,1,7],[0,7,10],[0,10,11],[1,5,9],[5,11,4],[11,10,2],[10,7,6],[7,1,8],[3,9,4],[3,4,2],[3,2,6],[3,6,8],[3,8,9],[4,9,5],[2,4,11],[6,2,10],[8,6,7],[9,8,1]];
+    return {V:V,F:F};})();
+  const treeGeo=(near)=>{const P=[],Nn=[],I=[],C=[],TI=[];
+    const v=(x,y,z,nx,ny,nz,c,ti)=>{P.push(x,y,z);Nn.push(nx,ny,nz);C.push(c[0],c[1],c[2]);TI.push(ti);return P.length/3-1;};
+    const TR=[0.13,0.095,0.07], ns=near?6:3;
+    for(let k=0;k<ns;k++){const a0=k/ns*2*Math.PI,a1=(k+1)/ns*2*Math.PI,c0=Math.cos(a0),s0=Math.sin(a0),c1=Math.cos(a1),s1=Math.sin(a1);   // 幹(根元が太い)
+      const A=v(.30*c0,0,.30*s0,c0,0,s0,TR,0),B=v(.30*c1,0,.30*s1,c1,0,s1,TR,0),Cc=v(.18*c1,3.0,.18*s1,c1,0,s1,TR,0),D=v(.18*c0,3.0,.18*s0,c0,0,s0,TR,0);
       I.push(A,Cc,B,A,D,Cc);}
-    const sl=2.3/5.2;
-    for(let k=0;k<7;k++){const a0=k/7*2*Math.PI,a1=(k+1)/7*2*Math.PI,am=(a0+a1)/2,c0=Math.cos(a0),s0=Math.sin(a0),c1=Math.cos(a1),s1=Math.sin(a1);
-      const nl=Math.hypot(1,sl), A=v(2.3*c0,2.1,2.3*s0,c0/nl,sl/nl,s0/nl,CR),B=v(2.3*c1,2.1,2.3*s1,c1/nl,sl/nl,s1/nl,CR),Ap=v(0,7.3,0,Math.cos(am)/nl,sl/nl,Math.sin(am)/nl,CR);
-      I.push(A,Ap,B);
-      const b0=v(2.3*c0,2.1,2.3*s0,0,-1,0,CR),b1=v(2.3*c1,2.1,2.3*s1,0,-1,0,CR),bc=v(0,2.1,0,0,-1,0,CR); I.push(b0,b1,bc);}
-    return facesGeo(P,Nn,I,C);};
+    const blobs=near?[[0,4.7,0,1.95,2.0],[.6,3.95,.3,1.4,1.35],[-.45,4.25,-.45,1.45,1.4]]:[[0,4.6,0,2.0,2.5]];   // 中心からの距離+半径×1.13 ≦ 2.3
+    blobs.forEach(function(bl,bi){
+      const j=(i)=>1+0.13*Math.sin(i*12.9898+bi*78.233);        // 頂点ごとのでこぼこ(決まった値)
+      const base=P.length/3;
+      ICO.V.forEach(function(q,i){
+        const r=bl[3]*j(i), x=bl[0]+q[0]*r, y=bl[1]+q[1]*bl[4]*j(i+7), z=bl[2]+q[2]*r;
+        const g=Math.min(1.12,Math.max(0.62,0.62+0.5*(y-2.1)/5.3));  // 下ほど暗い
+        v(x,y,z,q[0],q[1],q[2],[g,g,g],1);
+      });
+      for(const f of ICO.F) I.push(base+f[0],base+f[2],base+f[1]);
+    });
+    const g=facesGeo(P,Nn,I,C); g.setAttribute('aTint',new THREE.Float32BufferAttribute(TI,1)); return g;};
   const TREE_MAT=mkMat('MeshLambertMaterial',{color:0xffffff,vertexColors:true});
-  const TREE_CH=new Map(), m4=new THREE.Matrix4(), q=new THREE.Quaternion(), v3=new THREE.Vector3(), s3=new THREE.Vector3();
-  T.forEach((t,k)=>{const ci=Math.floor(t[4]/960); let c=TREE_CH.get(ci); if(!c){c={L:[]};TREE_CH.set(ci,c);} CITY.trees[k].ci=ci; CITY.trees[k].j=c.L.length; c.L.push(t);});
+  TREE_MAT.onBeforeCompile=sh=>{                         // インスタンスの色は樹冠(aTint=1)だけに
+    sh.vertexShader='attribute float aTint;\n'+sh.vertexShader.replace('#include <color_vertex>',
+      '#if defined( USE_COLOR ) || defined( USE_INSTANCING_COLOR )\n vColor = vec3( 1.0 );\n#endif\n#ifdef USE_COLOR\n vColor *= color;\n#endif\n'+
+      '#ifdef USE_INSTANCING_COLOR\n vColor.xyz *= mix(vec3(1.0), instanceColor.xyz, aTint);\n#endif');
+  };
+  TREE_MAT.customProgramCacheKey=()=>'tree';
+  const TREE_CH=new Map(), m4=new THREE.Matrix4(), q=new THREE.Quaternion(), e3=new THREE.Euler(), v3=new THREE.Vector3(), s3=new THREE.Vector3();
+  T.forEach((t,k)=>{const ci=Math.floor(t[4]/480); let c=TREE_CH.get(ci); if(!c){c={L:[]};TREE_CH.set(ci,c);} CITY.trees[k].ci=ci; CITY.trees[k].j=c.L.length; c.L.push(t);});
+  const GN=treeGeo(true), GF=treeGeo(false);
   for(const c of TREE_CH.values()){
-    const g=treeGeo(), im=new THREE.InstancedMesh(g,TREE_MAT,c.L.length);
     let x0=1e9,x1=-1e9,z0=1e9,z1=-1e9;
-    c.L.forEach((t,j)=>{m4.compose(v3.set(t[0],0,t[1]),q,s3.set(t[2],t[2],t[2])); im.setMatrixAt(j,m4); im.setColorAt(j,setSrgb(col,t[3]));
-      x0=Math.min(x0,t[0]-3);x1=Math.max(x1,t[0]+3);z0=Math.min(z0,t[1]-3);z1=Math.max(z1,t[1]+3);});
-    g.boundingSphere=new THREE.Sphere(new THREE.Vector3((x0+x1)/2,4,(z0+z1)/2),Math.hypot(x1-x0,9,z1-z0)/2);
-    im.frustumCulled=true; im.instanceMatrix.needsUpdate=true; if(im.instanceColor) im.instanceColor.needsUpdate=true;
-    scene.add(im); c.m=im;
+    for(const t of c.L){x0=Math.min(x0,t[0]-3);x1=Math.max(x1,t[0]+3);z0=Math.min(z0,t[1]-3);z1=Math.max(z1,t[1]+3);}
+    const sph=new THREE.Sphere(new THREE.Vector3((x0+x1)/2,5,(z0+z1)/2),Math.hypot(x1-x0,10,z1-z0)/2);
+    const mk=(G)=>{const g=G.clone(), im=new THREE.InstancedMesh(g,TREE_MAT,c.L.length);
+      c.L.forEach((t,j)=>{const h=0.85+0.4*((Math.sin(t[0]*1.7+t[1]*3.1)+1)/2), w=0.85+0.15*((Math.sin(t[0]*2.3-t[1]*1.3)+1)/2);
+        e3.set(0,(t[0]*0.37+t[1]*0.61)%(2*Math.PI),0); q.setFromEuler(e3);
+        m4.compose(v3.set(t[0],0,t[1]),q,s3.set(t[2]*w,t[2]*h,t[2]*w)); im.setMatrixAt(j,m4); im.setColorAt(j,setSrgb(col,t[3]));});
+      g.boundingSphere=sph; im.frustumCulled=true; im.instanceMatrix.needsUpdate=true; if(im.instanceColor) im.instanceColor.needsUpdate=true;
+      scene.add(im); return im;};
+    c.m=mk(GF); c.mn=mk(GN); c.mn.visible=false; c.sph=sph;
   }
+  // 近く(まとまりの外接球の縁から TREE_NEAR 以内)は細かい形(lodStruct から毎コマ)
+  CITY.treeLod=function(){ const p=camera.position;
+    for(const c of TREE_CH.values()){ const n=c.sph.center.distanceTo(p)-c.sph.radius<TREE_NEAR*LOD_STRUCT;
+      if(c.mn.visible!==n){ c.mn.visible=n; c.m.visible=!n; } } };
   /* 季節の着色(applyLook)と検証が「登録簿の i 番目の木」で触れる窓口。cols は検証用のスタブが記録する色を登録簿の順に並べる */
   CITY.treeChunks=TREE_CH;
   CITY.crown={
-    setColorAt(k,c){const t=CITY.trees[k]; TREE_CH.get(t.ci).m.setColorAt(t.j,c);},
-    get instanceColor(){return {set needsUpdate(v){for(const c of TREE_CH.values()) if(c.m.instanceColor) c.m.instanceColor.needsUpdate=v;}};},
+    setColorAt(k,c){const t=CITY.trees[k], h=TREE_CH.get(t.ci); h.m.setColorAt(t.j,c); h.mn.setColorAt(t.j,c);},
+    get instanceColor(){return {set needsUpdate(v){for(const c of TREE_CH.values()) for(const m of [c.m,c.mn]) if(m.instanceColor) m.instanceColor.needsUpdate=v;}};},
     get cols(){return CITY.trees.map(t=>{const m=TREE_CH.get(t.ci).m; return m.cols?m.cols[t.j]:undefined;});},
     set cols(a){for(const c of TREE_CH.values()) c.m.cols=[];},
     get count(){return CITY.trees.length;}
