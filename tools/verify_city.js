@@ -10,7 +10,7 @@
 //   使い方: node tools/verify_city.js [keio_elevated_3d.html]
 const path = process.argv[2] || 'keio_elevated_3d.html';
 const X = require('./stub_three')(path,
-  'CITY:CITY,deckHalf:deckHalf,DOM:DOM,INO:INO,SETA:SETA,XR:XR,K8:K8,' +
+  'CITY:CITY,deckHalf:deckHalf,cutHalf:cutHalf,DOM:DOM,INO:INO,SETA:SETA,XR:XR,K8:K8,' +
   'KAN7_X:KAN7_X,NAKANO_X:NAKANO_X,HOSHA23_X:HOSHA23_X,KYU_INOKA_X:KYU_INOKA_X,H154_X:H154_X,H128_X:H128_X,' +
   'H133_X:H133_X,H215_X:H215_X,KANPACHI_X:KANPACHI_X,H216_X:H216_X,H217_X:H217_X,' +
   'JOSUI_X:JOSUI_X,BRIDGE:BRIDGE,XINGS:XINGS,WADA_S:WADA_S,WADA_OFF:WADA_OFF,' +
@@ -160,7 +160,8 @@ ok('樹木の数', T.length >= REF.MIN_TREES, '≥' + REF.MIN_TREES + '本', T.l
 {
   let bad = null;
   for (const e of ALL) for (const q of pts(e.o)) {
-    const lim = X.deckHalf(q.s) + REF.DECK_CLEAR;
+    // 掘割(DECK_END より西)は側ごとの幅(仙川の北は単式ホームの分だけ広い)
+    const lim = (q.s > X.DECK_END ? X.cutHalf(q.s, q.off < 0 ? -1 : 1) : X.deckHalf(q.s)) + REF.DECK_CLEAR;
     if (Math.abs(q.off) - q.r < lim && !bad)
       bad = [e.kind, 's=' + q.s.toFixed(0), 'off=' + q.off.toFixed(1), '限界' + lim.toFixed(1)];
   }

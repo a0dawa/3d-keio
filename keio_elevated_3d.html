@@ -479,6 +479,11 @@ const GAUGE_SETA=1.372;                  // 東急世田谷線
 // 笹塚=配線図準拠:本線は外側±10.1(内側±2は留置線)。代田橋/上北沢=±5.05、八幡山=通過線±8.35、仙川=±4.55
 const BUMPS=[{c:STA[0].x,a:8.1,h:260,t:180},{c:STA[1].x,a:3.05},{c:STA[5].x,a:3.05},
              {c:STA[6].x,a:6.35},{c:STA[9].x,a:2.55}];
+/* 2面4線の待避線(明大前・桜上水・千歳烏山):本線(±2.0)からの振り分け量・一定区間の半長・遷移長[m]。
+   2026-10-11 利用者指示:ホームを1.5m 広げ(待避線を外へ1.5m=振り分け 8.1→9.6、待避線は±11.6)、本線と待避線の分岐を
+   駅へ30m 寄せた(一定区間の半長 118→88)。一定区間がホームの半長(105)より短いので、待避線はホームの端で曲がる。
+   ホームの縁とホームドアはその線路に沿う(7章 edgeShift) */
+const LOOP={a:9.6,h:88,t:110};
 function mainOff(x){let o=2.0;for(const b of BUMPS)o+=b.a*plateau(x,b.c,b.h||112,b.t||160);return o;}
 // --- ホームの範囲と外縁(桁幅の算出と停止位置の双方が参照する) ---
 const PLAT_HALF=105, STOP_BACK=3;         // ホーム長210m(半長105m)
@@ -497,7 +502,7 @@ function stopPosOf(st,dir){
   return (d>0 ? r[1]-STOP_BACK : r[0]+STOP_BACK) + adj;
 }
 // 駅種別ごとのホーム外縁[m](7章の PLT と同じ値。片方だけ変えないこと)
-const PLAT_EDGE={isl:3.50, hachi:3.00, side:8.10, quad:8.55, ctx:8.55, gnd:9.55};
+const PLAT_EDGE={isl:3.50, hachi:3.00, side:8.10, quad:10.05, ctx:8.55, gnd:14.55};
 function platOuter(x){                     // その地点のホーム外縁(駅を外れれば0)
   let e=0;
   for(const st of STA){
@@ -508,11 +513,11 @@ function platOuter(x){                     // その地点のホーム外縁(駅
 }
 function outerOff(x){   // その地点で最も外側にある軌道中心のオフセット
   let o=mainOff(x);
-  for(const c of[STA[2].x,STA[4].x,STA[8].x])o=Math.max(o,2.0+8.1*plateau(x,c,118,110));   // 2面4線副本線
+  for(const c of[STA[2].x,STA[4].x,STA[8].x])o=Math.max(o,2.0+LOOP.a*plateau(x,c,LOOP.h,LOOP.t));   // 2面4線副本線
   o=Math.max(o,2.0+2.55*plateau(x,STA[6].x,118,150));                                       // 八幡山停車線
   // 桜上水留置線:線路のある範囲だけ13.3m、外側は90mで擦り付ける(桁幅を急変させない)
   const yard=(a,b)=>plateau(x,(a+b)/2,(b-a)/2+2,90);
-  o=Math.max(o, 2.0+11.3*yard(YE0e,YW1e));   // 留置線は東端〜西端まで通し
+  o=Math.max(o, 2.0+(LOOP.a+3.2)*yard(YE0e,YW1e));   // 留置線は東端〜西端まで通し(外側は待避線の外 3.2m)
   return o;
 }
 // 桁半幅は「その地点に何があるか」だけで決める。幅の表は持たない。
@@ -527,7 +532,7 @@ function deckHalf(x){
    幅(片側。sg=+1:北/-1:南)は桁幅と同じ決め方を側ごとに:最外軌道+2.45m・その側のホームの外縁+0.6m・複線の標準
    4.45m の最大(仙川は北に単式ホームがあるので北が広い)。擁壁の内面は高架の高欄と同じく幅−0.24m(取付部の高欄から
    段差なく続く)、外面は幅+0.06m。上端は地表+0.15m(取付部に近い所は高欄の高さ=レール面+2.1m から下げる) */
-const PLAT_EDGE_SN={gnd:[3.00,9.55]};       // 掘割の駅のホーム外縁[m] [南, 北](7章の PLT_OF.gnd と同じ値。片方だけ変えないこと)
+const PLAT_EDGE_SN={gnd:[3.00,14.55]};       // 掘割の駅のホーム外縁[m] [南, 北](7章の PLT_OF.gnd と同じ値。片方だけ変えないこと)
 const CUT_W={T:0.24, OUT:0.06, TOP:0.15, MID:0.09, FENCE:1.2};
 const CUT_END=DOM.x1;                        // 掘割の西端(区間の端。その手前は覆い=道路橋の下で終える)
 function cutHalf(x,sg){
@@ -571,7 +576,8 @@ const WIRE_SAG=0.32;   // 50m の柱間の中央での垂れ(柱間の2乗に比
 const POLE_TOP=7.40;   // 架線柱の頂部(門型ビームの上弦)
 const BEAM_LOW=POLE_TOP-0.70;   // ビームの下弦。可動ブラケットはここから吊りパイプで下げる
 // 橋脚を省略する横断部(道路・鉄道・河川の直上に柱を立てない)
-const ROAD_SKIP=[[INOKASHIRA_X,12],[SETAGAYA_X,8],[BRIDGE.s,12],[KAN7_X,16],[NAKANO_X,12],[KYU_INOKA_X,9],
+// 井の頭線は ±20(2026-10-11 にホームを5m 広げ、擁壁が ±14.4 になった。斜めに交わるので桁の両端で s が ±4m ずれる)
+const ROAD_SKIP=[[INOKASHIRA_X,20],[SETAGAYA_X,8],[BRIDGE.s,12],[KAN7_X,16],[NAKANO_X,12],[KYU_INOKA_X,9],
   [HOSHA23_X,11],[H154_X,10],[H128_X,9],[H133_X,9],[H215_X,9],[KANPACHI_X,18],[H216_X,9],[H217_X,10]];
 for(const gq of XINGS)ROAD_SKIP.push([gq[1],7]);
 const PIERS=[];   // 建てた橋脚のs座標(検証用の登録簿)
@@ -1096,9 +1102,13 @@ function MG(){
       face(mat,W[W.length-1].slice(),A1.t);
     }
     /* 登録簿へは 6m 以下の区間ごとに残す。面は標本の間を直線で結んだものなので、
-       区間の両端の断面を同じく直線で補間して範囲を取れば、幅の変わる所でも過大にならない */
+       区間の両端の断面を同じく直線で補間して範囲を取れば、幅の変わる所でも過大にならない。
+       横に大きく動く所(待避線の急な振り分け・ホームの端で曲がる縁)は、1区間の横の動きが 0.08m 以下になるまで細かく切る
+       (ホームの縁と車両の間の余裕は約0.1m) */
     if(o.tag) for(let kk=0;kk<keep.length-1;kk++){
-      const ka=keep[kk],kb=keep[kk+1], L=S[kb]-S[ka], m=Math.max(1,Math.ceil(L/6));
+      const ka=keep[kk],kb=keep[kk+1], L=S[kb]-S[ka];
+      let dO=0; for(let i=0;i<n;i++) dO=Math.max(dO,Math.abs(SC[kb][i][0]-SC[ka][i][0]));
+      const m=Math.max(1,Math.ceil(L/6),Math.ceil(dO/0.08));
       for(let j=0;j<m;j++){
         let o0=1e9,o1=-1e9,y0=1e9,y1=-1e9;
         for(const u of[j/m,(j+1)/m]) for(let i=0;i<n;i++){
@@ -1276,7 +1286,7 @@ if(PLL){
      if(on){ if(a===null) a=s; }
      else if(a!==null){ if(s-a>=3){ROAD_SKIP.push([(a+s-1)/2,(s-a)/2+4]); ROAD_XING.push([a,s-1]);} a=null; }
    }}
-  /* 仙川の掘割を渡る道路橋:道路の橋梁(sec 2)のうち掘割の中ほど(中心と南北の幅の 2/3)を覆うもの(PLATEAU の
+  /* 仙川の掘割を渡る道路橋:道路の橋梁(sec 2)のうち掘割の中ほど(中心と南北の幅の 1/3〜2/3)を覆うもの(PLATEAU の
      橋梁の面は擁壁の手前で終わることがある)。掘割の幅を7本の線で横切って道路の面に入る s の範囲を測り、東西の縁を
      覆う線の端を通る直線(最小二乗)を全部の線の外へずらして決め、床版は擁壁から擁壁まで渡す(5c章) */
   {const OL=[-1,-2/3,-1/3,0,1/3,2/3,1];
@@ -1293,7 +1303,9 @@ if(PLL){
        }
        L.push(a===null?null:[a,b,u]);
      }
-     if(!L[1]||!L[3]||!L[5]) continue;                      // 掘割の中ほどを覆わない(掘割を渡らない)
+     // 掘割の中ほどを覆わない(掘割を渡らない)。中心と南北それぞれ 1/3 か 2/3 の線(仙川は北が単式ホームの分だけ広く、
+     // 北の 2/3 の線は道路橋の面の外に出ることがある)
+     if(!L[3]||!(L[1]||L[2])||!(L[4]||L[5])) continue;
      const K=L.filter(q=>q);
      const fit=k=>{let n=0,su=0,sv=0,suu=0,suv=0; for(const q of K){n++;su+=q[2];sv+=q[k];suu+=q[2]*q[2];suv+=q[2]*q[k];}
        const b=(n*suu-su*su)>1e-9?(n*suv-su*sv)/(n*suu-su*su):0, a=(sv-b*su)/n; return u=>a+b*u;};
@@ -1748,9 +1760,9 @@ const zDown=x=>-mainOff(x), zUp=x=>mainOff(x);       // 本線(八幡山では�
 // c=中心 / a,h,t=6章の敷設式と同じ振れ量・一定半長・緩和長(片方だけ変えないこと)
 const DIVERT=[
   {c:STA[6].x, a:2.55, h:118, t:150},   // 八幡山:ホーム横の停車線(内側)
-  {c:STA[2].x, a:8.10, h:118, t:110},   // 明大前:待避線(外側)
-  {c:STA[4].x, a:8.10, h:118, t:110},   // 桜上水:待避線
-  {c:STA[8].x, a:8.10, h:118, t:110},   // 千歳烏山:待避線
+  {c:STA[2].x, a:LOOP.a, h:LOOP.h, t:LOOP.t},   // 明大前:待避線(外側)
+  {c:STA[4].x, a:LOOP.a, h:LOOP.h, t:LOOP.t},   // 桜上水:待避線
+  {c:STA[8].x, a:LOOP.a, h:LOOP.h, t:LOOP.t},   // 千歳烏山:待避線
 ];
 /* 停車列車が実際に走る位置。振り分け区間では"線路そのものの式"を返す
    (重み付き平均で近似すると軌道から浮くので、線路の存在する範囲は完全に置き換える)。
@@ -1791,7 +1803,7 @@ const LOOP_HALF=300;      // 副本線の敷設範囲[m]
 const HACHI_HALF=300;     // 八幡山停車線の敷設範囲[m]
 for(const cx of[X(5.2),X(7.0),X(9.9)]){
   const K=(cx<KOUKU[1].s1)?KOUKU[1]:(cx<KOUKU[3].s1)?KOUKU[3]:KOUKU[6];
-  const zf=sgn=>x=>sgn*(2.0+8.1*plateau(x,cx,118,110));   // 分岐部を短く(遷移170m→110m)
+  const zf=sgn=>x=>sgn*(2.0+LOOP.a*plateau(x,cx,LOOP.h,LOOP.t));   // 分岐部を短く(遷移170m→110m)。分岐は駅へ30m 寄せた(LOOP)
   CUR=K.VGa;layTrack('副本線南-'+K.no,cx-LOOP_HALF,cx+LOOP_HALF,zf(-1));
   CUR=K.VGn;layTrack('副本線北-'+K.no,cx-LOOP_HALF,cx+LOOP_HALF,zf(1));
 }
@@ -1801,11 +1813,11 @@ for(const cx of[X(5.2),X(7.0),X(9.9)]){
   CUR=KOUKU[4].VGb;layTrack('八幡山停車線北',cx-HACHI_HALF,cx+HACHI_HALF,f(1));
 }
 /* 桜上水 留置線:駅の外側に2本を通しで敷く(上り方・下り方で切らない)。
-   内側(+10.1)は待避線(副本線北)と同じ位置なので、副本線の一定区間とは重ねない。
+   内側(+11.6)は待避線(副本線北)と同じ位置なので、副本線の一定区間とは重ねない。
    重ねると同じ場所に線路と架線が二重にできる(「不要な線」に見える)。 */
-const YARD_A=10.1, YARD_B=13.3;
+const YARD_A=2.0+LOOP.a, YARD_B=YARD_A+3.2;   // 待避線と同じ位置(11.6)/その外 3.2m(ホームの拡幅で 1.5m 外へ)
 const YARD_E=YE0e, YARD_W=YW1e;            // 留置線の東端・西端(通しの範囲)
-const YARD_GAP=118;                        // 副本線の一定区間の半長(6章の敷設式と同じ)
+const YARD_GAP=LOOP.h;                     // 副本線の一定区間の半長(6章の敷設式と同じ)
 CUR=KOUKU[3].VGn;
 layTrack('留置線内側-東',YARD_E,STA[4].x-YARD_GAP,()=>YARD_A);
 layTrack('留置線内側-西',STA[4].x+YARD_GAP,YARD_W,()=>YARD_A);
@@ -1865,7 +1877,10 @@ function trackBulge(t,a,b){          // 線路 t の a〜b が、両端を結ぶ
       for(const t of TRACKS){
         const a2=Math.max(a,t.x0), b2=Math.min(b,t.x1);
         if(b2-a2<8||Math.abs(trackBulge(t,a2,b2))<=0.15) continue;
-        const m=(a2+b2)/2; add.push(m-a<8||b-m<8?(a+b)/2:m); break;
+        let m=(a2+b2)/2; if(m-a<8||b-m<8) m=(a+b)/2;
+        // 大屋根の端の ±2m には置かない(屋根から吊るか柱を立てるかが端で曖昧になる)。屋根の外へ出す
+        for(const st of STA){ const d=m-st.x; if(BIGROOF(st)&&Math.abs(Math.abs(d)-STA_ROOF_HALF)<2) m=st.x+Math.sign(d)*(STA_ROOF_HALF+2); }
+        add.push(m); break;
       }
     }
     if(!add.length) break;
@@ -2240,21 +2255,29 @@ const XT=XR.RAILTOP-0.153-0.012;                         // 交差鉄道のま�
 /* 井の頭線 明大前のホーム(実測緯度から。u の範囲・off)。上り(渋谷方へ=-u)は東側、下り(吉祥寺方へ=+u)は西側。
    線路の敷設と列車の停車位置が同じ値を見る */
 const INO_UOF=la=>((-(la-LAT0)*MLAT)-INO.z)/INO.az;
-const INO_PLAT={up:[INO_UOF(35.6674073382136),INO_UOF(35.6674073382136)+110], dn:[INO_UOF(35.66801642659758),INO_UOF(35.66801642659758)+110], off:7.2};
+const INO_PLAT={up:[INO_UOF(35.6674073382136),INO_UOF(35.6674073382136)+110], dn:[INO_UOF(35.66801642659758),INO_UOF(35.66801642659758)+110], off:9.7, hw:4.2};
+// ホームは中心 ±9.7・半幅 4.2(線路側の縁 5.5〜背面 13.9)。2026-10-11 利用者指示で背面へ5m 広げた(以前は ±7.2・半幅 1.7)。
+// 擁壁はホームの範囲だけ5m 外(±14.4)へ出し、ほかは ±9.4 のまま(境は横の壁でつなぐ)。架線柱はホームの縁から離して ±7.6
+const INO_WALL=[9.4,14.4], INO_POLE=7.6;
 { // 京王井の頭線(複線・掘割擁壁・渋谷寄り=南側へ移設したホーム)。ローカルu+=a点側(北)
   const g=xGroup(INO), k=xKit(g);
   const oI=(GAUGE_INO+RAIL_W)/2;                                        // 井の頭線は1067mm軌間
   for(const c of XR.TRK){k.box(XR.U0,XR.U1,c,3.2,MAT.slab,(0.47+XT-0.035)/2,XT-0.035-0.47)   // 道床(まくらぎが3.5cm出る)
     .rail(XR.U0,XR.U1,c-oI,XR.RAILTOP).rail(XR.U0,XR.U1,c+oI,XR.RAILTOP).ties(XR.U0,XR.U1,c,2.0,XT);}
-  k.box(XR.U0,XR.U1,-9.4,.6,MAT.wall,.9,1.8).box(XR.U0,XR.U1,9.4,.6,MAT.wall,.9,1.8);
+  for(const [sg,u0] of [[1,INO_PLAT.up[0]],[-1,INO_PLAT.dn[0]]]){   // 擁壁(ホームの範囲は外へ)
+    const a=u0-1, b=u0+111, W0=INO_WALL[0], W1=INO_WALL[1], wm=sg*(W0+W1)/2, ww=W1-W0+0.6;
+    k.box(XR.U0,a,sg*W0,.6,MAT.wall,.9,1.8).box(b,XR.U1,sg*W0,.6,MAT.wall,.9,1.8).box(a,b,sg*W1,.6,MAT.wall,.9,1.8)
+     .box(a-.3,a+.3,wm,ww,MAT.wall,.9,1.8).box(b-.3,b+.3,wm,ww,MAT.wall,.9,1.8);
+  }
   const us=[XR.U0]; for(let u=-430;u<430;u+=45) us.push(u+0.2); us.push(XR.U1);
   for(const c of XR.TRK) k.wire(us,c,5.85,4.85,0.25);     // 架線(ちょう架線・トロリ線・ハンガ)
-  for(let u=-430;u<430;u+=45)                              // 架線柱(門型)
-    k.box(u,u+.4,-6.2,.34,MAT.pole,3.0,6.0).box(u,u+.4,6.2,.34,MAT.pole,3.0,6.0).box(u,u+.35,0,12.4,MAT.pole,6.05,.26);
+  for(let u=-430;u<430;u+=45)                              // 架線柱(門型)。ホームの上ではホームの縁から 2.1m
+    k.box(u,u+.4,-INO_POLE,.34,MAT.pole,3.0,6.0).box(u,u+.4,INO_POLE,.34,MAT.pole,3.0,6.0).box(u,u+.35,0,2*INO_POLE,MAT.pole,6.05,.26);
   // ホームは上下で段違い(実測緯度・各110m):上り=東側(+7.2)が南寄り/下り=西側(-7.2)が北寄り
   const uU=INO_PLAT.up[0], uD=INO_PLAT.dn[0];
-  k.box(uU,uU+110, 7.2,3.4,MAT.plat,.55,1.1).box(uU-1,uU+111, 7.2,4.2,MAT.canopy,4.4,.4)
-   .box(uD,uD+110,-7.2,3.4,MAT.plat,.55,1.1).box(uD-1,uD+111,-7.2,4.2,MAT.canopy,4.4,.4).flush();
+  const po=INO_PLAT.off, pw=2*INO_PLAT.hw;
+  k.box(uU,uU+110, po,pw,MAT.plat,.55,1.1).box(uU-1,uU+111, po,pw+0.8,MAT.canopy,4.4,.4)
+   .box(uD,uD+110,-po,pw,MAT.plat,.55,1.1).box(uD-1,uD+111,-po,pw+0.8,MAT.canopy,4.4,.4).flush();
 }
 { // 東急世田谷線(単線・南=b点側から到着)
   const g=xGroup(SETA), k=xKit(g);
@@ -2299,26 +2322,42 @@ function trackNear(s,off,tol){
   }
   return false;
 }
+/* ホームの縁(またはホームドアの列)が面する線路に沿った横のずれ(駅の中心 st.x からの差)を返す関数 s→[m]。
+   面する線路=縁の sg の側 0.3〜2.6m にある線路(駅の中心で)。待避線がホームの端で曲がる駅(明大前・桜上水・千歳烏山。
+   2026-10-11 利用者指示で分岐を駅へ30m 寄せた)では、待避線の側の縁とホームドアの列がホームの端で線路に沿って内へ寄る。
+   ほかの駅はホームの範囲で線路がまっすぐなので0 */
+function edgeShift(st,edge,sg){
+  let t0=null, d0=1e9;
+  for(const t of TRACKS){
+    if(st.x<t.x0||st.x>t.x1) continue;
+    const d=sg*(t.zf(st.x)-edge); if(d>0.3&&d<2.6&&d<d0){d0=d;t0=t;}
+  }
+  if(!t0) return ()=>0;
+  const o0=t0.zf(st.x);
+  return s=>t0.zf(clamp(s,t0.x0,t0.x1))-o0;
+}
 /* ホームの付帯物:縁の点字ブロックと、ホーム端(短辺)の柵。
-   x0..x1 がホームの範囲、offC が中心、hw が半幅。 */
-function platDetail(S,x0,x1,offC,hw,y,o){
-  const tac=[], fen=[], V=MAT.stVC;
+   x0..x1 がホームの範囲、offC が中心、hw が半幅。sh=[南の縁のずれ,北の縁のずれ](edgeShift。省略=まっすぐ) */
+function platDetail(S,x0,x1,offC,hw,y,o,sh){
+  const tac=[], fen=[], V=MAT.stVC, SH=sh||[()=>0,()=>0];
   const mid=(x0+x1)/2, yt=y+1.1;
-  for(const sg of [-1,1]){         // 点字ブロック:線路のある縁から45cm内側に幅30cm
+  const eAt=(s,sg)=>offC+sg*hw+SH[sg>0?1:0](s);              // その s の縁
+  for(const sg of [-1,1]){         // 点字ブロック:線路のある縁から45cm内側に幅30cm(縁が曲がれば沿う)
     const edge=offC+sg*hw;
     if(!trackNear(mid,edge+sg*TACTILE_TOL/2,TACTILE_TOL/2)) continue;
-    const of=offC+sg*(hw-TACTILE_IN);
-    S.mg.col(0xe0b93c).loft(V,x0+0.3,x1-0.3,()=>[[of-TACTILE_HW,yt],[of+TACTILE_HW,yt],[of+TACTILE_HW,yt+0.012],[of-TACTILE_HW,yt+0.012]],
-      {closed:true,tag:'点字ブロック'});
+    const of=offC+sg*(hw-TACTILE_IN), f=SH[sg>0?1:0];
+    S.mg.col(0xe0b93c).loft(V,x0+0.3,x1-0.3,s=>{const c=of+f(s);return [[c-TACTILE_HW,yt],[c+TACTILE_HW,yt],[c+TACTILE_HW,yt+0.012],[c-TACTILE_HW,yt+0.012]];},
+      {closed:true,tag:'点字ブロック',step:1,tol:0.005});
     tac.push(of);
   }
-  for(const e of [x0+0.25,x1-0.25]){   // ホーム端の柵(転落防止)。板+笠木+支柱
-    S.mg.col(0xb9bec4).box(V,e,offC,yt,yt+1.1,0.05,hw*2-0.1,{skip:'-y',tag:'ホーム端の柵'});
-    S.md.col(0xe0b93c).box(V,e,offC,yt+0.45,yt+0.6,0.055,hw*2-0.12);
-    S.md.col(0x8d949b).box(V,e,offC,yt+1.1,yt+1.15,0.08,hw*2);
+  for(const e of [x0+0.25,x1-0.25]){   // ホーム端の柵(転落防止)。板+笠木+支柱。幅はその s の縁から縁
+    const a=eAt(e,-1), b=eAt(e,1), c=(a+b)/2, w=b-a;
+    S.mg.col(0xb9bec4).box(V,e,c,yt,yt+1.1,0.05,w-0.1,{skip:'-y',tag:'ホーム端の柵'});
+    S.md.col(0xe0b93c).box(V,e,c,yt+0.45,yt+0.6,0.055,w-0.12);
+    S.md.col(0x8d949b).box(V,e,c,yt+1.1,yt+1.15,0.08,w);
     fen.push(e);
   }
-  PLATS.push({x0:x0,x1:x1,off:offC,hw:hw,y:y,tactile:tac,fence:fen,lampY:(o&&o.lampY)||y+3.3});
+  PLATS.push({x0:x0,x1:x1,off:offC,hw:hw,y:y,tactile:tac,fence:fen,lampY:(o&&o.lampY)||y+3.3,edge:eAt});
 }
 const staLabels=[],tagLabels=[],xingLabels=[];
 // ホームドアの定義。実体は列車の諸元(扉配置・編成長)が要るので9章の後で組み立てる。
@@ -2368,10 +2407,12 @@ const STD={
 };
 // ホームの並び [中心off, 半幅]。PLAT_EDGE(2b章)と同じ値(片方だけ変えないこと)
 const PLT_OF={isl:[[0,3.5]], hachi:[[0,3.0]], side:[[-5.85,2.25],[5.85,2.25]],
-              quad:[[-6.05,2.5],[6.05,2.5]], ctx:[[-6.05,2.5],[6.05,2.5]], gnd:[[0,3.0],[7.85,1.7]]};
+              quad:[[-6.8,3.25],[6.8,3.25]], ctx:[[-6.05,2.5],[6.05,2.5]], gnd:[[0,3.0],[10.35,4.2]]};
+// 2026-10-11 利用者指示:明大前・桜上水・千歳烏山(quad)のホームを1.5m 広く(待避線の側へ。待避線も1.5m 外へ。笹塚=ctx はそのまま)、
+// 仙川の上りホーム(北の単式)を5m 広く(背面=北へ。掘割の北の擁壁も5m 北へ)
 // ホームドアの列(縁から0.12m内側=戸袋の厚さの半分)。仙川も縁の内側に置く(北の単式ホームの縁 6.15 にも)
 const DRS_OF={isl:[-3.38,3.38], hachi:[-2.88,2.88], side:[-3.72,3.72],
-              quad:[-3.67,3.67,-8.43,8.43], ctx:[-3.67,3.67,-8.43,8.43], gnd:[-2.88,2.88,6.27]};
+              quad:[-3.67,3.67,-9.93,9.93], ctx:[-3.67,3.67,-8.43,8.43], gnd:[-2.88,2.88,6.27]};
 /* 列車が停まらないホームの縁 [ホームの番号(PLT_OF の順), 縁(+1=北/-1=南)]。
    仙川の上りは北側の単式ホームを使う(利用者指示)。島式の北の縁も上りの線に面するが、列車は扉を開けない。
    その縁のホームドアは開かない柵として立て(PSD の noStop)、番線の案内(staTracks)にも数えない */
@@ -2787,7 +2828,8 @@ const nearAny=(s,list,m)=>list.some(q=>s>q.s0-m&&s<q.s1+m);
 /* ホームの躯体。線路に面する縁は張出し(厚さ LIP)の下を RECESS だけ引っ込める
    (実物のホーム下の退避空間)。線路の無い縁(相対式の背面など)は垂直に落とす。
    wells の範囲は床を抜いて井戸にする(その区間は井戸の左右に分けて作る)。 */
-function platBody(S,x0,x1,pc,hw,y,wells){
+function platBody(S,x0,x1,pc,hw,y,wells,sh){
+  const SH=sh||[()=>0,()=>0], fL=SH[0], fR=SH[1];
   const mid=(x0+x1)/2, mg=S.mg, yb=y<3?Math.min(y-DECK_DROP,floorY(mid)):y-DECK_DROP, yt=y+STD.PLAT, yl=yt-STD.LIP;   // 地上・掘割の駅は躯体を地表(底)まで
   const tL=trackNear(mid,pc-hw-TACTILE_TOL/2,TACTILE_TOL/2);
   const tR=trackNear(mid,pc+hw+TACTILE_TOL/2,TACTILE_TOL/2);
@@ -2799,21 +2841,24 @@ function platBody(S,x0,x1,pc,hw,y,wells){
     const m=(a+b)/2, w=wells.find(q=>m>q.s0&&m<q.s1);
     const spans=w?[[pc-hw,w.o0],[w.o1,pc+hw]]:[[pc-hw,pc+hw]];
     for(const sp of spans){
-      const l=sp[0], r=sp[1], eL=(l===pc-hw), eR=(r===pc+hw);
+      const l0=sp[0], r0=sp[1], eL=(l0===pc-hw), eR=(r0===pc+hw);
+      // 縁は面する線路に沿う(待避線がホームの端で曲がる駅。井戸の脇は中ほどなので曲がらない)
+      const L=s=>l0+(eL?fL(s):0), R=s=>r0+(eR?fR(s):0);
       // 床版。C[i]=点iから点i+1までの面の色。上面の縁0.5mは明るい縁石
-      const P=[], C=[];
-      const pt=(p,c)=>{P.push(p);C.push(c);};
-      pt([l,yl],0x8a8d92);
-      pt([r,yl],eR?0xdcd9cf:0x9a9da2);
-      if(eR){pt([r,yt],0xd8d5ca);pt([r-0.5,yt],0xbdbcb5);} else pt([r,yt],0xbdbcb5);
-      if(eL) pt([l+0.5,yt],0xd8d5ca);
-      pt([l,yt],eL?0xdcd9cf:0x9a9da2);
-      mg.loft(SV,a,b,()=>P,{closed:true,caps:true,cols:C,tag:'ホーム'});
+      const C=[0x8a8d92,eR?0xdcd9cf:0x9a9da2];
+      if(eR) C.push(0xd8d5ca,0xbdbcb5); else C.push(0xbdbcb5);
+      if(eL) C.push(0xd8d5ca);
+      C.push(eL?0xdcd9cf:0x9a9da2);
+      const prof=s=>{const l=L(s), r=R(s), P=[[l,yl],[r,yl]];
+        if(eR) P.push([r,yt],[r-0.5,yt]); else P.push([r,yt]);
+        if(eL) P.push([l+0.5,yt]);
+        P.push([l,yt]); return P;};
+      mg.loft(SV,a,b,prof,{closed:true,caps:true,cols:C,tag:'ホーム',step:1,tol:0.005});
       // 床版の下の躯体。線路側は引っ込める(張出しの下に影ができる)
       const iL=(eL&&tL)?STD.RECESS:0, iR=(eR&&tR)?STD.RECESS:0;
-      const Q=[[l+iL,yb],[r-iR,yb],[r-iR,yl],[l+iL,yl]];
+      const Q=s=>[[L(s)+iL,yb],[R(s)-iR,yb],[R(s)-iR,yl],[L(s)+iL,yl]];
       const QC=[0x777a80,(eR&&tR)?0x6c7075:(eR?0xb3b6ba:0x8d9095),0x777a80,(eL&&tL)?0x6c7075:(eL?0xb3b6ba:0x8d9095)];
-      mg.loft(SV,a,b,()=>Q,{closed:true,caps:true,cols:QC});
+      mg.loft(SV,a,b,Q,{closed:true,caps:true,cols:QC,step:1,tol:0.005});
     }
   }
 }
@@ -3371,8 +3416,9 @@ for(const s of STA){
                        [{s0:pq-34,s1:pq-18,o0:wc-ww/2,o1:wc+ww/2,dir:1},{s0:pq+18,s1:pq+34,o0:wc-ww/2,o1:wc+ww/2,dir:-1}];
     for(const w of wells) Object.assign(w,{st:s,pc:pc,hw:hw,trk:TRK_ST.filter(q=>q.plats.indexOf(pi)>=0),
       yTop:big?y+STD.CEIL:y+STD.CAN0});
-    platBody(S,x0,x1,pc,hw,y,up?[]:wells);
-    platDetail(S,x0,x1,pc,hw,y,{lampY:lampY});
+    const sh=[edgeShift(s,pc-hw,-1),edgeShift(s,pc+hw,1)];   // 縁が面する線路に沿うずれ
+    platBody(S,x0,x1,pc,hw,y,up?[]:wells,sh);
+    platDetail(S,x0,x1,pc,hw,y,{lampY:lampY},sh);
     for(const w of wells){(up?stairUp(S,w,y,yF):stairWell(S,w,y));lifts.push(w);STAIRS.push({st:s,kind:'階段',up:up,dir:w.dir,s0:w.s0,s1:w.s1,o0:w.o0,o1:w.o1});}
     if(!narrow){                                     // エレベーターは2つの階段の間(柱と柱の間)
       const es=SA?pm+SA.ev:pq+STD.COLP/2;
@@ -3784,7 +3830,8 @@ keepLine(INO,15,XR.U0-10,XR.U1+10);
 keepLine(SETA,12,XR.SETA_U0-10,XR.SETA_U1+10);
 /* (s,off)に半径radの物を置けるか。高架下・側道は桁半幅から求める(桁幅を変えれば追従)。 */
 function cityFree(s,off,rad,px,pz,roadIn){       // roadIn:道路の面への食い込みを許す量[m](実データの建物)
-  if(Math.abs(off)<deckHalf(s)+5.2+rad) return false;          // 高架下+側道
+  // 高架下+側道。掘割(DECK_END より西)は側ごとの幅(仙川は北に広い単式ホームがあり、南は狭い)
+  if(Math.abs(off)<(s>DECK_END?cutHalf(s,off<0?-1:1):deckHalf(s))+5.2+rad) return false;
   if(PLL&&px!==undefined&&roadHit(px,pz,rad-(roadIn||0))) return false;   // 実データの道路の面
   if(PLL&&px!==undefined&&expyHit(px,pz,rad)) return false;     // 自動車道の橋脚
   if(PLL&&px!==undefined&&waterHit(px,pz,rad)) return false;    // 河川・池の水面
@@ -6556,13 +6603,18 @@ const PSD_OPEN=0.80;                      // 開口の半幅[m](開口1.60m)
    ホームドアだけで運転モードの描画の7割を占めていた(2026-10 実測 5,400回/画)。
    ・戸袋(白)と笠木(濃灰)は常に描く。京王の藍の帯と開口脇の支柱は近くだけ(LOD) */
 const PSD_H=1.22, PSD_T=0.24;             // 高さ(ホーム面から)・戸袋の厚さ[m]
-function psdFixed(S,a,b,off,y){
-  const m=(a+b)/2, L=b-a, yp=y+1.1;
-  S.mg.col(0xe9ebee).box(MAT.stVC,m,off,yp,yp+PSD_H-0.10,L,PSD_T,{skip:'-y',tag:'ホームドア'});
-  S.mg.col(0x59626d).box(MAT.stVC,m,off,yp+PSD_H-0.10,yp+PSD_H,L+0.02,PSD_T+0.06,{skip:'-y'});
-  S.md.col(0x1b2a66).box(MAT.stVC,m,off,yp+PSD_H-0.36,yp+PSD_H-0.28,Math.max(0.05,L-0.02),PSD_T+0.012,{skip:'-y+y'});
+function psdFixed(S,a,b,off0,y,sh){
+  const yp=y+1.1, oA=s=>off0+(sh?sh(s):0);
+  // 面する線路に沿う:列が曲がる所(待避線がホームの端で曲がる駅)は 2m 以下の片に分けて、片ごとにその中ほどの位置へ
+  const bend=sh&&Math.abs(sh(a)-sh(b))>0.005, n=bend?Math.max(1,Math.ceil((b-a)/2)):1;
+  for(let i=0;i<n;i++){
+    const a1=a+(b-a)*i/n, b1=a+(b-a)*(i+1)/n, m=(a1+b1)/2, L=b1-a1, off=oA(m), ex=(n>1)?0.02:0;
+    S.mg.col(0xe9ebee).box(MAT.stVC,m,off,yp,yp+PSD_H-0.10,L+ex,PSD_T,{skip:'-y',tag:'ホームドア'});
+    S.mg.col(0x59626d).box(MAT.stVC,m,off,yp+PSD_H-0.10,yp+PSD_H,L+0.02,PSD_T+0.06,{skip:'-y'});
+    S.md.col(0x1b2a66).box(MAT.stVC,m,off,yp+PSD_H-0.36,yp+PSD_H-0.28,Math.max(0.05,L-0.02+ex),PSD_T+0.012,{skip:'-y+y'});
+  }
   for(const e of[a+0.05,b-0.05])
-    S.md.col(0xc4c9cf).box(MAT.stVC,e,off,yp,yp+PSD_H+0.04,0.10,PSD_T+0.08,{skip:'-y'});
+    S.md.col(0xc4c9cf).box(MAT.stVC,e,oA(e),yp,yp+PSD_H+0.04,0.10,PSD_T+0.08,{skip:'-y'});
 }
 for(const d of PSD_DEF){
   const st=d.st, ro=runOff(st.x);
@@ -6594,15 +6646,16 @@ for(const d of PSD_DEF){
     const side=(off>trackOff?1:-1)*localZSign(st.x,dir);
     // 列車が停まらない縁(PLAT_NOSTOP。仙川の島式の北)の列は開かない柵:trainPSD・ridePSDFor が選ばない
     const noStop=PLT_OF[st.t].some((pp,pi)=>[-1,1].some(sg=>noStopEdge(st,pi,sg)&&Math.abs(off-(pp[0]+sg*pp[1]))<0.3));
+    const sh=edgeShift(st,off,trackOff>off?1:-1);       // 列は面する線路に沿う(ホームの縁と同じ)
     CUR=st.kk?KOUKU[st.kk-1].VGs:null;
     // 開口と開口の間の固定部(戸袋)。駅の結合ジオメトリへ積む
     const SG=STG[STA.indexOf(st)];
     let prev=d.x0;
     for(const c of open){
-      if(c-PSD_OPEN-prev>0.05) psdFixed(SG,prev,c-PSD_OPEN,off,d.y);
+      if(c-PSD_OPEN-prev>0.05) psdFixed(SG,prev,c-PSD_OPEN,off,d.y,sh);
       prev=c+PSD_OPEN;
     }
-    if(d.x1-prev>0.05) psdFixed(SG,prev,d.x1,off,d.y);
+    if(d.x1-prev>0.05) psdFixed(SG,prev,d.x1,off,d.y,sh);
     // 扉(2枚引き)。曲線に追従させるためインスタンスで置き、開閉は行列を更新する。
     // 列ごとに形を複製して列全体の外接球を持たせ、画面の外の列は描かない(共有の形のままだと間引けない)
     const lg=G_PSD_LEAF.clone(), lp=frame((d.x0+d.x1)/2,off);
@@ -6610,7 +6663,7 @@ for(const d of PSD_DEF){
     const inst=new THREE.InstancedMesh(lg,MAT_PSDL,open.length*2);
     inst.frustumCulled=true;
     add(inst);
-    PSD.push({st:st,dir:dir,off:off,side:side,openable:openable,noStop:noStop,
+    PSD.push({st:st,dir:dir,off:off,sh:sh,side:side,openable:openable,noStop:noStop,
               y:d.y+1.71,open:open,inst:inst,r:-1});
   }
 }
@@ -6624,7 +6677,7 @@ function setPSD(p,r){
   for(const c of p.open){
     for(const sg of[-1,1]){
       const s=c+sg*(PSD_OPEN/2+PSD_OPEN*r);            // 閉=開口の内側/開=戸袋へ退避
-      const q=frame(s,p.off);
+      const q=frame(s,p.off+p.sh(s));                  // 列は面する線路に沿う(待避線がホームの端で曲がる駅)
       _psdE.set(0,-q.a,0);_psdQ.setFromEuler(_psdE);
       _psdV.set(q.x,p.y,q.z);
       _psdM.compose(_psdV,_psdQ,_psdS);
@@ -6684,7 +6737,7 @@ NIGHT_HOOKS.push(on=>{ M_PEOPLE.emissive.copy(on?glow(0x3a3a3a):srgb(0x000000));
     const OB=STRUCT.filter(o=>o.s1>q.x0-2&&o.s0<q.x1+2&&o.o1>q.off-q.hw-0.5&&o.o0<q.off+q.hw+0.5&&o.y0<yP+1.8&&o.y1>yP+0.05);
     const W=STAIRS.filter(w=>w.s1>q.x0&&w.s0<q.x1&&w.o1>q.off-q.hw&&w.o0<q.off+q.hw);
     const free=(s,o)=>{
-      if(s<q.x0+3||s>q.x1-3||Math.abs(o-q.off)>q.hw-1.1) return false;
+      if(s<q.x0+3||s>q.x1-3||o<q.edge(s,-1)+1.1||o>q.edge(s,1)-1.1) return false;   // 縁はその s の縁(待避線に沿って曲がる)
       for(const w of W) if(s>w.s0-0.8&&s<w.s1+0.8&&o>w.o0-0.6&&o<w.o1+0.6) return false;
       for(const b of OB) if(s>b.s0-0.35&&s<b.s1+0.35&&o>b.o0-0.35&&o<b.o1+0.35) return false;
       for(const m of PEOPLE) if(m.q===q&&Math.abs(m.s-s)<0.55&&Math.abs(m.o-o)<0.55) return false;
@@ -6700,7 +6753,7 @@ NIGHT_HOOKS.push(on=>{ M_PEOPLE.emissive.copy(on?glow(0x3a3a3a):srgb(0x000000));
       for(const c of row.open){
         if(c<q.x0||c>q.x1||Math.random()>0.45) continue;
         const n=1+Math.floor(Math.random()*3), ds=(Math.random()-0.5)*0.5;
-        for(let k=0;k<n;k++) put(c+ds+(Math.random()-0.5)*0.15, edge-e*(1.15+0.62*k), e);
+        for(let k=0;k<n;k++){ const sp=c+ds+(Math.random()-0.5)*0.15; put(sp, q.edge(sp,e)-e*(1.15+0.62*k), e); }
       }
     }
     // まばらに立つ人(向きはどちらかの縁)

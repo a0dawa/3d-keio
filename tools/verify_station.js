@@ -18,7 +18,8 @@ const X = require('./stub_three')(path,
   'platRange:platRange,deckHalf:deckHalf,' +
   'PSD:PSD,K8:K8,DECK_END:DECK_END,LODS:LODS,POLE_S:POLE_S,WIRE_CAT:WIRE_CAT,' +
   'GUIDES:GUIDES,depList:depList,pidsSetTime:pidsSetTime,' +
-  'PEOPLE:(typeof PEOPLE!=="undefined"?PEOPLE:[]),scene:scene,STD:STD,POLES:(typeof POLES!=="undefined"?POLES:[])');
+  'PEOPLE:(typeof PEOPLE!=="undefined"?PEOPLE:[]),scene:scene,STD:STD,POLES:(typeof POLES!=="undefined"?POLES:[]),' +
+  'TURNOUTS:TURNOUTS,prjXY:prjXY,INO:INO,INO_PLAT:INO_PLAT,XR:XR,VIA_COLS:VIA_COLS');
 
 /* ---- 検証側が独立に持つ寸法 -------------------------------------------- */
 const REF = {
@@ -503,6 +504,72 @@ ok('乗務員モニターを置かない', !X.STRUCT.some((q) => q.tag === '乗�
   ok('駅の細部が LOD に載る', lod === X.STG.length, X.STG.length + '駅', lod + '駅');
 }
 
+/* ---- ホームの拡幅と待避線の分岐(2026-10-11 利用者指示) --------------------------------------------
+   ・明大前・桜上水・千歳烏山:島式2面4線のホームを1.5m 広く(5.0→6.5m)、本線と待避線の分岐を駅へ30m 寄せる
+     (分岐の先端は駅の中心から 226.5m だった→196.5m)。待避線はホームの端で曲がり、ホームの縁とホームドアの列は線路に沿う
+   ・仙川の上りホーム(北の単式。3.4m)と井の頭線のホーム(3.4m)を5m 広く(8.4m)。高架の柱は井の頭線のホームと擁壁に立たない */
+{
+  const RW = { QUAD: ['明大前', '桜上水', '千歳烏山'], QUAD_W: 5.0 + 1.5, TIP: 226.5 - 30, TIP_TOL: 3, EDGE: [1.40, 1.60], PSD_IN: 0.12,
+    SENGAWA_N: 3.4 + 5, INO_W: 3.4 + 5, INO_EDGE_IN: 5.5, INO_CLEAR: 0.5 };
+  // ホームの幅
+  let bW = null;
+  for (const n of RW.QUAD) {
+    const st = X.STA.find((z) => z.n === n), L = X.PLATS.filter((q) => Math.abs((q.x0 + q.x1) / 2 - st.x) < 60);
+    if (L.length !== 2 || L.some((q) => Math.abs(2 * q.hw - RW.QUAD_W) > 0.01)) { bW = n + ' ' + L.map((q) => (2 * q.hw).toFixed(2)).join('/'); break; }
+  }
+  { const st = X.STA.find((z) => z.n === '仙川'), q = X.PLATS.filter((q) => Math.abs((q.x0 + q.x1) / 2 - st.x) < 60 && q.off > 3).sort((a, b) => b.off - a.off)[0];
+    if (!bW && (!q || Math.abs(2 * q.hw - RW.SENGAWA_N) > 0.01)) bW = '仙川の北 ' + (q ? (2 * q.hw).toFixed(2) : 'なし'); }
+  ok('ホームの幅(拡幅)', bW === null, '2面4線 ' + RW.QUAD_W + 'm・仙川の北 ' + RW.SENGAWA_N + 'm', bW || '一致');
+  // 分岐の先端(本線→待避線)
+  let bT = null, nT = 0;
+  for (const n of RW.QUAD) {
+    const st = X.STA.find((z) => z.n === n);
+    for (const T of X.TURNOUTS.filter((T) => /^本線/.test(T.A.id) && /副本線/.test(T.B.id) && Math.abs(T.s - st.x) < 400)) {
+      nT++; if (Math.abs(Math.abs(T.s - st.x) - RW.TIP) > RW.TIP_TOL && !bT) bT = n + ' ' + (T.s - st.x).toFixed(1) + 'm';
+    }
+  }
+  ok('待避線の分岐の位置', bT === null && nT === 12, '駅の中心から ' + RW.TIP + '±' + RW.TIP_TOL + 'm(12組)', bT || nT + '組');
+  // 待避線の側の縁が線路に沿う(描いたホームの面=登録簿 'ホーム' の区間)
+  let bE = null, nE = 0;
+  for (const n of RW.QUAD) {
+    const st = X.STA.find((z) => z.n === n);
+    const loops = X.TRACKS.filter((t) => /副本線/.test(t.id) && st.x > t.x0 && st.x < t.x1);
+    for (const q of X.STRUCT) {
+      if (q.tag !== 'ホーム' || Math.abs((q.s0 + q.s1) / 2 - st.x) > 110) continue;
+      for (const t of loops) {
+        const sg = Math.sign(t.zf(st.x)), m = (q.s0 + q.s1) / 2, edge = sg > 0 ? q.o1 : -q.o0;
+        if (sg > 0 ? q.o0 < 0 : q.o1 > 0) continue;
+        const gap = sg * t.zf(m) - edge;
+        if (gap > 3) continue;                       // 井戸の脇の内側の片(外の縁は井戸)
+        nE++;
+        if ((gap < RW.EDGE[0] || gap > RW.EDGE[1]) && !bE) bE = n + ' ' + t.id + ' s=' + (m - st.x).toFixed(0) + ' ' + gap.toFixed(2) + 'm';
+      }
+    }
+  }
+  ok('待避線の側のホームの縁が線路に沿う', bE === null && nE > 0, '線路の中心から縁 ' + RW.EDGE.join('〜') + 'm(ホームの端まで)', bE || nE + '区間');
+  // ホームドアの戸(描いたインスタンス)も線路に沿う:面する線路から 縁の距離−0.12
+  let bD = null, nD = 0;
+  for (const r of X.PSD) {
+    if (RW.QUAD.indexOf(r.st.n) < 0 || !r.inst || !r.inst.mats) continue;
+    const t = X.TRACKS.filter((t) => r.st.x > t.x0 && r.st.x < t.x1).sort((a, b) => Math.abs(a.zf(r.st.x) - r.off) - Math.abs(b.zf(r.st.x) - r.off))[0];
+    for (const M of r.inst.mats) {
+      const q = X.prjXY(M.p.x, M.p.z); if (q.s < t.x0 || q.s > t.x1) continue; nD++;
+      const gap = Math.abs(t.zf(q.s) - q.off), want = (1.55 + RW.PSD_IN);   // 列は縁の 0.12m 内側
+      if (Math.abs(gap - want) > 0.05 && !bD) bD = r.st.n + ' ' + r.off + ' s=' + (q.s - r.st.x).toFixed(0) + ' ' + gap.toFixed(2) + 'm';
+    }
+  }
+  ok('ホームドアの戸が線路に沿う', bD === null && nD > 0, '面する線路から ' + (1.55 + RW.PSD_IN).toFixed(2) + '±0.05m', bD || nD + '枚');
+  // 井の頭線のホーム:幅・線路側の縁はそのまま(背面へ広げる)。高架の柱が井の頭線のホームと擁壁(ホームの背面+0.5m)の内に無い
+  const IP = X.INO_PLAT;
+  let bI = (Math.abs(2 * IP.hw - RW.INO_W) > 0.01 || Math.abs(IP.off - IP.hw - RW.INO_EDGE_IN) > 0.01) ? '幅' + (2 * IP.hw).toFixed(2) + '・縁' + (IP.off - IP.hw).toFixed(2) : null;
+  let minN = 1e9;
+  for (const c of X.VIA_COLS) for (const o of c.offs) {
+    const f = X.frame(c.s, o), dx = f.x - X.INO.x, dz = f.z - X.INO.z, u = dx * X.INO.ax + dz * X.INO.az, nn = Math.abs(dx * X.INO.nx + dz * X.INO.nz);
+    if (u < X.XR.U0 || u > X.XR.U1) continue; minN = Math.min(minN, nn);
+  }
+  if (!bI && minN < RW.INO_EDGE_IN + RW.INO_W + RW.INO_CLEAR) bI = '柱が井の頭線の中心から ' + minN.toFixed(1) + 'm';
+  ok('井の頭線のホーム(拡幅)と高架の柱', bI === null, '幅' + RW.INO_W + 'm・柱は中心から ' + (RW.INO_EDGE_IN + RW.INO_W + RW.INO_CLEAR) + 'm 以遠', bI || '幅一致・柱は ' + minN.toFixed(1) + 'm');
+}
 /* ---- 出力 ---- */
 const w = (s, n) => String(s) + ' '.repeat(Math.max(0, n -
   [...String(s)].reduce((a, c) => a + (c.charCodeAt(0) > 0x2e80 ? 2 : 1), 0)));
@@ -520,6 +587,9 @@ const w = (s, n) => String(s) + ' '.repeat(Math.max(0, n -
   for (const m of P) {
     const q = m.q;
     if (m.s < q.x0 + REF_P.END || m.s > q.x1 - REF_P.END || Math.abs(m.o - q.off) > q.hw - REF_P.EDGE) { bad = m.st.n + ' s=' + m.s.toFixed(1) + ' ホームの縁/端に近い'; break; }
+    // 線路からも測る(縁が曲がる待避線のホームでも):線路の中心から縁まで約1.55m+縁から REF_P.EDGE
+    const tc = X.TRACKS.filter((t) => m.s >= t.x0 && m.s <= t.x1).map((t) => Math.abs(t.zf(m.s) - m.o)).reduce((a, b) => Math.min(a, b), 1e9);
+    if (tc < 1.5 + REF_P.EDGE) { bad = m.st.n + ' s=' + m.s.toFixed(1) + ' 線路から' + tc.toFixed(2) + 'm'; break; }
     if (Math.abs(m.y - (X.railY(m.s) + REF_P.PLAT)) > 0.05) { bad = m.st.n + ' 高さ ' + m.y.toFixed(2); break; }
     const hit = OB.find((o) => m.s > o.s0 - REF_P.GAP && m.s < o.s1 + REF_P.GAP && m.o > o.o0 - REF_P.GAP && m.o < o.o1 + REF_P.GAP && o.y0 < m.y + 1.7 && o.y1 > m.y);
     if (hit) { bad = m.st.n + ' ' + hit.tag + 'に重なる s=' + m.s.toFixed(1); break; }

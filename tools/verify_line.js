@@ -579,8 +579,9 @@ if (X.TRACKS && X.WIRES) {
     const h = Math.max(X.deckHalf(q.s0), X.deckHalf(q.s1)) + 0.06;   // 笠木は外へ6cm張り出す
     if (Math.abs(top - V.PAR_H) > 0.05 && !bP) bP = ['s=' + s.toFixed(0), '高さ' + top.toFixed(2)];
     const outer = Math.max(Math.abs(q.o0), Math.abs(q.o1));
-    // 掃引は2m標本・誤差2cmで間引くので、標本の間の曲がり(幅のなめらかな変化)ぶんを5cmまで許す
-    if (Math.abs(outer - h) > 0.05 && !bP) bP = ['s=' + s.toFixed(0), '外面' + outer.toFixed(2) + '≠桁端+笠木' + h.toFixed(2)];
+    // 掃引は2m標本・誤差2cmで間引くので、標本の間の曲がり(幅のなめらかな変化)ぶんを8cmまで許す
+    // (登録簿は横に動く所を細かく切るので、標本の間の直線の上の点も測る。幅の変わり始めで最大7cm。床版も同じ標本で描く)
+    if (Math.abs(outer - h) > 0.08 && !bP) bP = ['s=' + s.toFixed(0), '外面' + outer.toFixed(2) + '≠桁端+笠木' + h.toFixed(2)];
   }
   ok('高欄の高さ・位置', bP === null, 'レール面+' + V.PAR_H + 'm・桁端', bP ? bP.join(' ') : '全て');
   // 高架の部品(高欄・ケーブルトラフ・柱・梁)が車両の通る空間に入らない

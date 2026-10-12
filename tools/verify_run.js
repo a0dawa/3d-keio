@@ -31,7 +31,7 @@ const REF = {
   HACHI_STOP_OFF: 4.55,    // 八幡山の停車線(ホーム横=内側)のオフセット[m]
   HACHI_PASS_OFF: 8.35,    // 八幡山の通過線(ホーム無し=外側)のオフセット[m]
   QUAD_STA: ['明大前', '桜上水', '千歳烏山'],
-  QUAD_LOOP_OFF: 10.1,     // 2面4線の待避線(外側)のオフセット[m]
+  QUAD_LOOP_OFF: 11.6,     // 2面4線の待避線(外側)のオフセット[m](2026-10-11 利用者指示:ホームを1.5m 広げて 10.1→11.6)
   QUAD_MAIN_OFF: 2.0,      // 同駅の本線(内側)のオフセット[m]
   // ホームドアを2列(上下)ではなく4列持つ駅=島式2面4線。
   // 停車列車の来ない側(笹塚の留置線側/待避線に入らない側)は開かない扉列。
@@ -548,7 +548,9 @@ ok('上限速度を超えない', vmax <= REF.VMAX_KMH + 0.5, '≤' + REF.VMAX_K
       X.atcLimit(s0) === null ? '制限なし' : X.atcLimit(s0).toFixed(1) + 'km/h');
     // 待避線(2面4線の外側)に入っている列車は対象外
     const q = X.STA.find((z) => z.n === '桜上水');
-    place(q.x - 100, 100); lead.x = q.x;            // 先行列車を待避線の一定区間へ
+    // 先行列車を待避線の一定区間へ(先頭を中心+100m=停止位置の近く。最後尾も待避線に入っている。
+    // 2026-10-11 に分岐を駅へ30m 寄せたので、先頭が駅の中心だと最後尾は分岐の手前の本線に残る)
+    place(q.x - 100, 100); lead.x = q.x + 100;
     ok('待避線の列車は対象外', X.atcLimit(q.x - 300) === null, '制限なし',
       X.atcLimit(q.x - 300) === null ? '制限なし' : '制限あり');
     // エリア外
@@ -828,7 +830,7 @@ ok('上限速度を超えない', vmax <= REF.VMAX_KMH + 0.5, '≤' + REF.VMAX_K
   {
     for (const t of T) { t.x = X.DOM.x1 - 5; t.st = 'run'; t.atSt = null; }
     const lead = T[0], q = X.STA.find((z) => z.n === '桜上水'), k0 = lead.kind;
-    lead.x = q.x;                                      // 先行列車(各停)を待避線の一定区間へ
+    lead.x = q.x + 100;                                // 先行列車(各停)を待避線の一定区間へ(最後尾まで)
     X.setRideState({ kind: '各停' }); const loopL = X.atcLimit(q.x - 300);
     X.setRideState({ kind: '特急' }); const loopE = X.atcLimit(q.x - 300);
     lead.kind = '急行';                                 // 同じ所に本線を通る優等列車
