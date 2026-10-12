@@ -28,7 +28,8 @@ const X = require('./stub_three')(path,
   'STA_LIT_U:(typeof STA_LIT_U!=="undefined"?STA_LIT_U:null), MAT_BALLAST:MAT_BALLAST, deckHalf:deckHalf,' +
   'K8M:K8M, TRIMMAT:TRIMMAT, M_BOG:M_BOG, M_PN:M_PN, M_SH:M_SH, M_PANS:M_PANS,' +
   'LU:(typeof LU!=="undefined"?LU:null), CARS_ALL:(typeof CARS_ALL!=="undefined"?CARS_ALL:[]), platRange:platRange,' +
-  'setLookUI:(typeof setLookUI!=="undefined"?setLookUI:null), LOOK_UI:(typeof LOOK_UI!=="undefined"?LOOK_UI:null)');
+  'setLookUI:(typeof setLookUI!=="undefined"?setLookUI:null), LOOK_UI:(typeof LOOK_UI!=="undefined"?LOOK_UI:null),' +
+  'weatherClick:(typeof weatherClick!=="undefined"?weatherClick:null)');
 
 /* ---- 期待値(検証側が独立して持つ) ---------------------------------------- */
 const REF = {
@@ -460,17 +461,17 @@ const TPROP = {};
   const F = C.fx;
   ok('天候の装置', !!(F && F.snow && F.petal && typeof F.update === 'function'),
     '雪・花びら', F ? 'あり' : 'なし');
-  // 季節との対応(検証側の期待:冬だけ雪、春だけ花びら)
-  const WANT = { winter: [true, false], spring: [false, true], summer: [false, false], autumn: [false, false] };
+  // 季節×天候との対応(検証側の期待:雪は天候が雪のとき(季節によらない)、花びらは春の晴れ・曇りだけ、雨は雨・大雨・雷)
   let mis = null;
   C.setTime('noon');
-  for (const se of C.seasons) {
-    C.setSeason(se);
-    const got = [F.snow.p.visible === true, F.petal.p.visible === true];
-    const w = WANT[se] || [false, false];
-    if (got[0] !== w[0] || got[1] !== w[1]) mis = mis || se + ' 雪' + got[0] + '/花' + got[1];
+  for (const wk of ['clear', 'cloudy', 'rain', 'heavy', 'storm', 'snow']) for (const se of C.seasons) {
+    C.setWeather(wk, false); C.setSeason(se);
+    const got = [F.snow.p.visible === true, F.petal.p.visible === true, !!(F.rain && F.rain.p.visible)];
+    const w = [wk === 'snow', se === 'spring' && (wk === 'clear' || wk === 'cloudy'), wk === 'rain' || wk === 'heavy' || wk === 'storm'];
+    if (got.join() !== w.join()) mis = mis || wk + '・' + se + ' 雪' + got[0] + '/花' + got[1] + '/雨' + got[2];
   }
-  ok('季節と天候の対応', mis === null, '冬=雪・春=桜・夏秋=なし', mis === null ? '4季節OK' : mis);
+  ok('季節・天候と粒の対応', mis === null, '雪=天候の雪・花=春の晴れ曇り・雨=雨大雨雷', mis === null ? '6天候×4季節OK' : mis);
+  C.setWeather('clear', false); C.setSeason('summer');
   ok('桜は雪よりほのか', F.petal.n * 5 <= F.snow.n, '花びら≤雪の1/5',
     F.petal.n + ' / ' + F.snow.n);
 
@@ -523,13 +524,139 @@ const TPROP = {};
   ok('天候の時計がコマ送りで進む', Math.abs(C.fxTime() - t0 - 0.5) < 1e-9, '+0.5秒',
     '+' + (C.fxTime() - t0).toFixed(3) + '秒');
   // 夜は粒の色を落とす
-  C.setTime('noon'); C.setSeason('winter');
+  C.setTime('noon'); C.setSeason('winter'); C.setWeather('snow');
   const dayL = lum(F.snow.p.material.color);
   C.setTime('night');
   const ngtL = lum(F.snow.p.material.color);
   ok('夜は雪が光らない', ngtL < dayL * 0.6, '昼の6割未満', ngtL.toFixed(3) + ' / ' + dayL.toFixed(3));
   ok('雪は影の対象外', F.snow.p.castShadow !== true, 'castShadowなし', String(F.snow.p.castShadow === true));
+  C.setTime('noon'); C.setSeason('summer'); C.setWeather('clear');
+}
+
+/* ---- 5d. 天候(2026-10-12 利用者指示:晴れ・曇り・雨・大雨・雷・雪。大雨と雷は併用できる) -------------------
+   期待は検証側が持つ(HTML の WEATHER 表は読まない):
+     ・晴れは時刻だけの見え方(天候を足す前と同じ値)
+     ・見通し(フォグの遠端)は 晴れ>曇り>雨>大雨、雪も曇りより短い。大雨でも 800m 以上は見える
+     ・曇り・雨・大雨・雷・雪は直射光が弱く(曇り≦晴れの6割・雨/大雨/雷≦3.5割)、空(地平)が灰色(彩度が低い)で暗い(大雨<雨<曇り)
+     ・フォグ=地平のまま。雨の日は地表が濡れて暗く、雪の日は地表と木が白い
+     ・雨の粒:カメラの周りに収まり・落ち・同じ時刻=同じ位置・筋は上へ伸び・大雨は本数が倍以上で風で斜め・目の前に無い
+     ・雷:雷だけ/大雨+雷 のときだけ光る。120秒に5回以上強く光り、光っている時間は5%未満。光ると環境光と空が明るく
+       稲妻が見える。同じ時刻=同じ光り方。消すと環境光と空が元へ戻る
+     ・時刻と天候の指定順に依らない。メニューの押し方(大雨+雷の併用・雷だけ・雷を消す) */
+{
+  const F = C.fx, W = ['clear', 'cloudy', 'rain', 'heavy', 'storm', 'snow'];
+  ok('天候の API', typeof C.setWeather === 'function' && Array.isArray(C.weathers), 'setWeather・weathers',
+    typeof C.setWeather + '・' + (C.weathers || []).join('/'));
+  const WANT_MENU = ['clear', 'cloudy', 'rain', 'heavy', 'thunder', 'snow'];
+  const m = X.__html.match(/<div class="seg" id="segWeather"[^>]*>([\s\S]*?)<\/div>/);
+  const mk = m ? [...m[1].matchAll(/data-k="(\w+)"/g)].map((q) => q[1]) : [];
+  ok('メニューに全ての天候', mk.join('/') === WANT_MENU.join('/') && C.weathers.join('/') === WANT_MENU.join('/'),
+    WANT_MENU.join('/'), mk.join('/') || 'なし');
+  const snap = () => {
+    const hor = shown(X.SKY().HOR, X.renderer.toneMappingExposure);
+    return { si: X.sun.intensity, hi: X.hemi.intensity, fn: X.scene.fog.near, ff: X.scene.fog.far,
+      fog: X.scene.fog.color.clone ? X.scene.fog.color.clone() : { r: X.scene.fog.color.r, g: X.scene.fog.color.g, b: X.scene.fog.color.b },
+      horS: hor, chroma: (Math.max(...hor) - Math.min(...hor)) / 255, horL: (0.2126 * hor[0] + 0.7152 * hor[1] + 0.0722 * hor[2]) / 255,
+      gnd: lum(X.MAT.ground.color), sky: X.SKY().HOR };
+  };
   C.setTime('noon'); C.setSeason('summer');
+  C.setWeather('clear', false);
+  const base = snap();
+  // 晴れ=時刻だけ:天候を変えてから晴れへ戻すと元と同じ値
+  C.setWeather('heavy', true); C.setWeather('clear', false);
+  const back = snap();
+  // 昼の晴れ=画面の既定の見え方(CLAUDE.md:太陽 0.72・環境光 0.82・フォグ 2600〜11500m・地平の著作値 #c2f3ff)
+  const DEF = { si: 0.72, hi: 0.82, fn: 2600, ff: 11500, hor: 0xc2f3ff };
+  ok('昼の晴れは既定の見え方', Math.abs(base.si - DEF.si) < 1e-9 && Math.abs(base.hi - DEF.hi) < 1e-9 && base.fn === DEF.fn && base.ff === DEF.ff && base.sky === DEF.hor,
+    '太陽0.72・環境光0.82・フォグ2600〜11500・地平#c2f3ff', base.si + '・' + base.hi + '・' + base.fn + '〜' + base.ff + '・#' + base.sky.toString(16));
+  ok('晴れは時刻だけの見え方', ['si', 'hi', 'fn', 'ff', 'gnd', 'sky'].every((k) => back[k] === base[k]), '同じ値',
+    ['si', 'hi', 'fn', 'ff', 'gnd', 'sky'].filter((k) => back[k] !== base[k]).join('・') || '一致');
+  const S = {};
+  for (const w of W) { C.setWeather(w, false); S[w] = snap(); }
+  ok('天候で見通しが悪くなる', S.clear.ff > S.cloudy.ff && S.cloudy.ff > S.rain.ff && S.rain.ff > S.heavy.ff && S.snow.ff < S.cloudy.ff && S.heavy.ff >= 800 && S.heavy.ff <= 0.3 * S.clear.ff,
+    '晴れ>曇り>雨>大雨・雪<曇り・大雨は800m〜晴れの3割', W.map((w) => w + ' ' + Math.round(S[w].ff)).join(' / '));
+  ok('曇り・雨の日は日差しが弱い', S.cloudy.si <= 0.6 * S.clear.si && ['rain', 'heavy', 'storm'].every((w) => S[w].si <= 0.35 * S.clear.si) && S.snow.si <= 0.6 * S.clear.si,
+    '曇り・雪≦6割・雨/大雨/雷≦3.5割', W.map((w) => w + ' ' + (S[w].si / S.clear.si).toFixed(2)).join(' / '));
+  ok('曇り・雨の空は灰色で暗い', ['cloudy', 'rain', 'heavy', 'storm', 'snow'].every((w) => S[w].chroma < 0.06) && S.clear.chroma > 0.06 &&
+      S.heavy.horL < S.rain.horL && S.rain.horL < S.cloudy.horL && S.cloudy.horL <= S.clear.horL,
+    '彩度<0.06(晴れは>0.06)・明るさ 大雨<雨<曇り≦晴れ', W.map((w) => w + ' ' + S[w].chroma.toFixed(3) + '/' + S[w].horL.toFixed(2)).join(' '));
+  let fogBad = null;
+  for (const w of W) { C.setWeather(w, false); const h = X.srgb(X.SKY().HOR), f = X.scene.fog.color;
+    if (Math.abs(f.r - h.r) + Math.abs(f.g - h.g) + Math.abs(f.b - h.b) > 1e-9) fogBad = fogBad || w; }
+  ok('天候でもフォグ=地平', fogBad === null, '全天候', fogBad || '6天候OK');
+  // 地表:雨=濡れて暗い・雪=白い。木も雪で明るい
+  const crownL = () => { let a = 0, n = 0;                        // 樹冠のインスタンスの色(スタブは sRGB の16進で持つ)
+    for (const h of X.CITY.crown.cols || []) { if (h === null || h === undefined) continue; const c = [(h >> 16) & 255, (h >> 8) & 255, h & 255].map((v) => s2l(v / 255));
+      a += 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]; n++; } return a / Math.max(1, n); };
+  C.setWeather('clear'); const tC = crownL(); C.setWeather('snow'); const tS = crownL();
+  ok('雨の日は地表が濡れて暗い', S.rain.gnd < 0.92 * S.clear.gnd && S.heavy.gnd < S.rain.gnd, '雨<晴れの92%・大雨<雨',
+    (S.rain.gnd / S.clear.gnd).toFixed(2) + ' / ' + (S.heavy.gnd / S.clear.gnd).toFixed(2));
+  ok('雪の日は地表と木が白い', S.snow.gnd > 1.3 * S.clear.gnd && tS > 1.5 * tC, '地表は晴れの1.3倍超・木は1.5倍超',
+    '地表 ' + (S.snow.gnd / S.clear.gnd).toFixed(2) + '倍・木 ' + (tS / Math.max(1e-9, tC)).toFixed(2) + '倍');
+  // 時刻と天候の指定順に依らない
+  C.setTime('evening'); C.setWeather('rain'); const o1 = snap();
+  C.setWeather('clear'); C.setTime('noon'); C.setWeather('rain'); C.setTime('evening'); const o2 = snap();
+  ok('時刻と天候の指定順に依らない', ['si', 'hi', 'fn', 'ff', 'gnd', 'sky'].every((k) => o1[k] === o2[k]), '同じ値',
+    ['si', 'hi', 'fn', 'ff', 'gnd', 'sky'].filter((k) => o1[k] !== o2[k]).join('・') || '一致');
+  C.setTime('noon');
+  // 雨の粒
+  const R = F.rain, S0 = C.stations[4];
+  const rat = (t) => { C.shotFront(S0.x); F.update(t); return { pos: Float32Array.from(R.pos.subarray(0, R.n * 6)), cam: { x: X.camera.position.x, y: X.camera.position.y, z: X.camera.position.z } }; };
+  C.setWeather('rain'); const nRain = R.n;
+  const a = rat(20), b = rat(20 + 1 / 12), a2 = rat(20);
+  let out = 0, fall = 0, n = 0, up = 0, near = 0, same = true;
+  for (let i = 0; i < R.n; i++) {
+    const y = a.pos[i * 6 + 1]; if (a.pos[i * 6] !== a2.pos[i * 6] || y !== a2.pos[i * 6 + 1]) same = false;
+    if (y < -1) continue; n++;
+    if (Math.abs(a.pos[i * 6] - a.cam.x) > F.RBOX / 2 + 1e-6 || Math.abs(a.pos[i * 6 + 2] - a.cam.z) > F.RBOX / 2 + 1e-6 || y < 0 || Math.abs(y - a.cam.y) > F.RV / 2 + 1e-6) out++;
+    if (a.pos[i * 6 + 4] > y + 0.2) up++;
+    if (Math.hypot(a.pos[i * 6] - a.cam.x, y - a.cam.y, a.pos[i * 6 + 2] - a.cam.z) < F.RNEAR) near++;
+    const yb = b.pos[i * 6 + 1]; if (yb > -1 && yb < y) fall++;
+  }
+  ok('雨がカメラの周りに', out === 0 && n > R.n * 0.5, 'RBOX内・上下RV内・地上', n + '本中 外 ' + out);
+  ok('雨が落ちる', fall > n * 0.85 && up === n, '1コマで85%以上が下へ・筋は上へ伸びる', (100 * fall / Math.max(1, n)).toFixed(1) + '%・' + up + '/' + n);
+  ok('雨が再現する', same, '同じ時刻=同じ位置', same ? '一致' : '不一致');
+  ok('雨が目の前に無い', near === 0, '0本(' + F.RNEAR + 'm以内)', near + '本');
+  C.setWeather('heavy'); const nHeavy = R.n, h = rat(20);
+  let slant = 0, nh = 0;
+  for (let i = 0; i < R.n; i++) { if (h.pos[i * 6 + 1] < -1) continue; nh++; const dx = h.pos[i * 6 + 3] - h.pos[i * 6], dy = h.pos[i * 6 + 4] - h.pos[i * 6 + 1]; if (Math.abs(dx) > 0.12 * dy) slant++; }
+  ok('大雨は本数が多く斜めに降る', nHeavy >= 2 * nRain && slant === nh && R.p.material.opacity > 0, '雨の2倍以上・全本が傾く',
+    nRain + '→' + nHeavy + '本・傾き ' + slant + '/' + nh);
+  // 雷
+  const scan = (t0, t1) => { let strong = 0, on = 0, k = 0, prev = 0, hiMax = 0, boltOn = 0, skyMax = 0;
+    for (let t = t0; t < t1; t += 0.02) { F.update(t); const f = F.flash(); k++; if (f > 0.05) on++; if (f > 0.8 && prev <= 0.8) strong++; prev = f;
+      hiMax = Math.max(hiMax, X.hemi.intensity); skyMax = Math.max(skyMax, X.skyDome.material.color.r); if (F.bolt.p.visible) boltOn++; }
+    return { strong, frac: on / k, hiMax, boltOn, skyMax }; };
+  const thunderless = [];
+  for (const w of ['clear', 'cloudy', 'rain', 'heavy', 'snow']) { C.setWeather(w, false); const r = scan(0, 60); if (r.strong > 0 || r.boltOn > 0) thunderless.push(w); }
+  C.setWeather('rain', true); const r2 = scan(0, 60); if (r2.strong > 0) thunderless.push('雨+雷(併用できない)');
+  ok('雷は雷・大雨+雷のときだけ', thunderless.length === 0, '晴れ・曇り・雨・大雨・雪は光らない', thunderless.join('・') || 'OK');
+  for (const [nm, w, th] of [['雷', 'thunder', false], ['大雨+雷', 'heavy', true]]) {
+    C.setWeather(w, th); const hi0 = X.hemi.intensity; const now = C.now();
+    const r = scan(0, 120);
+    ok(nm + 'が光る', r.strong >= 5 && r.frac < 0.05 && r.hiMax > 2 * hi0 && r.boltOn > 0 && r.skyMax > 1.5 && (w !== 'heavy' || (F.rain.p.visible && F.rain.n === nHeavy)) && now.thunder === true,
+      '120秒に5回以上・光る時間<5%・環境光2倍超・空が明るく・稲妻' + (w === 'heavy' ? '・大雨の粒' : ''),
+      r.strong + '回・' + (100 * r.frac).toFixed(1) + '%・' + (r.hiMax / hi0).toFixed(1) + '倍・空' + r.skyMax.toFixed(1) + '・稲妻' + r.boltOn);
+  }
+  const f1 = (F.update(37.31), F.flash()), f2 = (F.update(80), F.update(37.31), F.flash());
+  ok('雷が再現する', f1 === f2, '同じ時刻=同じ光り方', f1 + ' / ' + f2);
+  // 光っている時刻で消しても元へ戻る
+  C.setWeather('thunder'); let tf = 0; for (let t = 0; t < 60; t += 0.02) { F.update(t); if (F.flash() > 0.8) { tf = t; break; } }
+  C.setWeather('clear'); F.update(tf);
+  ok('雷を消すと元へ戻る', X.hemi.intensity === base.hi && X.skyDome.material.color.r === 1 && F.bolt.p.visible === false, '環境光・空・稲妻が元のまま',
+    (X.hemi.intensity / base.hi).toFixed(3) + '・' + X.skyDome.material.color.r + '・' + F.bolt.p.visible);
+  // メニューの押し方
+  let menu = null;
+  if (X.weatherClick) {
+    const st = () => { const q = C.now(); return q.weather + (q.thunder ? '+雷' : ''); };
+    const seq = [[['clear', 'heavy', 'thunder'], 'heavy+雷'], [['clear', 'thunder', 'heavy'], 'heavy+雷'], [['clear', 'thunder'], 'storm+雷'],
+      [['rain', 'thunder'], 'storm+雷'], [['heavy', 'thunder', 'thunder'], 'heavy'], [['thunder', 'thunder'], 'clear'], [['heavy', 'thunder', 'snow'], 'snow'],
+      [['heavy', 'thunder', 'cloudy'], 'cloudy']];
+    for (const [keys, want] of seq) { X.weatherClick('clear'); for (const k of keys) X.weatherClick(k); if (st() !== want) menu = menu || keys.join('→') + ' = ' + st(); }
+    X.weatherClick('clear');
+  } else menu = 'weatherClick なし';
+  ok('天候のメニュー(大雨と雷の併用)', menu === null, '大雨+雷・雷だけ・雷を消す・他を選ぶと雷が消える', menu || '8通りOK');
+  C.setWeather('clear'); C.setSeason('summer'); C.setTime('noon');
 }
 
 /* ---- 5c. 駅のフォーカスの列車(到着/発車) -----------------------------------
@@ -703,7 +830,7 @@ const TPROP = {};
   ok('既定は 昼・夏', /setLookUI\(\(saved&&saved\.time\)\|\|'noon',\(saved&&saved\.season\)\|\|'summer'\)/.test(src),
     "既定 'noon','summer'", X.LOOK_UI ? X.LOOK_UI.time + '・' + X.LOOK_UI.season : 'なし');
   // tick:時間が進み、空がカメラの真上へ移り、雪がカメラの周りに降る
-  C.setSeason('winter');
+  C.setSeason('winter'); C.setWeather('snow');
   X.camera.position.set(1234, 50, -567);
   const t0 = C.fxTime();
   C.tick(0.5);

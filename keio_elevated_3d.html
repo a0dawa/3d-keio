@@ -161,6 +161,7 @@
   <button id="btnXing">踏切名 OFF</button>
   <div class="seg" id="segTime" role="group" aria-label="時刻"><b>時刻</b><button data-k="morning">朝</button><button data-k="noon">昼</button><button data-k="evening">夕</button><button data-k="night">夜</button></div>
   <div class="seg" id="segSeason" role="group" aria-label="季節"><b>季節</b><button data-k="spring">春</button><button data-k="summer">夏</button><button data-k="autumn">秋</button><button data-k="winter">冬</button></div>
+  <div class="seg" id="segWeather" role="group" aria-label="天候"><b>天候</b><button data-k="clear">晴れ</button><button data-k="cloudy">曇り</button><button data-k="rain">雨</button><button data-k="heavy">大雨</button><button data-k="thunder">雷</button><button data-k="snow">雪</button></div>
 </div>
 
 <div class="panel" id="spd">
@@ -847,7 +848,7 @@ function mkPhong(o){return mkMat('MeshPhongMaterial',o);}
 const SKY_R=16000;
 const skyDome=(function(){
   const m=new THREE.Mesh(new THREE.SphereGeometry(SKY_R,32,16),
-    mkMat('MeshBasicMaterial',{map:SKY_TEX,side:THREE.BackSide,fog:false,depthWrite:false}));
+    mkMat('MeshBasicMaterial',{map:SKY_TEX,color:0xffffff,side:THREE.BackSide,fog:false,depthWrite:false}));   // 色は雷で明るくする
   m.renderOrder=-1;scene.add(m);return m;
 })();
 const DS={side:THREE.DoubleSide};
@@ -8024,22 +8025,57 @@ const CINE=(function(){
     winter:{n:'冬', ground:0xc0c2b2, tree:[0x8f8a76,0x7d7a68,0x9a927e], sakura:0xa6927c},
   };
 
-  let curTime='noon', curSeason='summer';
+  let curTime='noon', curSeason='summer', farCut=0;
+  /* ---- 天候(2026-10-12 利用者指示:晴れ・曇り・雨・大雨・雷・雪。大雨と雷は併用できる) --------------
+     時刻の表(TIME)に重ねて掛ける。晴れは掛けない(既定の見え方のまま)。雷だけを選ぶと 'storm'(暗い雲と雨に雷)。
+       cloud … 空を同じ明るさの灰へ寄せる割合 / dim … その灰の明るさ(地平の見え方に掛ける)
+       si・hi … 直射光・環境光に掛ける / fog … フォグの距離に掛ける(見通しが悪くなる)
+       rain … 雨の粒(1=雨・2=大雨) / snow … 雪の粒 / wet … 地表を濡れて暗く / cover … 地表と木を雪で白く */
+  const WEATHER={
+    clear :{n:'晴れ'},
+    cloudy:{n:'曇り', cloud:0.85, dim:0.92, si:0.40, hi:1.02, fog:0.70},
+    rain  :{n:'雨',   cloud:0.95, dim:0.74, si:0.22, hi:0.86, fog:0.30, rain:1, wet:0.84},
+    heavy :{n:'大雨', cloud:1.00, dim:0.56, si:0.12, hi:0.70, fog:0.13, rain:2, wet:0.74},
+    storm :{n:'雷',   cloud:1.00, dim:0.48, si:0.12, hi:0.64, fog:0.25, rain:1, wet:0.80},
+    snow  :{n:'雪',   cloud:0.95, dim:0.90, si:0.30, hi:1.05, fog:0.22, snow:1, cover:0.62},
+  };
+  let curWeather='clear', curThunder=false;
+  const wxOf=()=>WEATHER[curWeather]||WEATHER.clear;
+  const fogMul=()=>(wxOf().fog||1);
+  // 見せたい色(16進)を、明るさ g(0〜1)のやや青みの灰へ c だけ寄せる
+  const H2=h=>[((h>>16)&255)/255,((h>>8)&255)/255,(h&255)/255];
+  const lumH=h=>{const c=H2(h); return 0.2126*c[0]+0.7152*c[1]+0.0722*c[2];};
+  function toGray(hex,g,c){
+    const a=H2(hex), t=[g*0.97,g*0.99,g*1.03];
+    const r=a.map((v,i)=>Math.min(1,Math.max(0,v+(t[i]-v)*c)));
+    return (Math.round(r[0]*255)<<16)|(Math.round(r[1]*255)<<8)|Math.round(r[2]*255);
+  }
+  // 時刻×天候で、光・空・フォグを決める(時刻と天候のどちらを先に指定しても同じ結果)
+  const WXB={hi:1, fog:new THREE.Color(), bg:new THREE.Color()};
+  function applyAtmos(){
+    const t=TIME[curTime]||TIME.noon, w=wxOf();
+    sun.color.copy(srgb(t.sun)); sun.intensity=t.si*(w.si||1);
+    hemi.color.copy(srgb(t.hs)); hemi.groundColor.copy(srgb(t.hg)); hemi.intensity=t.hi*(w.hi||1);
+    renderer.toneMappingExposure=t.expo;
+    // 空は"見せたい色"から逆算する。フォグは地平と同じ値(遠景が空へ溶ける)
+    let sk=t.sky;
+    if(w.cloud){ const g=lumH(sk.hor)*w.dim;
+      sk={top:toGray(sk.top,g*0.92,w.cloud), hor:toGray(sk.hor,g,w.cloud), bot:toGray(sk.bot,g,w.cloud), glow:toGray(sk.glow,g,w.cloud)}; }
+    SKY.TOP=invTone(sk.top); SKY.HOR=invTone(sk.hor);
+    SKY.BOT=invTone(sk.bot); SKY.SUN=invTone(sk.glow);
+    rebuildSky();
+    scene.fog.color.copy(srgb(SKY.HOR));
+    scene.fog.near=t.fog[0]*fogMul(); scene.fog.far=t.fog[1]*fogMul();
+    scene.background.copy(srgb(SKY.HOR));
+    skyDome.material.color.setScalar(1);
+    WXB.hi=hemi.intensity; WXB.fog.copy(scene.fog.color); WXB.bg.copy(scene.background);
+  }
   function setTime(k){
     const t=TIME[k]||TIME.noon; curTime=k;
     const a=(t.az||0)*Math.PI/180, e=(t.el||0)*Math.PI/180;
     setSunDir(t.dir?Object.assign({},t.dir)
       :{x:Math.cos(e)*Math.cos(a)*4000, y:Math.sin(e)*4000, z:Math.cos(e)*Math.sin(a)*4000});
-    sun.color.copy(srgb(t.sun)); sun.intensity=t.si;
-    hemi.color.copy(srgb(t.hs)); hemi.groundColor.copy(srgb(t.hg)); hemi.intensity=t.hi;
-    renderer.toneMappingExposure=t.expo;
-    // 空は"見せたい色"から逆算する。フォグは地平と同じ値(遠景が空へ溶ける)
-    SKY.TOP=invTone(t.sky.top); SKY.HOR=invTone(t.sky.hor);
-    SKY.BOT=invTone(t.sky.bot); SKY.SUN=invTone(t.sky.glow);
-    rebuildSky();
-    scene.fog.color.copy(srgb(SKY.HOR));
-    scene.fog.near=t.fog[0]; scene.fog.far=t.fog[1];
-    scene.background.copy(srgb(SKY.HOR));
+    applyAtmos();
     NIGHT.set(!!t.lights);      // 窓・街灯・ホームの灯り(8b章)
     pidsSetTime(k);             // 発車標の時刻(7章)
     applyLook();                // 地表・樹木は時刻でも明るさが変わる
@@ -8111,18 +8147,104 @@ const CINE=(function(){
       }
       o.p.geometry.attributes.position.needsUpdate=true;
     }
+    /* 雨:線分(落ちる向きに伸ばした筋)。雪と同じく世界に固定した場をカメラの周り RBOX 四方・上下 RV で巡回させる。
+       大雨は本数を増やし、風で斜めに流す。1回の描画(LineSegments。本数は drawRange で切り替える) */
+    const RBOX=70, RV=40, RNEAR=2.5;
+    const RSPEC={
+      rain :{n:5000, fall:8.0, len:0.55, wind:0.6, op:0.38},
+      heavy:{n:14000,fall:10.0,len:0.95, wind:2.6, op:0.55},
+    };
+    const rain=(function(){
+      const n=RSPEC.heavy.n, pos=new Float32Array(n*6), seed=new Float32Array(n*4);
+      for(let i=0;i<n*4;i++) seed[i]=Math.random();
+      const g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.BufferAttribute(pos,3));
+      const m=new THREE.LineBasicMaterial({color:srgb(0xc9d3dd),transparent:true,opacity:0.4,depthWrite:false});
+      const p=new THREE.LineSegments(g,m); p.frustumCulled=false; p.visible=false; scene.add(p);
+      return {p:p,pos:pos,seed:seed,n:0,k:null,base:srgb(0xc9d3dd)};
+    })();
+    function placeRain(o,k,t){
+      const cx=camera.position.x, cy=camera.position.y, cz=camera.position.z, a=o.pos, s=o.seed, dl=k.len/k.fall;
+      for(let i=0;i<o.n;i++){
+        const r0=s[i*4], r1=s[i*4+1], r2=s[i*4+2], r3=s[i*4+3], sp=k.fall*(0.85+0.3*r3);
+        const y=cy+RV/2-((((r1*RV+sp*t)%RV)+RV)%RV);
+        const x=wrap(r0*RBOX+k.wind*t,cx,RBOX), z=wrap(r2*RBOX,cz,RBOX);
+        const off=(y<0)||Math.hypot(x-cx,y-cy,z-cz)<RNEAR;
+        // 下端(今の位置)と上端(少し前の位置=風上・上)
+        a[i*6]=x; a[i*6+1]=off?-50:y; a[i*6+2]=z;
+        a[i*6+3]=x-k.wind*dl; a[i*6+4]=off?-50:y+sp*dl; a[i*6+5]=z;
+      }
+      o.p.geometry.attributes.position.needsUpdate=true;
+    }
+    /* 雷:光る時刻は世界時間 t だけで決まる(撮り直しても同じ所で光る)。600秒の周期に 4〜14秒おきの落雷を並べ、
+       1回の落雷は「強く光る→少し暗く→もう一度光る→消える」(半分ほどは1回だけ)。光る間は環境光・空・フォグを明るくし、
+       遠く(2.5〜4.5km)にジグザグの稲妻を出す */
+    const BOLT=(function(){
+      let sd=12345; const rnd=()=>((sd=(sd*1103515245+12345)&0x7fffffff)/0x7fffffff);
+      const T=[]; for(let t=3+rnd()*4; t<600; t+=6+rnd()*12) T.push({t:t,dbl:rnd()<0.55,a:rnd()*6.2832,d:2500+rnd()*2000,s:Math.floor(rnd()*1e6)});
+      return T;
+    })();
+    const BOLT_P=600;
+    function strikeAt(t){ const tt=((t%BOLT_P)+BOLT_P)%BOLT_P; let b=null; for(const q of BOLT){ if(q.t<=tt) b=q; else break; } return b?{b:b,dt:tt-b.t}:null; }
+    function flashOf(dt,dbl){
+      if(dt<0) return 0;
+      if(dt<0.07) return 1;
+      if(!dbl) return dt<0.6?Math.exp(-(dt-0.07)/0.09):0;
+      if(dt<0.16) return 0.22;
+      if(dt<0.24) return 0.85;
+      return dt<0.8?0.85*Math.exp(-(dt-0.24)/0.11):0;
+    }
+    const bolt=(function(){
+      const N=48, g=new THREE.BufferGeometry(), pos=new Float32Array(N*6*3);
+      g.setAttribute('position',new THREE.BufferAttribute(pos,3));
+      const m=new THREE.MeshBasicMaterial({color:new THREE.Color(3.2,3.4,4.0),fog:false,transparent:true,depthWrite:false,
+        blending:THREE.AdditiveBlending,side:THREE.DoubleSide});
+      const p=new THREE.Mesh(g,m); p.frustumCulled=false; p.visible=false; p.renderOrder=1; scene.add(p);
+      return {p:p,pos:pos,N:N,seed:-1};
+    })();
+    function shapeBolt(b){                     // 稲妻の帯(雲の底 1400m → 地表)。カメラに向けた幅 8m の帯をジグザグに
+      if(bolt.seed===b.s&&bolt.cam&&Math.hypot(bolt.cam[0]-camera.position.x,bolt.cam[1]-camera.position.z)<200) return;
+      bolt.seed=b.s; bolt.cam=[camera.position.x,camera.position.z];
+      let sd=b.s||1; const rnd=()=>((sd=(sd*1103515245+12345)&0x7fffffff)/0x7fffffff);
+      const cx=camera.position.x+Math.cos(b.a)*b.d, cz=camera.position.z+Math.sin(b.a)*b.d;
+      const rx=-Math.sin(b.a), rz=Math.cos(b.a), W=8;      // 視線に直角な横の向き
+      const P=[]; let x=0;
+      for(let i=0;i<=bolt.N;i++){ P.push([cx+rx*x, 1400*(1-i/bolt.N), cz+rz*x]); x+=(rnd()-0.5)*90; }
+      const a=bolt.pos; let k=0;
+      for(let i=0;i<bolt.N;i++){ const A=P[i], B=P[i+1], w=W*(1-0.6*i/bolt.N);
+        const q=[[A[0]-rx*w,A[1],A[2]-rz*w],[A[0]+rx*w,A[1],A[2]+rz*w],[B[0]+rx*w,B[1],B[2]+rz*w],[B[0]-rx*w,B[1],B[2]-rz*w]];
+        for(const j of [0,1,2,0,2,3]){ a[k++]=q[j][0]; a[k++]=q[j][1]; a[k++]=q[j][2]; } }
+      bolt.p.geometry.attributes.position.needsUpdate=true;
+    }
+    let thunder=false, flash=0;
     return {
-      set(season,night){
-        snow.p.visible=(season==='winter'); petal.p.visible=(season==='spring');
+      set(w,season,night){
+        snow.p.visible=!!w.snow; petal.p.visible=(season==='spring'&&!w.rain&&!w.snow);
         const d=night?0.45:1;
         snow.p.material.color.copy(snow.base).multiplyScalar(d);
         petal.p.material.color.copy(petal.base).multiplyScalar(d);
+        const rk=w.rain===2?RSPEC.heavy:(w.rain?RSPEC.rain:null);
+        rain.k=rk; rain.n=rk?rk.n:0; rain.p.visible=!!rk;
+        rain.p.geometry.setDrawRange(0,rain.n*2);
+        rain.p.material.opacity=rk?rk.op:0;
+        rain.p.material.color.copy(rain.base).multiplyScalar(night?0.4:1);
+        thunder=!!w.thunder; if(!thunder){ flash=0; bolt.p.visible=false; }
       },
       update(t){
         if(snow.p.visible) place(snow,SPEC.snow,t);
         if(petal.p.visible) place(petal,SPEC.petal,t);
+        if(rain.p.visible&&rain.k) placeRain(rain,rain.k,t);
+        if(thunder){
+          const s=strikeAt(t); flash=s?flashOf(s.dt,s.b.dbl):0;
+          hemi.intensity=WXB.hi*(1+2.6*flash);
+          scene.fog.color.copy(WXB.fog).multiplyScalar(1+1.8*flash);
+          scene.background.copy(WXB.bg).multiplyScalar(1+1.8*flash);
+          skyDome.material.color.setScalar(1+2.4*flash);
+          bolt.p.visible=!!s&&flash>0.3;
+          if(bolt.p.visible) shapeBolt(s.b);
+        }
       },
-      snow:snow, petal:petal, SPEC:SPEC, BOX:BOX, V:V, NEAR:NEAR,
+      flash:()=>flash, strikeAt:strikeAt, BOLT:BOLT,
+      snow:snow, petal:petal, rain:rain, bolt:bolt, SPEC:SPEC, RSPEC:RSPEC, BOX:BOX, V:V, NEAR:NEAR, RBOX:RBOX, RV:RV, RNEAR:RNEAR,
     };
   })();
 
@@ -8131,24 +8253,34 @@ const CINE=(function(){
   function applyLook(){
     const s=SEASON[curSeason]||SEASON.summer;
     const dark=(TIME[curTime]&&TIME[curTime].lights)?GROUND_NIGHT:1;
-    MAT.ground.color.copy(srgb(s.ground)).multiplyScalar(dark);
+    const w=wxOf(), wet=w.wet||1, cov=w.cover||0, SNOWC=srgb(0xe9edf1).multiplyScalar(dark);   // 雨=濡れて暗く・雪=白く
+    MAT.ground.color.copy(srgb(s.ground)).multiplyScalar(dark*wet);
     if(LU.tint){
-      LU.tint(srgb(s.ground).multiplyScalar(dark));
+      LU.tint(srgb(s.ground).multiplyScalar(dark*wet).lerp(SNOWC,cov));
       // 実データの緑(公園・農地・山林)があるときは、既定の地表(住宅地・商業地…)を灰褐色へ寄せる。全面が芝生に見えない
-      MAT.ground.color.lerp(srgb(URBAN_GROUND).multiplyScalar(dark),URBAN_MIX);
+      MAT.ground.color.lerp(srgb(URBAN_GROUND).multiplyScalar(dark*wet),URBAN_MIX);
     }
+    if(cov) MAT.ground.color.lerp(SNOWC,cov);
     // 樹木は登録簿の順=インスタンスの順。種別(桜/一般)で色を選ぶ
     const col=new THREE.Color();
     for(let i=0;i<CITY.trees.length;i++){
       const tr=CITY.trees[i];
       const h=(tr.kind==='桜')?s.sakura:s.tree[(i*7)%s.tree.length];
       setSrgb(col,h).multiplyScalar(dark);
+      if(cov) col.lerp(SNOWC,cov*0.55);       // 雪が積もった木
       CITY.crown.setColorAt(i,col);
     }
     if(CITY.crown.instanceColor)CITY.crown.instanceColor.needsUpdate=true;
-    FX.set(curSeason, dark<1);    // 冬=雪 / 春=桜。夜は粒の色を落とす
+    FX.set(Object.assign({thunder:curThunder},w), curSeason, dark<1);    // 雪・雨・雷(天候)/ 春=桜(雨と雪の日は無し)。夜は粒の色を落とす
   }
   function setSeason(k){ curSeason=k; applyLook(); }
+  /* 天候:k は WEATHER のキー。thunder は大雨と雷(storm)にだけ付く(雷だけ=storm) */
+  function setWeather(k,thunder){
+    if(k==='thunder'){ k='storm'; thunder=true; }
+    if(!WEATHER[k]) k='clear';
+    curWeather=k; curThunder=(k==='storm')||(k==='heavy'&&!!thunder);
+    applyAtmos(); applyLook();
+  }
 
   /* ---- カメラ ---------------------------------------------------------- */
   function aimAt(px,py,pz,lx,ly,lz){
@@ -8257,13 +8389,13 @@ const CINE=(function(){
      縮めて霞ませると見た目を保ったまま軽くなる。far=0 で時刻の既定へ戻す。
      遠方面を縮めると空ドーム(R=16,000m)が切り落とされるので、
      render() でドームをカメラの真上へ移し、遠方面の内側へ縮める。 */
-  let farCut=0;
   function setFar(far,fogNear,fogFar){
     farCut=far||0;
     const t=TIME[curTime]||TIME.noon;
     camera.far = farCut ? farCut : 30000;
-    scene.fog.near = farCut ? fogNear : t.fog[0];
-    scene.fog.far  = farCut ? fogFar  : t.fog[1];
+    const wm=fogMul();                         // 天候で見通しが悪いときは近い方
+    scene.fog.near = farCut ? Math.min(fogNear,wm<1?t.fog[0]*wm:Infinity) : t.fog[0]*wm;
+    scene.fog.far  = farCut ? Math.min(fogFar, wm<1?t.fog[1]*wm:Infinity) : t.fog[1]*wm;
     camera.updateProjectionMatrix();
     skyDome.scale.setScalar(farCut ? Math.min(1,farCut*0.92/SKY_R) : 1);
   }
@@ -8292,9 +8424,10 @@ const CINE=(function(){
   }
   return {
     begin(){cineOn=true;hideUI();},
-    setTime:setTime, setSeason:setSeason,
+    setTime:setTime, setSeason:setSeason, setWeather:setWeather,
     times:Object.keys(TIME), seasons:Object.keys(SEASON),
-    label:()=>TIME[curTime].n+'・'+SEASON[curSeason].n,
+    weathers:['clear','cloudy','rain','heavy','thunder','snow'],      // 画面のメニューの並び(thunder=雷。大雨と併用できる)
+    label:()=>TIME[curTime].n+'・'+SEASON[curSeason].n+(curWeather!=='clear'?'・'+(curWeather==='heavy'&&curThunder?'大雨と雷':WEATHER[curWeather].n):''),
     step:dt=>{stepWorld(dt);fxT+=dt;},   // 天候の粒も同じ世界時間で進める
     shotStation:shotStation, shotFront:shotFront, shotAerial:shotAerial, stage:stage, STAGE:STAGE,
     render:render, caption:caption, setFar:setFar, setShadow:setShadow,
@@ -8302,7 +8435,7 @@ const CINE=(function(){
     /* 実時間のループから毎コマ呼ぶ(画面のメニューで時刻・季節を選んだとき用)。
        撮影の render() と同じく、空はカメラの真上へ移し、雪・花びらを今の時刻で置き直す */
     tick(dt){fxT+=dt; skyDome.position.set(camera.position.x,0,camera.position.z); FX.update(fxT);},
-    now:()=>({time:curTime,season:curSeason}),
+    now:()=>({time:curTime,season:curSeason,weather:curWeather,thunder:curThunder}),
     stations:STA.map(s=>({n:s.n,x:s.x})),
     setSize(w,h){renderer.setPixelRatio(1);renderer.setSize(w,h,false);
       camera.aspect=w/h;camera.updateProjectionMatrix();},
@@ -8318,7 +8451,7 @@ window.K8API={makeCar:makeCar, setCarDoors:setCarDoors, renderer:renderer, K8:K8
    撮影モードと同じ CINE.setTime / setSeason を使う(太陽の向き・光の色・露出・空・フォグ・
    夜の灯り・地表と樹木の色・冬の雪/春の花びら)。選んだ組合せはこの端末に覚えておき、
    次に開いたときも使う(保存できない環境では既定の 昼・夏)。 */
-const LOOK_UI={time:'noon',season:'summer'};
+const LOOK_UI={time:'noon',season:'summer',weather:'clear',thunder:false};
 function setLookUI(t,s){
   if(t&&CINE.times.indexOf(t)>=0){LOOK_UI.time=t;CINE.setTime(t);}
   if(s&&CINE.seasons.indexOf(s)>=0){LOOK_UI.season=s;CINE.setSeason(s);}
@@ -8326,12 +8459,30 @@ function setLookUI(t,s){
   for(const b of document.querySelectorAll('#segSeason button')) b.classList.toggle('on',b.dataset.k===LOOK_UI.season);
   try{localStorage.setItem('keio3d.look',JSON.stringify(LOOK_UI));}catch(e){}
 }
+/* 天候のメニュー:晴れ・曇り・雨・大雨・雪はどれか1つ。雷は大雨と併用できる(大雨のときに押すと大雨+雷、
+   それ以外で押すと雷だけ=暗い雲と雨に雷)。雷をもう一度押すと消える(大雨+雷なら大雨に、雷だけなら晴れに) */
+function weatherClick(k){
+  let w=LOOK_UI.weather, th=LOOK_UI.thunder;
+  if(k==='thunder'){ if(th){ th=false; if(w==='storm') w='clear'; } else { th=true; if(w!=='heavy') w='storm'; } }
+  else if(k==='heavy'){ w='heavy'; }                                // 雷はそのまま(大雨+雷)
+  else { w=k; th=false; }
+  setWeatherUI(w,th);
+}
+function setWeatherUI(w,th){
+  CINE.setWeather(w,th);
+  const nw=CINE.now(); LOOK_UI.weather=nw.weather; LOOK_UI.thunder=nw.thunder;
+  for(const b of document.querySelectorAll('#segWeather button'))
+    b.classList.toggle('on',b.dataset.k==='thunder'?LOOK_UI.thunder:b.dataset.k===LOOK_UI.weather);
+  try{localStorage.setItem('keio3d.look',JSON.stringify(LOOK_UI));}catch(e){}
+}
 for(const b of document.querySelectorAll('#segTime button')) b.onclick=()=>setLookUI(b.dataset.k,null);
 for(const b of document.querySelectorAll('#segSeason button')) b.onclick=()=>setLookUI(null,b.dataset.k);
+for(const b of document.querySelectorAll('#segWeather button')) b.onclick=()=>weatherClick(b.dataset.k);
 {
   let saved=null;
   try{saved=JSON.parse(localStorage.getItem('keio3d.look')||'null');}catch(e){saved=null;}
   setLookUI((saved&&saved.time)||'noon',(saved&&saved.season)||'summer');
+  setWeatherUI((saved&&saved.weather)||'clear',!!(saved&&saved.thunder));
 }
 
 trains.forEach(placeTrain);

@@ -132,8 +132,10 @@ class DirLight extends Obj3D {
    リニアへ変換してから渡すので、ここに入る値はリニアである)。
    Proxy のままだと「時刻ごとに光の色が本当に変わったか」を測れない。 */
 class Color {
-  constructor() { this.r = 1; this.g = 1; this.b = 1; return soft(this); }
+  constructor(r, g, b) { this.r = 1; this.g = 1; this.b = 1; if (typeof r === 'number' && typeof g === 'number') this.setRGB(r, g, b); return soft(this); }
   setRGB(r, g, b) { this.r = r; this.g = g; this.b = b; return this; }
+  setScalar(s) { return this.setRGB(s, s, s); }
+  lerp(c, a) { return this.setRGB(this.r + (c.r - this.r) * a, this.g + (c.g - this.g) * a, this.b + (c.b - this.b) * a); }
   copy(c) { return this.setRGB(c.r, c.g, c.b); }
   clone() { return new Color().copy(this); }
   multiplyScalar(s) { return this.setRGB(this.r * s, this.g * s, this.b * s); }
@@ -160,6 +162,11 @@ class HemiLight extends Obj3D {
 // 点群(雪・花びら)。位置の配列と表示状態を実体で持つ
 class Points extends Obj3D {
   constructor(g, mat) { super(); this.geometry = g; this.material = mat; this.isPoints = true;
+    this.frustumCulled = true; return soft(this); }
+}
+// 線分(雨)。点群と同じく位置の配列と表示状態を実体で持つ
+class LineSeg extends Obj3D {
+  constructor(g, mat) { super(); this.geometry = g; this.material = mat; this.isLineSegments = true;
     this.frustumCulled = true; return soft(this); }
 }
 class Mesh extends Obj3D {
@@ -256,7 +263,7 @@ const REAL = {
   SphereGeometry: param('Sph'), ConeGeometry: param('Cone'), CircleGeometry: param('Cir'),
   MeshLambertMaterial: Mat('lambert'), MeshBasicMaterial: Mat('basic'),
   MeshPhongMaterial: Mat('phong'), MeshStandardMaterial: Mat('standard'),
-  LineBasicMaterial: Mat('line'), PMREMGenerator: PMREM, Points, PointsMaterial: Mat('points'),
+  LineBasicMaterial: Mat('line'), LineSegments: LineSeg, PMREMGenerator: PMREM, Points, PointsMaterial: Mat('points'),
   DoubleSide: 2, FrontSide: 0, BackSide: 1,
   // three.js の定数(実値)。スタブが Proxy を返すと材質の設定を数値で検査できない
   LinearEncoding: 3000, sRGBEncoding: 3001,

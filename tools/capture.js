@@ -109,12 +109,13 @@ function findChromium(pw) {
 }
 
 /* ---- 3. 絵コンテ ----------------------------------------------------------
-   駅ごとに「時刻・季節」を割り当て、朝/昼/夕/夜と春夏秋冬を一巡させる。
+   駅ごとに「時刻・季節(・天候)」を割り当て、朝/昼/夕/夜と春夏秋冬を一巡させる。
+   天候を書かない所は晴れ。冬は雪を降らせる(2026-10-12 から雪は天候で選ぶ。冬の季節だけでは降らない)。
    駅のフォーカスの時刻がそのまま次の駅までの走行にも続く(切り替えは駅の頭)。 */
 const LOOK = [
   ['morning', 'spring'], ['noon', 'spring'], ['noon', 'summer'], ['evening', 'summer'],
   ['night', 'summer'], ['morning', 'autumn'], ['noon', 'autumn'], ['evening', 'autumn'],
-  ['noon', 'winter'], ['night', 'winter'],
+  ['noon', 'winter', 'snow'], ['night', 'winter', 'snow'],
 ];
 const FRONT_SHARE = 0.55;    // 駅間のうち前面展望が受け持つ割合(残りは俯瞰)
 
@@ -129,15 +130,15 @@ function storyboard(stations) {
     /* 駅のフォーカスには列車の到着か発車を入れる(CINE.stage)。向きと到着/発車は
        駅の番号で決めて、下り到着→上り到着→下り発車→上り発車…と一巡させる */
     const g = OPT.staFrom + i;
-    push({ kind: 'station', i: i, sta: S[i], time: look[0], season: look[1],
+    push({ kind: 'station', i: i, sta: S[i], time: look[0], season: look[1], weather: look[2] || 'clear',
            n: Math.round(OPT.dwell * OPT.fps), main: S[i].n,
            stage: { i: g, dir: g % 2 === 0 ? 1 : -1, mode: Math.floor(g / 2) % 2 === 0 ? 'arrive' : 'depart' } });
     if (i + 1 < S.length) {
       const a = S[i].x, b = S[i + 1].x, mid = a + (b - a) * FRONT_SHARE;
-      push({ kind: 'front', sta: S[i], time: look[0], season: look[1],
+      push({ kind: 'front', sta: S[i], time: look[0], season: look[1], weather: look[2] || 'clear',
              s0: a, s1: mid, n: Math.round(OPT.frontSec * OPT.fps),
              main: S[i].n + ' → ' + S[i + 1].n });   // 前面展望は表記しない(利用者指示)
-      push({ kind: 'aerial', sta: S[i], time: look[0], season: look[1],
+      push({ kind: 'aerial', sta: S[i], time: look[0], season: look[1], weather: look[2] || 'clear',
              s0: mid, s1: b, n: Math.round(OPT.airSec * OPT.fps),
              main: S[i].n + ' → ' + S[i + 1].n });   // 俯瞰展望も表記しない(利用者指示)
     }
@@ -208,7 +209,7 @@ async function runWorker(id, pw, exe, shots, log) {
 
   let done = 0;
   for (const sh of shots) {
-    await page.evaluate(([t, s]) => { CINE.setTime(t); CINE.setSeason(s); }, [sh.time, sh.season]);
+    await page.evaluate(([t, s, w]) => { CINE.setTime(t); CINE.setSeason(s); if (CINE.setWeather) CINE.setWeather(w); }, [sh.time, sh.season, sh.weather]);
     const t0 = Date.now();
     for (let k = 0; k < sh.n; k++) {
       if (sh.skip && sh.skip.has(k)) continue;
