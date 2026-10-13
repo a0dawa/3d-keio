@@ -81,12 +81,15 @@ const need = (s) => Math.max(REQ.DECK_MIN, X.outerOff(s) + REQ.CLEAR, X.platOute
 // 駅ごとに必要幅が確保されているか(ホームが桁からはみ出さない)
 {
   let bad = null;
-  for (const st of X.STA) {
-    if (st.x > X.DECK_END) continue;                    // 仙川は地上区間
-    const h = X.deckHalf(st.x), e = X.PLAT_EDGE[st.t] || 0;
-    if (h < e + REQ.PLAT_MARGIN - 1e-9 && !bad) bad = [st.n, (h - e).toFixed(2)];
+  // 描いたホーム(登録簿 PLATS。待避線に沿って曲がる縁も edge(s) で)の外縁を 5m ごとに桁の半幅と比べる(2026-10-13:駅の中心の表の値だけでは
+  // 芦花公園の拡幅や曲がる縁を見ない)
+  let n = 0;
+  for (const q of X.PLATS) for (let s = q.x0; s <= q.x1 + 1e-6; s += 5) {
+    if (s > X.DECK_END) continue;                       // 仙川は地上区間
+    const e = Math.max(...[-1, 1].map((sg) => Math.abs(q.edge ? q.edge(s, sg) : q.off + sg * q.hw))), h = X.deckHalf(s); n++;
+    if (h < e + REQ.PLAT_MARGIN - 1e-9 && !bad) bad = ['s=' + s.toFixed(0), (h - e).toFixed(2)];
   }
-  ok('全駅でホームが桁に載る', bad === null, '違反なし', bad ? bad.join(' ') + 'm' : '違反なし');
+  ok('全駅でホームが桁に載る', bad === null && n > 300, '違反なし(5m ごと)', bad ? bad.join(' ') + 'm' : n + '点とも');
 }
 
 /* ---- 2. 架線:線路の上にあるか / 吊り点が柱の真下か ------------------------ */

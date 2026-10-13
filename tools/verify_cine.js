@@ -26,7 +26,7 @@ const X = require('./stub_three')(path,
   'sunFollow:sunFollow, SH_MAP:SH_MAP, DOM:DOM, srgb:srgb, zRunDown:zRunDown,' +
   'NIGHT:NIGHT, NIGHT_STAT:NIGHT_STAT, BLD_WIN_U:BLD_WIN_U, PLATS:PLATS, trains:trains, stopPosOf:stopPosOf, CAR_HALF:CAR_HALF,' +
   'STA_LIT_U:(typeof STA_LIT_U!=="undefined"?STA_LIT_U:null), MAT_BALLAST:MAT_BALLAST, deckHalf:deckHalf,' +
-  'K8M:K8M, TRIMMAT:TRIMMAT, M_BOG:M_BOG, M_PN:M_PN, M_SH:M_SH, M_PANS:M_PANS,' +
+  'K8M:K8M, K8_TEXCACHE:(typeof K8_TEXCACHE!=="undefined"?K8_TEXCACHE:null), TRIMMAT:TRIMMAT, M_BOG:M_BOG, M_PN:M_PN, M_SH:M_SH, M_PANS:M_PANS,' +
   'LU:(typeof LU!=="undefined"?LU:null), CARS_ALL:(typeof CARS_ALL!=="undefined"?CARS_ALL:[]), platRange:platRange,' +
   'setLookUI:(typeof setLookUI!=="undefined"?setLookUI:null), LOOK_UI:(typeof LOOK_UI!=="undefined"?LOOK_UI:null),' +
   'weatherClick:(typeof weatherClick!=="undefined"?weatherClick:null)');
@@ -215,7 +215,8 @@ const TPROP = {};
   { const U = X.BLD_WIN_U; C.setTime('noon'); const d = U.uWinNight.value; C.setTime('night'); const n = U.uWinNight.value;
     ok('建物の窓明かり(昼は消え・夜に灯る)', d === 0 && n >= 1.0, '昼 0・夜 ≥1.0', d + ' / ' + n.toFixed(2)); }
   /* 夜の駅に入る電車も照らされる(利用者指示:駅は明るいのに進入する電車が暗いまま)。
-     世界を進めて、ホームの範囲にいる車両の車体の発光(uLit)が 0.2 以上、ホームから 100m 以上離れた車両は 0、
+     世界を進めて、ホームの範囲にいる車両の車体の発光(uLit)が 0.2 以上、ホームから 100m 以上離れた車両は夜の下地だけ
+     (2026-10-13 利用者指摘:夜は前面が側面より暗い→車体に一様な下地。0.05〜0.2 でホームの中より小さい)、
      昼は全車 0。発光は車体の色を掛ける(シェーダに diffuseColor×uLit が入る) */
   {
     const cars = X.CARS_ALL.filter((c) => c.userData && c.userData.bodyMat);
@@ -229,11 +230,11 @@ const TPROP = {};
         const s = c.userData.s; if (s === undefined || !c.visible) continue;
         const d = dPlat(s), v = lit(c);
         if (d === 0) { inN++; if (!(v >= 0.2) && !inBad) inBad = 's=' + s.toFixed(0) + ' 発光' + v; }
-        if (d >= 100) { outN++; if (v !== 0 && !outBad) outBad = 's=' + s.toFixed(0) + ' 発光' + v; }
+        if (d >= 100) { outN++; if (!(v >= 0.05 && v <= 0.2) && !outBad) outBad = 's=' + s.toFixed(0) + ' 発光' + v; }
       }
     }
     ok('夜の駅の電車は照らされる', inN > 0 && inBad === null && outN > 0 && outBad === null,
-      'ホーム内≥0.2・100m外=0', inBad || outBad || ('ホーム内' + inN + '・外' + outN + '標本'));
+      'ホーム内≥0.2・100m外=夜の下地 0.05〜0.2', inBad || outBad || ('ホーム内' + inN + '・外' + outN + '標本'));
     C.setTime('noon');
     const dayLit = cars.filter((c) => lit(c) !== 0).length;
     ok('昼は電車を照らさない', dayLit === 0, '全車0', dayLit + '両');
@@ -273,8 +274,22 @@ const TPROP = {};
     const cm = [['頂点カラーの部品(スカート・前面・床下・冷房)', X.K8M.vc], ['細部', X.TRIMMAT], ['台車', X.M_BOG], ['パンタの枠', X.M_PN],
                 ['パンタの舟', X.M_SH], ['パンタの台枠', X.M_PANS]];
     const cmiss = cm.filter(([n, m]) => { const sh = { vertexShader: '#include <begin_vertex>', fragmentShader: '#include <emissivemap_fragment>', uniforms: {} };
-      try { m.onBeforeCompile(sh); } catch (e) { return true; } return !/diffuseColor\.rgb\*uStaLit\*staLitF\(vStaW\)/.test(sh.fragmentShader) || !sh.uniforms.uStaA; }).map((x) => x[0]);
-    ok('駅の照明で車両の部品も照らす', cmiss.length === 0, cm.length + '種(面の色を掛けた発光)', cmiss.length ? '未適用 ' + cmiss.join('・') : cm.length + '種とも');
+      try { m.onBeforeCompile(sh); } catch (e) { return true; } return !/uStaLit\*staLitF\(vStaW\)/.test(sh.fragmentShader) || !/max\(sl,uCarFill\)/.test(sh.fragmentShader) || !/diffuseColor\.rgb\*sl/.test(sh.fragmentShader) || !sh.uniforms.uStaA; }).map((x) => x[0]);
+    ok('駅の照明と夜の下地で車両の部品も照らす', cmiss.length === 0, cm.length + '種(面の色を掛けた発光・駅の外は下地)', cmiss.length ? '未適用 ' + cmiss.join('・') : cm.length + '種とも');
+    // 線路は下地を受けない(駅の外の線路まで明るくしない)
+    const tfill = mats.filter(([n, m]) => { const sh = { vertexShader: '#include <begin_vertex>', fragmentShader: '#include <emissivemap_fragment>', uniforms: {} };
+      try { m.onBeforeCompile(sh); } catch (e) { return false; } return /max\(sl,uCarFill\)/.test(sh.fragmentShader); }).map((x) => x[0]);
+    C.setTime('noon'); const dF = U.uCarFill ? U.uCarFill.value : -1; C.setTime('night'); const nF = U.uCarFill ? U.uCarFill.value : -1;
+    ok('夜の下地は車両だけ・夜だけ', tfill.length === 0 && dF === 0 && nF >= 0.05 && nF <= 0.2, '線路の材質に無い・昼0/夜0.05〜0.2', (tfill.length ? '線路に ' + tfill.join('・') : '線路に無い') + '・昼' + dF + '/夜' + nF);
+    // ロゴ・車番(塗装と板)は照明を受ける材質、表示器(LED)は光る材質(2026-10-13 利用者指摘:夜に 9000系の前面のロゴが光っていた)
+    if (X.K8_TEXCACHE) {
+      const ent = Object.entries(X.K8_TEXCACHE), bad2 = [];
+      for (const [k, m] of ent) { const paint = /^(logo|plate|fnum)/.test(k), led = /^(led|sled)/.test(k);
+        if (paint && (m.type === 'basic' || !m.userData.staLit)) bad2.push(k + '=光る'); if (led && m.type !== 'basic') bad2.push(k + '=照明を受ける'); }
+      const nL = ent.filter(([k]) => /^logo9_/.test(k)).length;
+      ok('ロゴ・車番は光らない(表示器は光る)', bad2.length === 0 && nL > 0 && ent.some(([k]) => /^plate/.test(k)), 'ロゴ・車番=照明を受ける・表示器=光る',
+        bad2.length ? bad2.slice(0, 3).join(' ') : ent.length + '枚(9000系のロゴ ' + nL + ')');
+    }
   }
   /* 駅部は夜に強く照らされている(利用者指示:もっともっと明るい)。駅の結合ジオメトリの発光は
      高架橋の数倍で、面の色(頂点カラー)を掛けて光ること(一様に足すと暗い外装まで白く浮く)。

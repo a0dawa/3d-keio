@@ -508,9 +508,11 @@ ok('乗務員モニターを置かない', !X.STRUCT.some((q) => q.tag === '乗�
 /* ---- ホームの拡幅と待避線の分岐(2026-10-11 利用者指示) --------------------------------------------
    ・明大前・桜上水・千歳烏山:島式2面4線のホームを1.5m 広く(5.0→6.5m)、本線と待避線の分岐を駅へ30m 寄せる
      (分岐の先端は駅の中心から 226.5m だった→196.5m)。待避線はホームの端で曲がり、ホームの縁とホームドアの列は線路に沿う
-   ・仙川の上りホーム(北の単式。3.4m)と井の頭線のホーム(3.4m)を5m 広く(8.4m)。高架の柱は井の頭線のホームと擁壁に立たない */
+   ・仙川の上りホーム(北の単式。3.4m)と井の頭線のホーム(3.4m)を5m 広く(8.4m)。高架の柱は井の頭線のホームと擁壁に立たない
+   2026-10-13 利用者指示:2面4線の本線と待避線の間を 11m に(以前 9.6m。ホームは 6.5+1.4=7.9m)、分岐をさらに駅へ50m 寄せる(196.5→146.5m)。
+   芦花公園の相対式ホームを2m ずつ広く(4.5→6.5m) */
 {
-  const RW = { QUAD: ['明大前', '桜上水', '千歳烏山'], QUAD_W: 5.0 + 1.5, TIP: 226.5 - 30, TIP_TOL: 3, EDGE: [1.40, 1.60], PSD_IN: 0.12,
+  const RW = { QUAD: ['明大前', '桜上水', '千歳烏山'], QUAD_W: 5.0 + 1.5 + 1.4, TIP: 226.5 - 30 - 50, TIP_TOL: 3, ROKA_W: 4.5 + 2, EDGE: [1.40, 1.60], PSD_IN: 0.12,
     SENGAWA_N: 3.4 + 5, INO_W: 3.4 + 5, INO_EDGE_IN: 5.5, INO_CLEAR: 0.5 };
   // ホームの幅
   let bW = null;
@@ -520,7 +522,9 @@ ok('乗務員モニターを置かない', !X.STRUCT.some((q) => q.tag === '乗�
   }
   { const st = X.STA.find((z) => z.n === '仙川'), q = X.PLATS.filter((q) => Math.abs((q.x0 + q.x1) / 2 - st.x) < 60 && q.off > 3).sort((a, b) => b.off - a.off)[0];
     if (!bW && (!q || Math.abs(2 * q.hw - RW.SENGAWA_N) > 0.01)) bW = '仙川の北 ' + (q ? (2 * q.hw).toFixed(2) : 'なし'); }
-  ok('ホームの幅(拡幅)', bW === null, '2面4線 ' + RW.QUAD_W + 'm・仙川の北 ' + RW.SENGAWA_N + 'm', bW || '一致');
+  { const st = X.STA.find((z) => z.n === '芦花公園'), L = X.PLATS.filter((q) => Math.abs((q.x0 + q.x1) / 2 - st.x) < 60);
+    if (!bW && (L.length !== 2 || L.some((q) => Math.abs(2 * q.hw - RW.ROKA_W) > 0.01))) bW = '芦花公園 ' + L.map((q) => (2 * q.hw).toFixed(2)).join('/'); }
+  ok('ホームの幅(拡幅)', bW === null, '2面4線 ' + RW.QUAD_W + 'm・仙川の北 ' + RW.SENGAWA_N + 'm・芦花公園 ' + RW.ROKA_W + 'm', bW || '一致');
   // 分岐の先端(本線→待避線)
   let bT = null, nT = 0;
   for (const n of RW.QUAD) {
@@ -633,6 +637,25 @@ const w = (s, n) => String(s) + ' '.repeat(Math.max(0, n -
       types.size + '種・鞄' + (100 * bag / P.length).toFixed(0) + '%・スマホ' + (100 * ph / P.length).toFixed(0) + '%' + (badArm ? '・腕の不一致' : '') + (badM ? '・' + badM : ''));
   }
 }
+/* ---- 階段・エスカレーターの幅(2026-10-13 利用者指示:ホームの幅が変わったので再調整)。検証側の決まり:
+   ・線路のある縁と井戸の間(通り道)は 1.5m 以上(島式は両側、相対式は線路の側)
+   ・広いホームで細い階段にしない:通り道が 2.1m を超えるなら井戸は 3.5m 以上
+   ・2面4線(ホーム 7.9m)の井戸は 3.5m 以上 ---- */
+{
+  let bad = null, n = 0, quadW = [];
+  for (const w of X.STAIRS.filter((q) => q.kind === '階段')) {
+    const q = X.PLATS.find((p) => w.s0 >= p.x0 - 1 && w.s1 <= p.x1 + 1 && w.o0 >= p.off - p.hw - 0.01 && w.o1 <= p.off + p.hw + 0.01); if (!q) continue;
+    const sm = (w.s0 + w.s1) / 2, ww = w.o1 - w.o0;
+    const cl = { '-1': w.o0 - q.edge(sm, -1), '1': q.edge(sm, 1) - w.o1 };
+    // 線路のある縁:縁から 2.6m 以内に線路の中心がある側
+    const sides = [-1, 1].filter((sg) => X.TRACKS.some((t) => sm >= t.x0 && sm <= t.x1 && sg * (t.zf(sm) - q.edge(sm, sg)) > 0.3 && sg * (t.zf(sm) - q.edge(sm, sg)) < 2.6));
+    n++;
+    for (const sg of sides) { if (cl[sg] < 1.5 - 1e-6 && !bad) bad = w.st.n + ' 通り道 ' + cl[sg].toFixed(2) + 'm'; if (cl[sg] > 2.1 + 1e-6 && ww < 3.5 - 1e-6 && !bad) bad = w.st.n + ' 通り道 ' + cl[sg].toFixed(2) + 'm に井戸 ' + ww.toFixed(2) + 'm'; }
+    if (['明大前', '桜上水', '千歳烏山'].indexOf(w.st.n) >= 0) quadW.push(ww);
+  }
+  ok('階段・エスカレーターの幅', bad === null && n >= 18 && quadW.length === 12 && quadW.every((v) => v >= 3.5 - 1e-6), '通り道 1.5m 以上・2.1m を超えるなら井戸 3.5m 以上・2面4線は 3.5m 以上',
+    bad || n + 'か所・2面4線 ' + (quadW.length ? Math.min(...quadW).toFixed(2) : '-') + 'm');
+}
 /* ---- 乗り降り(2026-10-12 利用者指示:扉が開いたらまず車内の人がホームに降りて階段やエレベーターへ進み、降車が終わったら
    ホームで待っていた人が乗る。自然な歩き方でぶつからないように)。明大前に下りの各停を停めて 150秒動かす。検証側の決まり:
    ・扉が開いて 10秒のうちに 20人以上が降りる。降りる人の最初の位置は扉の中心から 1.0m 以内・ホームの縁より線路の側(車内)
@@ -641,6 +664,10 @@ const w = (s, n) => String(s) + ' '.repeat(Math.max(0, n -
    ・歩く人どうし・歩く人と立っている人の中心が 0.3m 以上離れる。歩く人はホームの床の上の物(柱・ベンチ・自販機・EV・階段の囲い)に入らない
    ・列車が出て 120秒のうちに、乗った人の場所に人が戻る(階段から歩いて来る) ---- */
 {
+  // その s で近い方の縁(待避線の側の縁が曲がって狭くなる所では、ホームの中心が名目の中心からずれる)
+  const sideOf = (q, s, o) => (Math.abs(o - q.edge(s, -1)) < Math.abs(o - q.edge(s, 1)) ? -1 : 1);
+  // 乗る人の側:行き先(車内=ホームの外)がどちらの縁の外か
+  const boardSide = (w) => { const L = w.path[w.path.length - 1]; return L[1] < w.q.edge(L[0], -1) ? -1 : (L[1] > w.q.edge(L[0], 1) ? 1 : sideOf(w.q, w.m.s, w.m.o)); };
   const RF = { ALIGHT_MIN: 20, DOOR_TOL: 1.0, EXIT_EV: 1.8, GAP: 0.3, CLEAR: 1.5, BACK: 120 };
   const st = X.STA.find((z) => z.n === '明大前'), t = X.trains.find((u) => u.dir > 0 && u.kind === '各停');
   for (const u of X.trains) if (u !== t) { u.x = u.dir > 0 ? -30000 : 30000; u.st = 'wait'; }
@@ -658,10 +685,10 @@ const w = (s, n) => String(s) + ' '.repeat(Math.max(0, n -
         seen.set(w, { t0: T });
         const rw = seen.row, ds = rw ? Math.min(...rw.open.map((c) => Math.abs(c - w.s))) : 99;
         if (w.kind === '降') { if (tOpen !== null && T - tOpen <= 10) nOff10++;
-          const e = Math.sign(w.o - w.q.off), edge = w.q.edge(w.s, e);
+          const e = sideOf(w.q, w.s, w.o), edge = w.q.edge(w.s, e);
           if (ds > RF.DOOR_TOL || e * (w.o - edge) <= 0) bad = '降りる人が扉の外から s=' + (w.s - st.x).toFixed(1); }
         if (w.kind === '乗') {
-          const D = w.m.door, e = Math.sign(w.m.o - w.q.off), oe = w.q.edge(D, e);
+          const D = w.m.door, e = boardSide(w), oe = w.q.edge(D, e);
           const near = A.find((o) => o.kind === '降' && o.door && o.door.c === D && Math.hypot(o.s - D, o.o - oe) < RF.CLEAR);
           if (near) bad = '降車が済む前に乗り始めた 扉 s=' + (D - st.x).toFixed(1);
         }
@@ -679,8 +706,8 @@ const w = (s, n) => String(s) + ' '.repeat(Math.max(0, n -
       if (w.kind === '降' && kk < n - 2) bad = bad || '降りた人が出口の前で消えた';
       if (w.kind === '降') { const okExit = X.STAIRS.some((q) => q.st === st && (q.kind === '階段' ? (s >= q.s0 - 0.5 && s <= q.s1 + 0.5 && o >= q.o0 - 0.3 && o <= q.o1 + 0.3) : Math.hypot(s - (q.s0 + q.s1) / 2, o - (q.o0 + q.o1) / 2) < RF.EXIT_EV + 1.0));
         if (!okExit) bad = bad || '降りた人が階段・EV でない所で消えた s=' + (s - st.x).toFixed(1) + ' o=' + o.toFixed(2); }
-      if (w.kind === '乗') { const e = Math.sign(w.m.o - w.q.off), oe = w.q.edge(w.m.door, e);
-        if (Math.abs(s - w.m.door) > RF.DOOR_TOL || e * (o - oe) <= 0) bad = bad || '乗る人が扉の外で消えた'; }
+      if (w.kind === '乗') { const e = boardSide(w), oe = w.q.edge(w.m.door, e);
+        if (Math.abs(s - w.m.door) > RF.DOOR_TOL || e * (o - oe) <= 0) { if (process.env.DBG && !bad) console.log('BOARD', (w.m.door - st.x).toFixed(1), 'last', (s - st.x).toFixed(2), o.toFixed(2), 'oe', oe.toFixed(2), 'e', e, 'k', kk, n, JSON.stringify(w.path.map((q) => [(q[0] - st.x).toFixed(1), q[1].toFixed(2)])), 'skips', X.FLOW.skips); bad = bad || '乗る人が扉の外で消えた'; } }
     }
   }
   if (process.env.DBG && hiddenAtDep) for (const m of hiddenAtDep) if (!m.shown) console.log('NB', (m.s - st.x).toFixed(1), m.o.toFixed(2), JSON.stringify(X.FLOW.walkers.filter((z) => z.m === m).map((z) => [z.kind, z.k, z.path.length, (z.s - st.x).toFixed(2), z.o.toFixed(2), z.path.map(q=>[(q[0]-st.x).toFixed(1),q[1].toFixed(2)])])), X.FLOW.respawn.filter((r) => r.m === m).map((r) => r.at));

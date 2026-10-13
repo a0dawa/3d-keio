@@ -484,7 +484,10 @@ const BUMPS=[{c:STA[0].x,a:8.1,h:260,t:180},{c:STA[1].x,a:3.05},{c:STA[5].x,a:3.
    2026-10-11 利用者指示:ホームを1.5m 広げ(待避線を外へ1.5m=振り分け 8.1→9.6、待避線は±11.6)、本線と待避線の分岐を
    駅へ30m 寄せた(一定区間の半長 118→88)。一定区間がホームの半長(105)より短いので、待避線はホームの端で曲がる。
    ホームの縁とホームドアはその線路に沿う(7章 edgeShift) */
-const LOOP={a:9.6,h:88,t:110};
+/* 2面4線の待避線:本線(±2.0)から a だけ外・一定区間の半長 h・振り分けの長さ t。2026-10-13 利用者指示で本線と待避線の間を
+   11m に(9.6→11.0。待避線 ±11.6→±13.0、ホームは 7.9m)、分岐を駅へさらに50m 寄せた(h+t 198→148。分岐の先端は駅の中心から約147m)。
+   振り分けの最も急な所は半径 約109m(t²/6a)。ホームの端(±105)は振り分けの途中なので、待避線の側の縁はそこで曲がって狭くなる */
+const LOOP={a:11.0,h:63,t:85};
 function mainOff(x){let o=2.0;for(const b of BUMPS)o+=b.a*plateau(x,b.c,b.h||112,b.t||160);return o;}
 // --- ホームの範囲と外縁(桁幅の算出と停止位置の双方が参照する) ---
 const PLAT_HALF=105, STOP_BACK=3;         // ホーム長210m(半長105m)
@@ -503,12 +506,16 @@ function stopPosOf(st,dir){
   return (d>0 ? r[1]-STOP_BACK : r[0]+STOP_BACK) + adj;
 }
 // 駅種別ごとのホーム外縁[m](7章の PLT と同じ値。片方だけ変えないこと)
-const PLAT_EDGE={isl:3.50, hachi:3.00, side:8.10, quad:10.05, ctx:8.55, gnd:14.55};
+const PLAT_EDGE={isl:3.50, hachi:3.00, side:8.10, quad:11.45, ctx:8.55, gnd:14.55};
+// 駅ごとに型の値と違うホームの外縁[m](2026-10-13 利用者指示:芦花公園の相対式ホームを2m ずつ広く。背面=外へ。7章の PLT_BY_STA と同じ値)
+const PLAT_EDGE_STA={'芦花公園':10.10};
+const platEdgeOf=st=>(PLAT_EDGE_STA[st.n]!==undefined?PLAT_EDGE_STA[st.n]:(PLAT_EDGE[st.t]||0));
 function platOuter(x){                     // その地点のホーム外縁(駅を外れれば0)
   let e=0;
   for(const st of STA){
-    const r=platRange(st), c=(r[0]+r[1])/2, h=(r[1]-r[0])/2+8;
-    e=Math.max(e,(PLAT_EDGE[st.t]||0)*plateau(x,c,h,60));
+    if(st.t==='quad') continue;      // 2面4線は待避線がいつもホームの外にあり、ホームの外の縁は待避線に沿って曲がる(桁幅は待避線で決まる)
+    const r=platRange(st), c=(r[0]+r[1])/2, h=(r[1]-r[0])/2+8, pe=platEdgeOf(st);
+    e=Math.max(e,pe*plateau(x,c,h,Math.max(60,pe*7)));   // 広いホームほど長く擦り付ける(芦花公園の拡幅で桁の端が急に広がった)
   }
   return e;
 }
@@ -2433,12 +2440,15 @@ const STD={
 };
 // ホームの並び [中心off, 半幅]。PLAT_EDGE(2b章)と同じ値(片方だけ変えないこと)
 const PLT_OF={isl:[[0,3.5]], hachi:[[0,3.0]], side:[[-5.85,2.25],[5.85,2.25]],
-              quad:[[-6.8,3.25],[6.8,3.25]], ctx:[[-6.05,2.5],[6.05,2.5]], gnd:[[0,3.0],[10.35,4.2]]};
+              quad:[[-7.5,3.95],[7.5,3.95]], ctx:[[-6.05,2.5],[6.05,2.5]], gnd:[[0,3.0],[10.35,4.2]]};
+// 駅ごとに型と違うホーム(2026-10-13 利用者指示:芦花公園の相対式ホームを2m ずつ広く。線路の側の縁 3.6 はそのまま、背面を外へ)
+const PLT_BY_STA={'芦花公園':[[-6.85,3.25],[6.85,3.25]]};
+const pltOf=st=>PLT_BY_STA[st.n]||PLT_OF[st.t];
 // 2026-10-11 利用者指示:明大前・桜上水・千歳烏山(quad)のホームを1.5m 広く(待避線の側へ。待避線も1.5m 外へ。笹塚=ctx はそのまま)、
 // 仙川の上りホーム(北の単式)を5m 広く(背面=北へ。掘割の北の擁壁も5m 北へ)
 // ホームドアの列(縁から0.12m内側=戸袋の厚さの半分)。仙川も縁の内側に置く(北の単式ホームの縁 6.15 にも)
 const DRS_OF={isl:[-3.38,3.38], hachi:[-2.88,2.88], side:[-3.72,3.72],
-              quad:[-3.67,3.67,-9.93,9.93], ctx:[-3.67,3.67,-8.43,8.43], gnd:[-2.88,2.88,6.27]};
+              quad:[-3.67,3.67,-11.33,11.33], ctx:[-3.67,3.67,-8.43,8.43], gnd:[-2.88,2.88,6.27]};
 /* 列車が停まらないホームの縁 [ホームの番号(PLT_OF の順), 縁(+1=北/-1=南)]。
    仙川の上りは北側の単式ホームを使う(利用者指示)。島式の北の縁も上りの線に面するが、列車は扉を開けない。
    その縁のホームドアは開かない柵として立て(PSD の noStop)、番線の案内(staTracks)にも数えない */
@@ -2690,7 +2700,7 @@ function pidsVend(k){
    京王の各駅の番線と同じ並び(左側通行なので下り=西行きは南側の線)。2面4線は外側が待避線 */
 function staTracks(st,pm){
   const L=[];
-  PLT_OF[st.t].forEach(function(pp,pi){
+  pltOf(st).forEach(function(pp,pi){
     for(const sg of[-1,1]){
       if(noStopEdge(st,pi,sg)) continue;                 // 列車が停まらない縁(仙川の島式の北)
       const edge=pp[0]+sg*pp[1];
@@ -3065,7 +3075,7 @@ function bigRoof(S,st,y,colLines){
   }
   // 架線は架線柱の位置の梁から可動ブラケットで吊る(6b章 buildCatenary)
   // 天窓(ホームの上。空が映るガラスの帯)
-  for(const p of PLT_OF[st.t]){
+  for(const p of pltOf(st)){
     const a=c0-92, b=c0+92, o0=p[0]-1.0, o1=p[0]+1.0;
     const yr=s=>o=>y+polyAt(R.top(E(s)),o);
     mg.loft(MAT.glass,a,b,s=>[[o0,yr(s)(o0)+0.12],[o1,yr(s)(o1)+0.12]],{side:-1});
@@ -3428,12 +3438,14 @@ for(const s of STA){
      駅舎と階段は pq(ホームの中ほど+CONC_AT)を中心に置く */
   const up=(s.t==='gnd'), cutSta=floorY(c0)<-1, yF=cutSta?y+CONC_CUT+0.34:y+RAIL_TOP+7.6+0.34, pq=up?concMid(s):pm;
   const TRK_ST=staTracks(s,pm);                     // 番線(南から1,2,…)。階段口の案内と発車標が使う
-  PLT_OF[s.t].forEach(function(pp,pi){
+  pltOf(s).forEach(function(pp,pi){
     const pc=pp[0], hw=pp[1];
     // 相対式は背面(線路の無い側)。地上駅(仙川)の単式ホームも背面に寄せる
     const back=(s.t==='side'||(up&&hw<2.0))?Math.sign(pc):0;
     const narrow=hw<2.0;                                     // 狭いホーム(仙川の単式)は階段1か所
-    const ww=hw>=3.4?2.8:hw>=2.9?2.4:hw>=2.4?2.2:1.9, wc=pc+back*(hw-ww/2-0.35);
+    /* 階段・エスカレーターの井戸の幅(2026-10-13 利用者指示:ホームの幅に合わせて):島式は両脇に 1.6m ずつ、相対式は背面 0.35m・
+       線路の側に 2.0m を残した幅(1.9〜3.6m)。以前は半幅の段で 1.9/2.2/2.4/2.8m */
+    const ww=clamp(back?2*hw-0.35-2.0:2*hw-3.2,1.9,3.6), wc=pc+back*(hw-ww/2-0.35);
     // 階段は1面に2か所(利用者指示)。両側の入口から中ほど(駅舎)へ向かう。
     // 高架駅は高架下の駅舎へ降り、地上駅(仙川)は線路の上の橋上駅舎へ上がる(利用者指示)
     const SA=STAIR_AT[s.n];                                   // 駅舎が中心に無い駅(下高井戸=西端部)は置き直す
@@ -3443,6 +3455,8 @@ for(const s of STA){
     for(const w of wells) Object.assign(w,{st:s,pc:pc,hw:hw,trk:TRK_ST.filter(q=>q.plats.indexOf(pi)>=0),
       yTop:big?y+STD.CEIL:y+STD.CAN0});
     const sh=[edgeShift(s,pc-hw,-1),edgeShift(s,pc+hw,1)];   // 縁が面する線路に沿うずれ
+    // その s のホームの中心(待避線の側の縁が曲がって狭くなる所では中心も寄る)。中心の線に置く物(柱・吊りレール・照明・駅名標・ベンチ)が使う
+    const pcs=q=>pc+(sh[0](q)+sh[1](q))/2;
     platBody(S,x0,x1,pc,hw,y,up?[]:wells,sh);
     platDetail(S,x0,x1,pc,hw,y,{lampY:lampY},sh);
     for(const w of wells){(up?stairUp(S,w,y,yF):stairWell(S,w,y));lifts.push(w);STAIRS.push({st:s,kind:'階段',up:up,dir:w.dir,s0:w.s0,s1:w.s1,o0:w.o0,o1:w.o1,yF:up?yF:null});}
@@ -3453,11 +3467,11 @@ for(const s of STA){
       STAIRS.push({st:s,kind:'エレベーター',s0:es-1,s1:es+1,o0:wc-1,o1:wc+1});
     }
     // 柱:大屋根は樹状柱(2本の枝で梁を受ける)、上屋は中心線の柱
-    const colO=back?pc+back*(hw-0.9):pc;
+    const colO0=back?pc+back*(hw-0.9):pc;
     for(let k=-9;k<=9;k++){
       const cs=pm+k*STD.COLP;
       if(cs<x0+3||cs>x1-3||nearAny(cs,lifts,1.4)) continue;
-      const top=big?y+STD.BEAM:y+STD.CAN0;
+      const top=big?y+STD.BEAM:y+STD.CAN0, colO=colO0+pcs(cs)-pc;
       S.mg.col(0xe4e6e8).cyl(SV,cs,colO,y+STD.PLAT,top-(big?1.4:0),big?0.2:0.16,10,{tag:'ホームの柱'});
       if(big){
         const A=S.mg.axes(cs,colO), yb2=top-1.4;
@@ -3467,29 +3481,29 @@ for(const s of STA){
         }
         S.mg.col(0xe4e6e8).cyl(SV,cs,colO,yb2-0.2,yb2+0.05,0.26,10);
       }else{
-        S.mg.col(0xd5d8db).box(SV,cs,pc,y+STD.CAN0-0.35,y+STD.CAN0,0.3,hw*2+0.5,{skip:'+y'});   // 上屋の梁
+        S.mg.col(0xd5d8db).box(SV,cs,pcs(cs),y+STD.CAN0-0.35,y+STD.CAN0,0.3,hw*2+0.5,{skip:'+y'});   // 上屋の梁
       }
       S.md.col(0xb9bec4).box(SV,cs,colO,y+STD.PLAT,y+STD.PLAT+0.04,0.55,0.55,{skip:'-y'});     // 柱脚
     }
     // 吊りレール(大屋根)/上屋の下に、駅名標と照明
     const ry0=big?y+STD.RAIL0:y+STD.CAN0-0.2, ry1=big?y+STD.RAIL1:y+STD.CAN0;
     if(big){
-      bar(S.mg,0x9aa1a8,x0+4,x1-4,pc,0.15,ry0,ry1,{tag:'吊りレール'});
-      for(let r=x0+5;r<x1-4;r+=5.25){const A=S.md.axes(r,pc);
+      bar(S.mg,0x9aa1a8,x0+4,x1-4,pcs,0.15,ry0,ry1,{tag:'吊りレール'});
+      for(let r=x0+5;r<x1-4;r+=5.25){const A=S.md.axes(r,pcs(r));
         S.md.col(0x9aa1a8).tube(SV,[A.f.x,ry1,A.f.z],[A.f.x,y+STD.CEIL,A.f.z],0.025,4);}
     }
-    S.md.col(0xf6f5ee); hS(S.md,SV,x0+5,x1-5,pc-0.09,pc+0.09,ry0-0.02,false);               // 照明の帯
+    S.md.col(0xf6f5ee); hS(S.md,SV,x0+5,x1-5,q=>pcs(q)-0.09,q=>pcs(q)+0.09,ry0-0.02,false);   // 照明の帯
     for(const d of[-75,-45,0,45,75]){                // 駅名標(階段・EVの上を避ける)
       const ss=pm+d; if(nearAny(ss,lifts,1.5)) continue;
-      for(const f of[1,-1]) signQuad(S.mg,3*i+(f>0?0:1),ss,pc+f*0.035,ry0-0.55,ry0-0.1,1.6,f);
-      S.mg.col(0x3a4048).box(SV,ss,pc,ry0-0.57,ry0-0.08,1.66,0.06);
-      S.md.col(0x5b6470).box(SV,ss,pc,ry0-0.08,ry0,0.04,0.04);
+      for(const f of[1,-1]) signQuad(S.mg,3*i+(f>0?0:1),ss,pcs(ss)+f*0.035,ry0-0.55,ry0-0.1,1.6,f);
+      S.mg.col(0x3a4048).box(SV,ss,pcs(ss),ry0-0.57,ry0-0.08,1.66,0.06);
+      S.md.col(0x5b6470).box(SV,ss,pcs(ss),ry0-0.08,ry0,0.04,0.04);
     }
     // ベンチ・自動販売機(近くだけ)
     for(let k=-9;k<=8;k+=2){
       const bs=pm+(k+0.5)*STD.COLP; if(bs<x0+6||bs>x1-6||nearAny(bs,lifts,2.5)) continue;
       if(back) benchAt(S.md,bs,pc+back*(hw-0.5),y,-back);
-      else if(hw>=2.4){ benchAt(S.md,bs,pc+0.32,y,1); benchAt(S.md,bs,pc-0.32,y,-1); }
+      else if(hw>=2.4){ benchAt(S.md,bs,pcs(bs)+0.32,y,1); benchAt(S.md,bs,pcs(bs)-0.32,y,-1); }
     }
     if(!narrow){
       for(let k=0;k<2;k++){                          // 自動販売機は柱と柱の間(EVの反対側)
@@ -3505,7 +3519,7 @@ for(const s of STA){
     }
   });
   if(up){                                            // 橋上駅舎(仙川):ホームの中ほどで線路をまたぐ
-    const ps=PLT_OF[s.t];
+    const ps=pltOf(s);
     // 掘割の駅は掘割の両側の地表へ 3m ずつ出る(擁壁の上に載る。柱はホームの上だけ)
     const o0=cutSta?-(cutHalf(pq,-1)+3.0):Math.min(...ps.map(q=>q[0]-q[1]))-4.4, o1=cutSta?cutHalf(pq,1)+3.0:Math.max(...ps.map(q=>q[0]+q[1]))+0.6;
     const cols=[{s:[pq-STD.COLP,pq+STD.COLP],o:0,y:y+STD.PLAT}];
@@ -4477,6 +4491,9 @@ if(PLB){
 const NIGHT_STAT={win:0,lamp:0,plat:0};
 // 夜の駅の照明で車体を照らす強さ・消える距離[m]・全車両の登録簿(9章 carLit)。車両(makeCar)より前に宣言する
 const CAR_LIT=0.35, CAR_LIT_FADE=40, CARS_ALL=[];
+/* 夜の車両の下地(2026-10-13 利用者指摘:夜は前面が側面より暗く見える)。夜の光は空の環境光と月(南西の高い所)だけで、月に向く面と
+   背く面の差が出る(上りの前面=東向きには月が当たらない)。車体と部品に、面の色を掛けた一様な発光を駅の外でも足して差を縮める */
+const CAR_NIGHT_FILL=0.07;
 let NIGHT_ON=false;
 const NIGHT_HOOKS=[];      // 夜の切替で呼ぶ関数(後の章で足す物:ホームの人・自動車の灯火)。NIGHT.set が on で呼ぶ
 /* 駅の照明の下の線路(道床・まくらぎ・レール・締結装置・バラスト)と桁の上面も夜に明るくする(利用者指示)。
@@ -4494,7 +4511,7 @@ for(const st of STA){
 }
 const STA_LIT_U={uStaA:{value:STA_SEG.map(g=>new THREE.Vector4(g.A[0],g.A[1],g.B[0],g.B[1]))},
                  uStaB:{value:STA_SEG.map(g=>new THREE.Vector4(g.hw,g.y0,g.open0?1:0,g.open1?1:0))},
-                 uStaLit:{value:0}};
+                 uStaLit:{value:0}, uCarFill:{value:0}};
 // 検証と同じ式(シェーダの staLitF と同じ)。点 (x,y,z) の照らされ具合 0〜1
 function staLitAt(x,y,z){
   let f=0;
@@ -4508,26 +4525,26 @@ function staLitAt(x,y,z){
   }
   return Math.max(0,f);
 }
-function staLitPatch(mat){
+function staLitPatch(mat,car){                 // car=車両の部品:夜はどこでも下地の明るさ(uCarFill)を足す
   if(!mat||mat.userData.staLit) return;
   const prev=mat.onBeforeCompile;
-  mat.userData.staLit=true;
+  mat.userData.staLit=true; mat.userData.carFill=!!car;
   mat.onBeforeCompile=function(sh,r){
     if(prev&&prev!==THREE.Material.prototype.onBeforeCompile) prev.call(this,sh,r);
     Object.assign(sh.uniforms,STA_LIT_U);
     sh.vertexShader='varying vec3 vStaW;\n'+sh.vertexShader.replace('#include <begin_vertex>',
       '#include <begin_vertex>\n  { vec4 kw=vec4(transformed,1.0);\n#ifdef USE_INSTANCING\n  kw=instanceMatrix*kw;\n#endif\n  kw=modelMatrix*kw; vStaW=kw.xyz; }');
-    sh.fragmentShader='varying vec3 vStaW; uniform vec4 uStaA['+STA_SEG.length+']; uniform vec4 uStaB['+STA_SEG.length+']; uniform float uStaLit;\n'+
+    sh.fragmentShader='varying vec3 vStaW; uniform vec4 uStaA['+STA_SEG.length+']; uniform vec4 uStaB['+STA_SEG.length+']; uniform float uStaLit; uniform float uCarFill;\n'+
       'float staLitF(vec3 p){ float f=0.;\n  for(int i=0;i<'+STA_SEG.length+';i++){ vec4 a=uStaA[i], b=uStaB[i];\n'+
       '    if(p.y<b.y) continue; vec2 d=a.zw-a.xy; float L=length(d); vec2 t=d/L, q=p.xz-a.xy;\n'+
       '    float u=dot(q,t), v=abs(-q.x*t.y+q.y*t.x); if(v>b.x) continue;\n'+
       '    float o=max(0.,max(b.z>.5?-u:(u<0.?1e9:0.), b.w>.5?u-L:(u>L?1e9:0.)));\n'+
       '    f=max(f,1.-o/'+CAR_LIT_FADE.toFixed(1)+'); }\n  return clamp(f,0.,1.); }\n'+
       sh.fragmentShader.replace('#include <emissivemap_fragment>',
-        '#include <emissivemap_fragment>\n  if(uStaLit>0.) totalEmissiveRadiance+=diffuseColor.rgb*uStaLit*staLitF(vStaW);');
+        '#include <emissivemap_fragment>\n  { float sl=(uStaLit>0.)?uStaLit*staLitF(vStaW):0.;'+(car?' sl=max(sl,uCarFill);':'')+' if(sl>0.) totalEmissiveRadiance+=diffuseColor.rgb*sl; }');
   };
   const pk=prev?String(prev):'';
-  mat.customProgramCacheKey=()=>'staLit|'+pk;
+  mat.customProgramCacheKey=()=>'staLit|'+(car?'car|':'')+pk;
 }     // 検証用(灯りの数)
 /* 灯りの強さ。窓・街灯・ホーム照明・emissive のすべてに一律で掛ける
    (利用者指示で2.5倍)。色はリニア値に掛けるので、トーンマッピングを通った
@@ -4576,7 +4593,7 @@ const NIGHT=(function(){
   {
     const pts=[];
     for(const pl of PLATS)
-      for(let x=pl.x0+5;x<pl.x1-5;x+=7) pts.push([x,pl.off,pl.lampY,pl.y+STD.PLAT,pl.hw]);   // 灯具は上屋・吊りレールの下
+      for(let x=pl.x0+5;x<pl.x1-5;x+=7) pts.push([x,(pl.edge(x,-1)+pl.edge(x,1))/2,pl.lampY,pl.y+STD.PLAT,(pl.edge(x,1)-pl.edge(x,-1))/2]);   // 灯具は上屋・吊りレールの下(曲がる縁ではその s の中心)
     const m4=new THREE.Matrix4(),q=new THREE.Quaternion(),sc=new THREE.Vector3(1,1,1);
     const lamp=new THREE.InstancedMesh(new THREE.BoxGeometry(2.4,0.12,0.5),
       mkMat('MeshBasicMaterial',{color:glow(0xfff6e6),fog:false}),pts.length);
@@ -4630,6 +4647,7 @@ const NIGHT=(function(){
     NIGHT_ON=!!on; for(const c of CARS_ALL) carLit(c);     // 留置車も含めて車体の照らし方を見直す
     for(const f of NIGHT_HOOKS) f(!!on);
     STA_LIT_U.uStaLit.value=on?CAR_LIT:0;                    // 駅の照明の下の線路
+    STA_LIT_U.uCarFill.value=on?CAR_NIGHT_FILL:0;             // 車両の部品の夜の下地
     BLD_WIN_U.uWinNight.value=on?0.55*LIGHT_GAIN:0;          // 建物の窓明かり
     for(const [k,hex] of EMI){
       const m=MAT[k]; if(!m||!m.emissive) continue;
@@ -5136,7 +5154,7 @@ const M_PANS=mkStd({color:srgb(0x9aa1a8),metalness:0.85,roughness:0.25,envMapInt
    部品の材質(頂点カラーのスカート・前面のケース・床下・冷房・側面の小物・幌/細部/台車/パンタ)は全車で共有なので、
    線路と同じ世界座標の駅の照明(staLitPatch。ホームの範囲=1・外へ40mで0、強さは夜だけ CAR_LIT)にする。
    どちらも「面の色を掛けた発光」なので、車体と部品の明るさがそろう。表示器・車番・ロゴ・車内は照明を受けない材質 */
-for(const m of [K8M.vc,TRIMMAT,M_BOG,M_PN,M_SH,M_PANS]) staLitPatch(m);
+for(const m of [K8M.vc,TRIMMAT,M_BOG,M_PN,M_SH,M_PANS]) staLitPatch(m,true);
 // 灯火。点いているものは自発光、消えているものはレンズの色
 const M_HL =mkMat('MeshLambertMaterial',{color:0xffffff,emissive:0xfff2d8});   // 前照灯
 const M_TL =mkMat('MeshLambertMaterial',{color:0xff1a10,emissive:0xff0d08});   // 尾灯
@@ -5148,14 +5166,17 @@ const M_PASS_OFF=mkMat('MeshLambertMaterial',{color:k8hex(.30,.30,.29)});       
 /* ---- 9-8. 文字(表示器・車番・ロゴ)はキャンバスに描いて貼る -------------------- */
 const K8_FONT='"IPAGothic","Noto Sans JP","Hiragino Kaku Gothic ProN",sans-serif';
 const K8_TEXCACHE={};
-function k8Tex(key,w,h,draw){
+function k8Tex(key,w,h,draw,lit){
   if(K8_TEXCACHE[key]) return K8_TEXCACHE[key];
   const cv=document.createElement('canvas');cv.width=w;cv.height=h;
   draw(cv.getContext('2d'),w,h);
   const t=canvasTex(cv); t.anisotropy=4;
-  const m=mkMat('MeshBasicMaterial',{map:t,transparent:true,alphaTest:.3,side:THREE.DoubleSide});
+  // 光る物(表示器)は照明を受けない材質。塗装・板(ロゴ・車番)は照明を受ける(2026-10-13 利用者指摘:夜に 9000系の前面のロゴが光っていた)
+  const m=mkMat(lit?'MeshLambertMaterial':'MeshBasicMaterial',{map:t,transparent:true,alphaTest:.3,side:THREE.DoubleSide});
+  if(lit) staLitPatch(m,true);                    // 駅の照明と夜の下地は車体と同じに
   K8_TEXCACHE[key]=m; return m;
 }
+const k8TexLit=(key,w,h,draw)=>k8Tex(key,w,h,draw,true);
 // 文字を枠いっぱい(縦横比を保つ)に描く
 // fill=true なら縦横を別々に伸ばして枠にぴったり合わせる(v4 の placed_text で
 // keep_aspect=False の文字=ロゴ・車番)。false なら縦横比を保って収める(表示器の文字)
@@ -5176,7 +5197,7 @@ function k8fitText(cx,txt,x,y,w,h,font,shear,fill){
 }
 // KEIO ロゴ(紺の斜体、K の右上の画だけ赤)。k_arm_pts を移植
 function k8Logo(w,h){
-  return k8Tex('logo'+w+'x'+h,w,h,function(cx){
+  return k8TexLit('logo'+w+'x'+h,w,h,function(cx){
     const navy='#1c2b6b';
     cx.fillStyle=navy;
     k8fitText(cx,'KEIO',w/2,h/2,w,h,'bold '+Math.round(h)+'px Arial,Helvetica,sans-serif',0.25,true);
@@ -5190,7 +5211,7 @@ function k8Logo(w,h){
 }
 // 側面の板(車番:紺の縁+白地に紺の数字)
 function k8NumPlate(num){
-  return k8Tex('plate'+num,256,72,function(cx,w,h){
+  return k8TexLit('plate'+num,256,72,function(cx,w,h){
     cx.fillStyle='#1c2b6b';cx.fillRect(0,0,w,h);
     cx.fillStyle='#d9d9d4';cx.fillRect(7,7,w-14,h-14);
     // v4:数字は板の幅−0.07m × 高さ−0.045m に伸ばす
@@ -5243,7 +5264,7 @@ function k8SideLed(kind,dest,w,h){
 }
 function k8FrontNum(num,w,h,keep){          // keep=字形の縦横比を保つ(枠いっぱいに引き伸ばさない)
   w=w||128; h=h||32;
-  return k8Tex('fnum'+num+w+'x'+h+(keep?'k':''),w,h,function(cx,w,h){
+  return k8TexLit('fnum'+num+w+'x'+h+(keep?'k':''),w,h,function(cx,w,h){
     if(keep){ cx.fillStyle='#f2f2ef'; k8fitText(cx,num,w/2,h/2,w*.98,h*.92,'bold 32px Arial,sans-serif',0,false); return; }
     cx.fillStyle='#f2f2ef';k8fitText(cx,num,w/2,h/2,w,h,'bold 32px Arial,sans-serif',0,true);
   });
@@ -6016,7 +6037,7 @@ function k9FrontGeos(){
 /* 前面の KEIO ロゴ(写真 9755):白い平行四辺形の板に、黒の太い斜体の文字。板の辺と文字は同じ傾き。
    文字は線で組む(K の腕と脚・E の3本の横棒・I・角の丸い長方形の O)。寸法は measured_9000.md 3b(その2)。画像は板の外接矩形 K9.FLOGO */
 function k9Logo(w,h){
-  return k8Tex('logo9_'+w+'x'+h,w,h,function(cx){
+  return k8TexLit('logo9_'+w+'x'+h,w,h,function(cx){
     const L=K9.FLOGO, sl=K9.FLOGO_SL, Wm=L[1]-L[0], Hm=L[3]-L[2], k=sl/Hm;
     const X=(x,z)=>(x+k*z)/Wm*w, Y=(z)=>(1-z/Hm)*h;        // 板の左下からの(横,高さ)[m]→画素。横は傾きの分だけずらす
     const path=(pts)=>{pts.forEach((p,i)=>{const a=X(p[0],p[1]), b=Y(p[1]); if(i) cx.lineTo(a,b); else cx.moveTo(a,b);}); cx.closePath();};
@@ -6466,7 +6487,7 @@ function stationLight(s){
 function carLit(c,s){
   const ud=c.userData; if(!ud||!ud.bodyMat) return;
   if(s!==undefined) ud.s=s;
-  ud.bodyMat.userData.k8.uni.uLit.value=(NIGHT_ON&&ud.s!==undefined)?stationLight(ud.s):0;
+  ud.bodyMat.userData.k8.uni.uLit.value=(NIGHT_ON&&ud.s!==undefined)?Math.max(CAR_NIGHT_FILL,stationLight(ud.s)):0;
 }
 function placeTrain(t){
   const zf=trainZf(t);   // 各停は八幡山で内側(停車線)・待避駅で待避線へ、特急は本線のまま
@@ -6687,9 +6708,15 @@ const PSD_OPEN=0.80;                      // 開口の半幅[m](開口1.60m)
 const PSD_H=1.22, PSD_T=0.24;             // 高さ(ホーム面から)・戸袋の厚さ[m]
 function psdFixed(S,a,b,off0,y,sh){
   const yp=y+1.1, oA=s=>off0+(sh?sh(s):0);
-  // 面する線路に沿う:列が曲がる所(待避線がホームの端で曲がる駅)は 2m 以下の片に分けて、片ごとにその中ほどの位置へ
-  const bend=sh&&Math.abs(sh(a)-sh(b))>0.005, n=bend?Math.max(1,Math.ceil((b-a)/2)):1;
-  for(let i=0;i<n;i++){
+  // 面する線路に沿う:列が曲がる所(待避線がホームの端で曲がる駅)は線路に沿って掃引する(2026-10-13:分岐を駅へ寄せて曲がりが急になり、
+  // 2m の真っすぐな片の端が待避線の建築限界に入った)
+  const bend=sh&&Math.abs(sh(a)-sh(b))>0.005;
+  if(bend){
+    bar(S.mg,0xe9ebee,a,b,oA,PSD_T/2,yp,yp+PSD_H-0.10,{tag:'ホームドア'});
+    bar(S.mg,0x59626d,a,b,oA,PSD_T/2+0.03,yp+PSD_H-0.10,yp+PSD_H);
+    bar(S.md,0x1b2a66,a,b,oA,PSD_T/2+0.006,yp+PSD_H-0.36,yp+PSD_H-0.28);
+  }
+  for(let i=0,n=bend?0:1;i<n;i++){
     const a1=a+(b-a)*i/n, b1=a+(b-a)*(i+1)/n, m=(a1+b1)/2, L=b1-a1, off=oA(m), ex=(n>1)?0.02:0;
     S.mg.col(0xe9ebee).box(MAT.stVC,m,off,yp,yp+PSD_H-0.10,L+ex,PSD_T,{skip:'-y',tag:'ホームドア'});
     S.mg.col(0x59626d).box(MAT.stVC,m,off,yp+PSD_H-0.10,yp+PSD_H,L+0.02,PSD_T+0.06,{skip:'-y'});
@@ -6727,7 +6754,7 @@ for(const d of PSD_DEF){
     const trackOff=isFinite(near)?near:(openable?(dir>0?-ro:ro):(dir>0?-mainOff(st.x):mainOff(st.x)));
     const side=(off>trackOff?1:-1)*localZSign(st.x,dir);
     // 列車が停まらない縁(PLAT_NOSTOP。仙川の島式の北)の列は開かない柵:trainPSD・ridePSDFor が選ばない
-    const noStop=PLT_OF[st.t].some((pp,pi)=>[-1,1].some(sg=>noStopEdge(st,pi,sg)&&Math.abs(off-(pp[0]+sg*pp[1]))<0.3));
+    const noStop=pltOf(st).some((pp,pi)=>[-1,1].some(sg=>noStopEdge(st,pi,sg)&&Math.abs(off-(pp[0]+sg*pp[1]))<0.3));
     const sh=edgeShift(st,off,trackOff>off?1:-1);       // 列は面する線路に沿う(ホームの縁と同じ)
     CUR=st.kk?KOUKU[st.kk-1].VGs:null;
     // 開口と開口の間の固定部(戸袋)。駅の結合ジオメトリへ積む
@@ -6950,7 +6977,9 @@ NIGHT_HOOKS.push(on=>{ M_PEOPLE.emissive.copy(on?glow(0x3a3a3a):srgb(0x000000));
       for(const c of row.open){
         if(c<q.x0||c>q.x1||Math.random()>0.55) continue;
         for(const sd of[-1,1]){ const n=Math.floor(Math.random()*2.6);
-          for(let k=0;k<n;k++){ const sp=c+sd*(0.85+(Math.random()-0.5)*0.1); put(sp, psdLineOf(q,e,sp)-e*(1.5+0.62*k), e, {row:row,door:c,qk:k}); } }   // ホームドアの線から 1.5m 奥(通り道の後ろ)
+          for(let k=0;k<n;k++){ const sp=c+sd*(0.85+(Math.random()-0.5)*0.1);
+            if(1.5+0.62*k>(q.edge(sp,1)-q.edge(sp,-1))/2-0.2) break;          // 列はホームの中心を越えない(待避線の側の縁が曲がって狭くなる端)
+            put(sp, psdLineOf(q,e,sp)-e*(1.5+0.62*k), e, {row:row,door:c,qk:k}); } }   // ホームドアの線から 1.5m 奥(通り道の後ろ)   // ホームドアの線から 1.5m 奥(通り道の後ろ)
       }
     }
     // まばらに立つ人(向きはどちらかの縁)
@@ -7197,14 +7226,15 @@ function stepFlow(dt){
         if(ah<-0.1) return;
         const lat=-rs*dO+ro*ds, f=(1.0-d)*1.6; ps+=dO*Math.sign(lat||1)*f; po+=-ds*Math.sign(lat||1)*f;   // 横へ(相手と反対の側へ)
         if(fs!==undefined&&ah>0&&Math.abs(lat)<0.45&&d<0.75) slow=Math.min(slow,Math.max(0,(d-0.45)/0.3)); };
-      const inWell=w.k>=w.path.length-2&&w.kind!=='乗';
+      const inWell=w.k>=w.path.length-2&&w.kind==='降';             // 出口へ入る最後の区間だけ(列へ戻る人は立っている人を避ける)
       if(!pass) for(const o of A) if(o!==w&&o.q===w.q&&!(o.wait>0)) push(o.s,o.o,o.mv?o.fs:undefined,o.fo);   // 段の上の人とも(入口で並ぶ)
       if(!inWell) for(const m of PEOPLE) if(m.q===w.q&&m.shown&&m!==w.m) push(m.s,m.o);
       // 床の上の物(柱・ベンチ・自販機・EV・階段の囲い)から 0.4m 離れる。行き先の出口(EV・階段の井戸)の近くの物は除く
       if(!w.q.flowOB){ const yP=railY((w.q.x0+w.q.x1)/2)+STD.PLAT;
         w.q.flowOB=STRUCT.filter(o=>['ホームの柱','ベンチ','自動販売機','エレベーター','階段の囲い'].indexOf(o.tag)>=0&&o.s1>w.q.x0-2&&o.s0<w.q.x1+2&&
           o.o1>w.q.off-w.q.hw-0.5&&o.o0<w.q.off+w.q.hw+0.5&&o.y0<yP+1.8&&o.y1>yP+0.05); }
-      const nearGoal=b=>(w.k>=w.path.length-2||(w.rail&&w.k>=w.rail.from-1))&&Math.hypot((b.s0+b.s1)/2-tg0[0],(b.o0+b.o1)/2-tg0[1])<4;
+      // 出口(階段の井戸・EV)へ入る区間だけ、その出口の近くの物を避けない(列へ戻る人・乗る人は避ける)
+      const nearGoal=b=>w.kind==='降'&&(w.k>=w.path.length-2||(w.rail&&w.k>=w.rail.from-1))&&Math.hypot((b.s0+b.s1)/2-tg0[0],(b.o0+b.o1)/2-tg0[1])<4;
       for(const b of w.q.flowOB){
         if(nearGoal(b)) continue;                                        // 出口へ入る区間だけ
         const ns=clamp(w.s,b.s0,b.s1), no=clamp(w.o,b.o0,b.o1), rs=w.s-ns, ro=w.o-no, d=Math.hypot(rs,ro);
@@ -8164,9 +8194,10 @@ const CINE=(function(){
     // 夜は「暗いが見える」ようにする。地物を照らすのではなく灯りを足す(8b章)ので、
     // 環境光はほんの少し上げるだけでよい。lights:true が NIGHT を有効にする
     // 2026-10-12 利用者指示「夜が暗すぎる。もう少しだけ明るく」:環境光 0.26→0.34・露出 1.26→1.34・空を少し明るく
+    // 2026-10-13 同じく「もう少しだけ明るく」:環境光 0.34→0.40・露出 1.34→1.40・空をもう少し明るく
     night  :{n:'夜',  az:115, el:48, sun:0xa8bcdc, si:0.10, lights:true,
-             hs:0x3a4766, hg:0x171c27, hi:0.34, expo:1.34,
-             sky:{top:0x1a2642, hor:0x485779, bot:0x2b3446, glow:0x6e80a6}, fog:[1800,8200]},
+             hs:0x3a4766, hg:0x1a2030, hi:0.40, expo:1.40,
+             sky:{top:0x1e2b4a, hor:0x506083, bot:0x30394c, glow:0x7688ae}, fog:[1800,8200]},
   };
   /* ---- 季節(樹木と地表の色。いずれも"見せたい色"ではなく直接の着色) ---- */
   const SEASON={
@@ -8400,7 +8431,7 @@ const CINE=(function(){
     };
   })();
 
-  const GROUND_NIGHT=0.48;          // 夜の地表と緑(昼の48%。2026-10-12 に 40% から少し明るく)
+  const GROUND_NIGHT=0.55;          // 夜の地表と緑(昼の55%。2026-10-12 に 40%→48%、10-13 に 55% へ少し明るく)
   const URBAN_GROUND=0xc3c0b3, URBAN_MIX=0.3;     // 実データの緑があるときの既定の地表(住宅地など)
   function applyLook(){
     const s=SEASON[curSeason]||SEASON.summer;
