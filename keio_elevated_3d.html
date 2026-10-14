@@ -880,10 +880,9 @@ const MAT={
   //   MATは1行1項目にする。
   road:M(0x8f949a),
   roadMajor:M(0x7c8187),
-  roadPlan:M(0xb4b9c0), sidewalk:M(0xb9c3a6,DS), green:M(0x9cb98a), plat:M(0xc7c8c3), canopy:M(0xdfdfd8),
+  roadPlan:M(0xb4b9c0), green:M(0x9cb98a), plat:M(0xc7c8c3), canopy:M(0xdfdfd8),
   hdoor:M(0xcfd2cc), pole:M(0x7b828a), wall:M(0xa8adb3),
   water:mkStd({color:srgb(0xa9c6c2),metalness:0.0,roughness:0.14,envMapIntensity:1.0}),
-  ballast:M(0x9a938a,DS), sleeper:M(0x6e675f,DS), gateW:M(0xf2f3f5), gateR:M(0xd93b3b),
   glass:mkStd({color:srgb(0x9fc4d8),transparent:true,opacity:.72,side:THREE.DoubleSide,
                metalness:0.0,roughness:0.06,envMapIntensity:1.0}),
   ao:mkMat('MeshBasicMaterial',{color:0x18202a,transparent:true,opacity:.06}),
@@ -4712,7 +4711,6 @@ const K8={
 };
 K8.W=K8.HWB*2;
 // 幕板まわりの小物(u=写真の左を+とする座標。車体の+y面は u=x、−y面は u=−x。どの車も同じ)
-const K8_MAKU_GAPS=[[5.26,5.61],[3.86,4.06],[-0.24,0.86],[-5.61,-5.27]];
 const K8_SLED=[0.143,0.817,3.080,3.251], K8_SLED_FACE=[0.18,0.78,3.108,3.224];
 const K8_LAMPUNIT=[-0.217,-0.083,3.080,3.319], K8_SIDE_LAMP=[3.958,3.166,0.06];
 const K8_SPEAKERS=[[5.28,5.56],[-5.56,-5.28]], K8_SPK_Z=[3.148,3.319];
@@ -4941,7 +4939,18 @@ function carShellGeo(R,nose,LEN,cab){
        ・見えている戸     … 戸の座標へ戻して扉窓・合わせ目を描く
        ・戸袋窓の奥       … 滑り込んだ戸が見える(本物の戸袋窓と同じ)
    uOpen.x/.y = シェルの +y 面/−y 面の開度(車両ごと)。 */
-const K8_SHELL_UNI={};                                  // 全車共通の uniform(今は無し)
+// 塗り分けの色(8000・9000 共通。前面のガラス域の色だけ形式で違う)
+function k8ColorDefs(fglass){
+  const f=v=>v.toFixed(5), c3=a=>'vec3('+a.map(f).join(',')+')';
+  return [
+    '#define C_STL '+c3(k8lin(.72,.73,.74)), '#define C_DOOR '+c3(k8lin(.75,.77,.79)),
+    '#define C_BELOW '+c3(k8lin(.36,.37,.38)), '#define C_IVORY '+c3(k8lin(.90,.88,.80)),
+    '#define C_ROOF '+c3(k8lin(.60,.61,.60)), '#define C_RED '+c3(k8lin(.83,.02,.42)),
+    '#define C_BLUE '+c3(k8lin(.11,.17,.42)), '#define C_RUB '+c3(k8lin(.05,.05,.055)),
+    '#define C_GROOVE '+c3(k8lin(.30,.31,.32)), '#define C_FGLASS '+c3(fglass),
+    '#define C_INSIDE '+c3(k8lin(.80,.80,.77)),
+  ];
+}
 function k8ShaderDefs(){
   const f=v=>v.toFixed(5);
   const c3=a=>'vec3('+a.map(f).join(',')+')';
@@ -4957,12 +4966,7 @@ function k8ShaderDefs(){
     '#define IVORY_X '+f(K8.IVORY_X), '#define WRAP_X '+f(K8.WRAP_X),
     '#define CREW0 '+f(K8.CREW[0]), '#define CREW1 '+f(K8.CREW[1]),
     '#define DOORX vec4('+K8.DOORX.map(f).join(',')+')',
-    '#define C_STL '+c3(k8lin(.72,.73,.74)), '#define C_DOOR '+c3(k8lin(.75,.77,.79)),
-    '#define C_BELOW '+c3(k8lin(.36,.37,.38)), '#define C_IVORY '+c3(k8lin(.90,.88,.80)),
-    '#define C_ROOF '+c3(k8lin(.60,.61,.60)), '#define C_RED '+c3(k8lin(.83,.02,.42)),
-    '#define C_BLUE '+c3(k8lin(.11,.17,.42)), '#define C_RUB '+c3(k8lin(.05,.05,.055)),
-    '#define C_GROOVE '+c3(k8lin(.30,.31,.32)), '#define C_FGLASS '+c3(k8lin(.012,.014,.018)),
-    '#define C_INSIDE '+c3(k8lin(.80,.80,.77)),
+    ...k8ColorDefs(k8lin(.012,.014,.018)),
     '#define NWIN 26',
   ].join('\n')+'\n';
 }
@@ -5096,32 +5100,33 @@ const K8_FRAG_MAIN=`
   if(painted>.5) k8Spec=min(k8Spec,.35);
 `;
 const CARMAT=mkPhong({color:srgb(0xffffff),side:THREE.DoubleSide,specular:srgb(0x3a4046),shininess:55});
-function k8BodyMat(cab){
-  const m=CARMAT.clone();
-  const W=cab?K8_WIN.cab:K8_WIN.mid, NW=26;
-  const uWin=[], uWinR=[];
+/* 車体の材質(8000・9000 共通):窓の一覧 W・定数 defs・塗り分けの本体 main だけが形式で違う。
+   窓の8番目(9000系)は中央の柱の半幅(無ければ 0=柱なし) */
+function carBodyMat(cab,W,defs,main,key,ud){
+  const m=CARMAT.clone(), NW=26, uWin=[], uWinR=[];
   for(let i=0;i<NW;i++){
     const w=W[i]||[0,0,0,0,0,0,0];
     uWin.push(new THREE.Vector4(w[0],w[1],w[2],w[3]));
-    uWinR.push(new THREE.Vector4(w[4],w[5],w[6],0));
+    uWinR.push(new THREE.Vector4(w[4],w[5],w[6],w[7]||0));
   }
   const U={uWin:{value:uWin},uWinR:{value:uWinR},uNWin:{value:W.length},
            uOpen:{value:new THREE.Vector2(0,0)}, uLit:{value:0}};
-  m.userData.k8={cab:!!cab, uni:U};
+  m.userData.k8=Object.assign({cab:!!cab, uni:U},ud);
   m.onBeforeCompile=function(sh){
     Object.assign(sh.uniforms,U);
     sh.vertexShader='varying vec3 vK8P; varying vec3 vK8N;\n'+sh.vertexShader.replace(
       '#include <begin_vertex>',
       '#include <begin_vertex>\n  vK8P=vec3(position.x,-position.z,position.y); vK8N=vec3(normal.x,-normal.z,normal.y);');
-    sh.fragmentShader='uniform float uLit;\n'+k8ShaderDefs()+(cab?'#define K8_CAB\n':'')+K8_FRAG_FUNCS+
+    sh.fragmentShader='uniform float uLit;\n'+defs()+(cab?'#define K8_CAB\n':'')+K8_FRAG_FUNCS+
       sh.fragmentShader
-        .replace('#include <color_fragment>','#include <color_fragment>\n  float k8Spec=1.;\n  {'+K8_FRAG_MAIN+'  }\n')
+        .replace('#include <color_fragment>','#include <color_fragment>\n  float k8Spec=1.;\n  {'+main+'  }\n')
         .replace('#include <specularmap_fragment>','#include <specularmap_fragment>\n  specularStrength*=k8Spec;')
         .replace('#include <emissivemap_fragment>','#include <emissivemap_fragment>\n  totalEmissiveRadiance+=diffuseColor.rgb*uLit;');   // 夜の駅の照明(carLit)
   };
-  m.customProgramCacheKey=()=>'k8body'+(cab?'C':'M');
+  m.customProgramCacheKey=()=>key+(cab?'C':'M');
   return m;
 }
+const k8BodyMat=cab=>carBodyMat(cab,cab?K8_WIN.cab:K8_WIN.mid,k8ShaderDefs,K8_FRAG_MAIN,'k8body');
 if(K8_WIN.cab.length>26||K8_WIN.mid.length>26) throw new Error('窓の数がシェーダの上限を超える');
 
 /* ---- 9-7. 材質 ------------------------------------------------------------------ */
@@ -5817,12 +5822,7 @@ function k9ShaderDefs(){
     '#define FDF0 '+f(K9.FDOOR[0]), '#define FDF1 '+f(K9.FDOOR[1]), '#define FDZ0 '+f(K9.FDOOR[2]), '#define FDZ1 '+f(K9.FDOOR[3]),
     '#define FBOT '+f(K9.FBOT), '#define FCPL '+f(K9.FCPL), '#define FANTZ1 '+f(K9.FANTI[3]),
     '#define DOORX vec4('+K9.DOORX.map(f).join(',')+')',
-    '#define C_STL '+c3(k8lin(.72,.73,.74)), '#define C_DOOR '+c3(k8lin(.75,.77,.79)),
-    '#define C_BELOW '+c3(k8lin(.36,.37,.38)), '#define C_IVORY '+c3(k8lin(.90,.88,.80)),
-    '#define C_ROOF '+c3(k8lin(.60,.61,.60)), '#define C_RED '+c3(k8lin(.83,.02,.42)),
-    '#define C_BLUE '+c3(k8lin(.11,.17,.42)), '#define C_RUB '+c3(k8lin(.05,.05,.055)),
-    '#define C_GROOVE '+c3(k8lin(.30,.31,.32)), '#define C_FGLASS '+c3(k8lin(.13,.15,.17)),   // 前面の窓(写真:映り込みで濃い灰。枠の黒と見分ける)
-    '#define C_INSIDE '+c3(k8lin(.80,.80,.77)),
+    ...k8ColorDefs(k8lin(.13,.15,.17)),   // 前面の窓(写真:映り込みで濃い灰。枠の黒と見分ける)
     '#define C_PILLAR '+c3(k8lin(.80,.81,.82)), '#define FWP 0.008',   // 側窓の中央の柱(車体より明るい金属)と脇のゴムの幅
     '#define NWIN 26',
   ].join('\n')+'\n';
@@ -5919,30 +5919,7 @@ const K9_FRAG_MAIN=`
   diffuseColor.rgb=col;
   if(painted>.5) k8Spec=min(k8Spec,.35);
 `;
-function k9BodyMat(cab){
-  const m=CARMAT.clone();
-  const W=cab?K9_WIN.cab:K9_WIN.mid, NW=26, uWin=[], uWinR=[];
-  for(let i=0;i<NW;i++){
-    const w=W[i]||[0,0,0,0,0,0,0];
-    uWin.push(new THREE.Vector4(w[0],w[1],w[2],w[3]));
-    uWinR.push(new THREE.Vector4(w[4],w[5],w[6],w[7]||0));   // w=中央の柱の半幅(0 なら柱なし)
-  }
-  const U={uWin:{value:uWin},uWinR:{value:uWinR},uNWin:{value:W.length},uOpen:{value:new THREE.Vector2(0,0)},uLit:{value:0}};
-  m.userData.k8={cab:!!cab, uni:U, series:'9000'};
-  m.onBeforeCompile=function(sh){
-    Object.assign(sh.uniforms,U);
-    sh.vertexShader='varying vec3 vK8P; varying vec3 vK8N;\n'+sh.vertexShader.replace(
-      '#include <begin_vertex>',
-      '#include <begin_vertex>\n  vK8P=vec3(position.x,-position.z,position.y); vK8N=vec3(normal.x,-normal.z,normal.y);');
-    sh.fragmentShader='uniform float uLit;\n'+k9ShaderDefs()+(cab?'#define K8_CAB\n':'')+K8_FRAG_FUNCS+
-      sh.fragmentShader
-        .replace('#include <color_fragment>','#include <color_fragment>\n  float k8Spec=1.;\n  {'+K9_FRAG_MAIN+'  }\n')
-        .replace('#include <specularmap_fragment>','#include <specularmap_fragment>\n  specularStrength*=k8Spec;')
-        .replace('#include <emissivemap_fragment>','#include <emissivemap_fragment>\n  totalEmissiveRadiance+=diffuseColor.rgb*uLit;');   // 夜の駅の照明(carLit)
-  };
-  m.customProgramCacheKey=()=>'k9body'+(cab?'C':'M');
-  return m;
-}
+const k9BodyMat=cab=>carBodyMat(cab,cab?K9_WIN.cab:K9_WIN.mid,k9ShaderDefs,K9_FRAG_MAIN,'k9body',{series:'9000'});
 // 細部(手すり・雨どい・屋根上のアンテナ)
 function k9DetailGeo(cab){
   const B=new K8B(), hw=K9.HWB;
@@ -6167,7 +6144,7 @@ function makeCar(opt){
     const pl=addFine(GEO.plate,k8NumPlate(o.num),sh); pl.position.x=xn;
     const lg=addFine(GEO.logo,k8Logo(256,72),sh); lg.position.x=-xn;
   }
-  if(cab&&S9){                                              // 9000系の前頭部
+  if(cab){                                                  // 前頭部(灯火・表示器・識別灯は 8000・9000 共通の並び)
     addFine(GEO.cabLogo,k8Logo(384,96),sh);
     const F=GEO.front;
     add(F.vc,K8M.vc,sh);                                    // 前面のケースは頂点カラーの細部にまとめた(上)
@@ -6175,29 +6152,20 @@ function makeCar(opt){
     addFine(F.tl,o.lights==='tail'?M_TL:M_TL_OFF,sh);
     if(o.lights==='head') addFine(F.hlGlow,K8M.hlGlow,sh);
     if(o.lights==='tail') addFine(F.tlGlow,K8M.tlGlow,sh);
-    const lit=o.sign&&o.lights==='head';                        // 行先=扉の上・種別=向かって左の窓の上部(写真)
-    // 画像の縦横比は貼る面(K9.FDEST・FKIND・FNUM)と同じに(1m=640px)
-    const px=(R)=>[Math.round((R[1]-R[0])*640),Math.round((R[3]-R[2])*640)];
-    addFine(F.dest,lit?k8Led(k8DestTxt(o.sign.dest),'#ff8c14',...px(K9.FDEST)):K8M.ledOff,sh);
-    addFine(F.kind,lit?k8Led(k8KindTxt(o.sign.kind),K8_KIND_COLORS[o.sign.kind]||'#ff2e14',...px(K9.FKIND)):K8M.ledOff,sh);
-    addFine(F.num,k8FrontNum(o.num,...px(K9.FNUM),true),sh);   // 字形のまま(引き伸ばさない)
-    addFine(F.logo,k9Logo(Math.round((K9.FLOGO[1]-K9.FLOGO[0])*1280),Math.round((K9.FLOGO[3]-K9.FLOGO[2])*1280)),sh);   // 2倍の細かさ(1m=1280px)
-    addFine(F.pass,k8PassOn(o)?M_PASS:M_PASS_OFF,sh);          // 識別灯(各停以外で点く)
-    if(k8PassOn(o)) addFine(F.passGlow,K8M.hlGlow,sh);
-  }
-  if(cab&&!S9){
-    addFine(K8GEO.cabLogo,k8Logo(384,96),sh);
-    const F=K8GEO.front;
-    add(F.vc,K8M.vc,sh);                                    // 前面のケースは頂点カラーの細部にまとめた(上)
-    addFine(F.hl,o.lights==='head'?M_HL:M_HL_OFF,sh);
-    addFine(F.tl,o.lights==='tail'?M_TL:M_TL_OFF,sh);
-    if(o.lights==='head') addFine(F.hlGlow,K8M.hlGlow,sh);
-    if(o.lights==='tail') addFine(F.tlGlow,K8M.tlGlow,sh);
-    const lit=o.sign&&o.lights==='head';                       // 表示は先頭車だけ点く
-    addFine(F.dest,lit?k8Led(k8DestTxt(o.sign.dest),'#ff8c14',256,68,K8_FRONT_TXT):K8M.ledOff,sh);
-    addFine(F.kind,lit?k8Led(k8KindTxt(o.sign.kind),K8_KIND_COLORS[o.sign.kind]||'#ff2e14',192,68,K8_FRONT_TXT):K8M.ledOff,sh);
-    addFine(F.num,k8FrontNum(o.num),sh);
-    addFine(F.logo,k8Logo(256,40),sh);
+    const lit=o.sign&&o.lights==='head';                    // 表示は先頭車だけ点く
+    if(S9){                                                 // 9000系:行先=扉の上・種別=向かって左の窓の上部(写真)
+      // 画像の縦横比は貼る面(K9.FDEST・FKIND・FNUM)と同じに(1m=640px)
+      const px=(R)=>[Math.round((R[1]-R[0])*640),Math.round((R[3]-R[2])*640)];
+      addFine(F.dest,lit?k8Led(k8DestTxt(o.sign.dest),'#ff8c14',...px(K9.FDEST)):K8M.ledOff,sh);
+      addFine(F.kind,lit?k8Led(k8KindTxt(o.sign.kind),K8_KIND_COLORS[o.sign.kind]||'#ff2e14',...px(K9.FKIND)):K8M.ledOff,sh);
+      addFine(F.num,k8FrontNum(o.num,...px(K9.FNUM),true),sh);   // 字形のまま(引き伸ばさない)
+      addFine(F.logo,k9Logo(Math.round((K9.FLOGO[1]-K9.FLOGO[0])*1280),Math.round((K9.FLOGO[3]-K9.FLOGO[2])*1280)),sh);   // 2倍の細かさ(1m=1280px)
+    }else{
+      addFine(F.dest,lit?k8Led(k8DestTxt(o.sign.dest),'#ff8c14',256,68,K8_FRONT_TXT):K8M.ledOff,sh);
+      addFine(F.kind,lit?k8Led(k8KindTxt(o.sign.kind),K8_KIND_COLORS[o.sign.kind]||'#ff2e14',192,68,K8_FRONT_TXT):K8M.ledOff,sh);
+      addFine(F.num,k8FrontNum(o.num),sh);
+      addFine(F.logo,k8Logo(256,40),sh);
+    }
     addFine(F.pass,k8PassOn(o)?M_PASS:M_PASS_OFF,sh);          // 識別灯(各停以外で点く)
     if(k8PassOn(o)) addFine(F.passGlow,K8M.hlGlow,sh);
   }
