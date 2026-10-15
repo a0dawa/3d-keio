@@ -284,11 +284,12 @@ const TPROP = {};
     // ロゴ・車番(塗装と板)は照明を受ける材質、表示器(LED)は光る材質(2026-10-13 利用者指摘:夜に 9000系の前面のロゴが光っていた)
     if (X.K8_TEXCACHE) {
       const ent = Object.entries(X.K8_TEXCACHE), bad2 = [];
-      for (const [k, m] of ent) { const paint = /^(logo|plate|fnum)/.test(k), led = /^(led|sled)/.test(k);
+      // ロゴ・車番は1両ごとに1枚のシート(sheet+形式+運転台の有無+車番。2026-10-15)。個別の材質(logo/plate/fnum)が残っていれば照明も見る
+      for (const [k, m] of ent) { const paint = /^(logo|plate|fnum|sheet)/.test(k), led = /^(led|sled)/.test(k);
         if (paint && (m.type === 'basic' || !m.userData.staLit)) bad2.push(k + '=光る'); if (led && m.type !== 'basic') bad2.push(k + '=照明を受ける'); }
-      const nL = ent.filter(([k]) => /^logo9_/.test(k)).length;
-      ok('ロゴ・車番は光らない(表示器は光る)', bad2.length === 0 && nL > 0 && ent.some(([k]) => /^plate/.test(k)), 'ロゴ・車番=照明を受ける・表示器=光る',
-        bad2.length ? bad2.slice(0, 3).join(' ') : ent.length + '枚(9000系のロゴ ' + nL + ')');
+      const nL = ent.filter(([k]) => /^sheet9c/.test(k)).length, nS = ent.filter(([k]) => /^sheet/.test(k)).length;
+      ok('ロゴ・車番は光らない(表示器は光る)', bad2.length === 0 && nL > 0 && nS >= 80, 'ロゴ・車番(1両1枚)=照明を受ける・表示器=光る',
+        bad2.length ? bad2.slice(0, 3).join(' ') : ent.length + '枚(シート ' + nS + '・9000系の先頭車 ' + nL + ')');
     }
   }
   /* 駅部は夜に強く照らされている(利用者指示:もっともっと明るい)。駅の結合ジオメトリの発光は

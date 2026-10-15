@@ -5170,18 +5170,67 @@ const M_PASS_OFF=mkMat('MeshLambertMaterial',{color:k8hex(.30,.30,.29)});       
 
 /* ---- 9-8. 文字(表示器・車番・ロゴ)はキャンバスに描いて貼る -------------------- */
 const K8_FONT='"IPAGothic","Noto Sans JP","Hiragino Kaku Gothic ProN",sans-serif';
-const K8_TEXCACHE={};
-function k8Tex(key,w,h,draw,lit){
-  if(K8_TEXCACHE[key]) return K8_TEXCACHE[key];
+const K8_TEXCACHE={}, K8_IMGCACHE={};
+function k8Img(key,w,h,draw){
+  if(K8_IMGCACHE[key]) return K8_IMGCACHE[key];
   const cv=document.createElement('canvas');cv.width=w;cv.height=h;
   draw(cv.getContext('2d'),w,h);
-  const t=canvasTex(cv); t.anisotropy=4;
-  // 光る物(表示器)は照明を受けない材質。塗装・板(ロゴ・車番)は照明を受ける(2026-10-13 利用者指摘:夜に 9000系の前面のロゴが光っていた)
-  const m=mkMat(lit?'MeshLambertMaterial':'MeshBasicMaterial',{map:t,transparent:true,alphaTest:.3,side:THREE.DoubleSide});
-  if(lit) staLitPatch(m,true);                    // 駅の照明と夜の下地は車体と同じに
+  K8_IMGCACHE[key]=cv; return cv;
+}
+// 光る物(表示器)は照明を受けない材質
+function k8Tex(key,w,h,draw){
+  if(K8_TEXCACHE[key]) return K8_TEXCACHE[key];
+  const t=canvasTex(k8Img(key,w,h,draw)); t.anisotropy=4;
+  const m=mkMat('MeshBasicMaterial',{map:t,transparent:true,alphaTest:.3,side:THREE.DoubleSide});
   K8_TEXCACHE[key]=m; return m;
 }
-const k8TexLit=(key,w,h,draw)=>k8Tex(key,w,h,draw,true);
+/* 塗装・板(ロゴ・車番)は画像だけを作り、1両ごとに1枚のシートに詰めて1つの Mesh で描く(k8Sheet。2026-10-15 利用者指示:
+   軽く。1両 2〜5回の描画が1回に)。シートは照明を受ける材質(2026-10-13 利用者指摘:夜に 9000系の前面のロゴが光っていた) */
+const k8Paint=k8Img;
+const K8_SHEET_PAD=16, K8_SHEET_GEO=new Map();
+/* 画像は元の画素のまま縦に並べ、周りを PAD 画素だけ縁の画素で延ばす(縮小の段=ミップマップで隣の画像が混ざらない。
+   別々の画像だったときの端の扱い ClampToEdge と同じ)。rect=[u0,v0,幅,高さ](v0 は画像の下端。上下を返して貼る) */
+function k8Sheet(key,imgs){
+  const ck='sheet'+key; if(K8_TEXCACHE[ck]) return K8_TEXCACHE[ck];
+  const P=K8_SHEET_PAD, W=Math.max(...imgs.map(c=>c.width))+2*P, H=imgs.reduce((a,c)=>a+c.height+2*P,0);
+  const cv=document.createElement('canvas'); cv.width=W; cv.height=H;
+  const cx=cv.getContext('2d'); cx.imageSmoothingEnabled=false;
+  const rect=[]; let y=0;
+  for(const c of imgs){
+    const w=c.width, h=c.height, x0=P, y0=y+P;
+    cx.drawImage(c,x0,y0);
+    cx.drawImage(c,0,0,1,h,0,y0,P,h); cx.drawImage(c,w-1,0,1,h,x0+w,y0,P,h);          // 左右の縁
+    cx.drawImage(c,0,0,w,1,x0,y,w,P); cx.drawImage(c,0,h-1,w,1,x0,y0+h,w,P);          // 上下の縁
+    cx.drawImage(c,0,0,1,1,0,y,P,P); cx.drawImage(c,w-1,0,1,1,x0+w,y,P,P);            // 角
+    cx.drawImage(c,0,h-1,1,1,0,y0+h,P,P); cx.drawImage(c,w-1,h-1,1,1,x0+w,y0+h,P,P);
+    rect.push([x0/W,1-(y0+h)/H,w/W,h/H]);
+    y+=h+2*P;
+  }
+  const t=canvasTex(cv); t.anisotropy=4;
+  const m=mkMat('MeshLambertMaterial',{map:t,transparent:true,alphaTest:.3,side:THREE.DoubleSide});
+  staLitPatch(m,true);                            // 駅の照明と夜の下地は車体と同じに
+  m.userData.rect=rect;
+  K8_TEXCACHE[ck]=m; return m;
+}
+// シートに貼る形:parts=[[形, x の平行移動]](rect と同じ順)。UV を各画像の枠へ写す。並びが同じ車両で使い回す
+function k8SheetGeo(parts,rect,key){
+  const k=key+'|'+rect.map(r=>r.map(v=>v.toFixed(6)).join(',')).join(';');
+  let g=K8_SHEET_GEO.get(k); if(g) return g;
+  const A={position:[],normal:[],color:[],uv:[]};
+  parts.forEach(([geo,dx],j)=>{
+    const at=geo.attributes, P=at.position.array, r=rect[j], U=at.uv.array;
+    for(let i=0;i<P.length;i+=3) A.position.push(P[i]+dx,P[i+1],P[i+2]);
+    for(const v of at.normal.array) A.normal.push(v);
+    for(const v of at.color.array) A.color.push(v);
+    for(let i=0;i<U.length;i+=2) A.uv.push(r[0]+U[i]*r[2],r[1]+U[i+1]*r[3]);
+  });
+  g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.Float32BufferAttribute(A.position,3));
+  g.setAttribute('normal',new THREE.Float32BufferAttribute(A.normal,3));
+  g.setAttribute('color',new THREE.Float32BufferAttribute(A.color,3));
+  g.setAttribute('uv',new THREE.Float32BufferAttribute(A.uv,2));
+  K8_SHEET_GEO.set(k,g); return g;
+}
 // 文字を枠いっぱい(縦横比を保つ)に描く
 // fill=true なら縦横を別々に伸ばして枠にぴったり合わせる(v4 の placed_text で
 // keep_aspect=False の文字=ロゴ・車番)。false なら縦横比を保って収める(表示器の文字)
@@ -5202,7 +5251,7 @@ function k8fitText(cx,txt,x,y,w,h,font,shear,fill){
 }
 // KEIO ロゴ(紺の斜体、K の右上の画だけ赤)。k_arm_pts を移植
 function k8Logo(w,h){
-  return k8TexLit('logo'+w+'x'+h,w,h,function(cx){
+  return k8Paint('logo'+w+'x'+h,w,h,function(cx){
     const navy='#1c2b6b';
     cx.fillStyle=navy;
     k8fitText(cx,'KEIO',w/2,h/2,w,h,'bold '+Math.round(h)+'px Arial,Helvetica,sans-serif',0.25,true);
@@ -5216,7 +5265,7 @@ function k8Logo(w,h){
 }
 // 側面の板(車番:紺の縁+白地に紺の数字)
 function k8NumPlate(num){
-  return k8TexLit('plate'+num,256,72,function(cx,w,h){
+  return k8Paint('plate'+num,256,72,function(cx,w,h){
     cx.fillStyle='#1c2b6b';cx.fillRect(0,0,w,h);
     cx.fillStyle='#d9d9d4';cx.fillRect(7,7,w-14,h-14);
     // v4:数字は板の幅−0.07m × 高さ−0.045m に伸ばす
@@ -5269,7 +5318,7 @@ function k8SideLed(kind,dest,w,h){
 }
 function k8FrontNum(num,w,h,keep){          // keep=字形の縦横比を保つ(枠いっぱいに引き伸ばさない)
   w=w||128; h=h||32;
-  return k8TexLit('fnum'+num+w+'x'+h+(keep?'k':''),w,h,function(cx,w,h){
+  return k8Paint('fnum'+num+w+'x'+h+(keep?'k':''),w,h,function(cx,w,h){
     if(keep){ cx.fillStyle='#f2f2ef'; k8fitText(cx,num,w/2,h/2,w*.98,h*.92,'bold 32px Arial,sans-serif',0,false); return; }
     cx.fillStyle='#f2f2ef';k8fitText(cx,num,w/2,h/2,w,h,'bold 32px Arial,sans-serif',0,true);
   });
@@ -6014,7 +6063,7 @@ function k9FrontGeos(){
 /* 前面の KEIO ロゴ(写真 9755):白い平行四辺形の板に、黒の太い斜体の文字。板の辺と文字は同じ傾き。
    文字は線で組む(K の腕と脚・E の3本の横棒・I・角の丸い長方形の O)。寸法は measured_9000.md 3b(その2)。画像は板の外接矩形 K9.FLOGO */
 function k9Logo(w,h){
-  return k8TexLit('logo9_'+w+'x'+h,w,h,function(cx){
+  return k8Paint('logo9_'+w+'x'+h,w,h,function(cx){
     const L=K9.FLOGO, sl=K9.FLOGO_SL, Wm=L[1]-L[0], Hm=L[3]-L[2], k=sl/Hm;
     const X=(x,z)=>(x+k*z)/Wm*w, Y=(z)=>(1-z/Hm)*h;        // 板の左下からの(横,高さ)[m]→画素。横は傾きの分だけずらす
     const path=(pts)=>{pts.forEach((p,i)=>{const a=X(p[0],p[1]), b=Y(p[1]); if(i) cx.lineTo(a,b); else cx.moveTo(a,b);}); cx.closePath();};
@@ -6193,11 +6242,19 @@ function makeCar(opt){
   {
     const eLocal=tail?o.hachi:-o.hachi;
     const xn=cab?6.0105:eLocal*6.0105;
-    const pl=addFine(GEO.plate,k8NumPlate(o.num),sh); pl.position.x=xn;
-    const lg=addFine(GEO.logo,k8Logo(256,72),sh); lg.position.x=-xn;
+    // 車番・ロゴ(側面の両端・運転台側・前面)は1両で1枚のシートに詰め、1つの Mesh で描く
+    const L=[[GEO.plate,xn,k8NumPlate(o.num)],[GEO.logo,-xn,k8Logo(256,72)]];
+    if(cab){
+      const F=GEO.front;
+      L.push([GEO.cabLogo,0,k8Logo(384,96)]);
+      if(S9) L.push([F.num,0,k8FrontNum(o.num,Math.round((K9.FNUM[1]-K9.FNUM[0])*640),Math.round((K9.FNUM[3]-K9.FNUM[2])*640),true)],   // 字形のまま(引き伸ばさない)
+                    [F.logo,0,k9Logo(Math.round((K9.FLOGO[1]-K9.FLOGO[0])*1280),Math.round((K9.FLOGO[3]-K9.FLOGO[2])*1280))]);   // 2倍の細かさ(1m=1280px)
+      else L.push([F.num,0,k8FrontNum(o.num)],[F.logo,0,k8Logo(256,40)]);
+    }
+    const sm=k8Sheet(SK+(cab?'c':'m')+o.num,L.map(a=>a[2]));
+    addFine(k8SheetGeo(L,sm.userData.rect,SK+(cab?'c':'m')+xn),sm,sh);
   }
-  if(cab){                                                  // 前頭部(灯火・表示器・識別灯は 8000・9000 共通の並び)
-    addFine(GEO.cabLogo,k8Logo(384,96),sh);
+  if(cab){                                                  // 前頭部(灯火・表示器・識別灯は 8000・9000 共通の並び。車番・ロゴは上のシート)
     const F=GEO.front;
     add(F.vc,K8M.vc,sh);                                    // 前面のケースは頂点カラーの細部にまとめた(上)
     addFine(F.hl,o.lights==='head'?M_HL:M_HL_OFF,sh);
@@ -6210,13 +6267,9 @@ function makeCar(opt){
       const px=(R)=>[Math.round((R[1]-R[0])*640),Math.round((R[3]-R[2])*640)];
       addFine(F.dest,lit?k8Led(k8DestTxt(o.sign.dest),'#ff8c14',...px(K9.FDEST)):K8M.ledOff,sh);
       addFine(F.kind,lit?k8Led(k8KindTxt(o.sign.kind),K8_KIND_COLORS[o.sign.kind]||'#ff2e14',...px(K9.FKIND)):K8M.ledOff,sh);
-      addFine(F.num,k8FrontNum(o.num,...px(K9.FNUM),true),sh);   // 字形のまま(引き伸ばさない)
-      addFine(F.logo,k9Logo(Math.round((K9.FLOGO[1]-K9.FLOGO[0])*1280),Math.round((K9.FLOGO[3]-K9.FLOGO[2])*1280)),sh);   // 2倍の細かさ(1m=1280px)
     }else{
       addFine(F.dest,lit?k8Led(k8DestTxt(o.sign.dest),'#ff8c14',256,68,K8_FRONT_TXT):K8M.ledOff,sh);
       addFine(F.kind,lit?k8Led(k8KindTxt(o.sign.kind),K8_KIND_COLORS[o.sign.kind]||'#ff2e14',192,68,K8_FRONT_TXT):K8M.ledOff,sh);
-      addFine(F.num,k8FrontNum(o.num),sh);
-      addFine(F.logo,k8Logo(256,40),sh);
     }
     addFine(F.pass,k8PassOn(o)?M_PASS:M_PASS_OFF,sh);          // 識別灯(各停以外で点く)
     if(k8PassOn(o)) addFine(F.passGlow,K8M.hlGlow,sh);
