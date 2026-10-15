@@ -6100,6 +6100,58 @@ function k8Merge(key,parts){                      // parts=[[形, 180°回すか
   K8_MERGED.set(key,g); return g;
 }
 
+/* ---- 9-11b. 台車・床下・冷房・パンタは全車両でインスタンスに(2026-10-15 利用者指示:軽く) ----
+   1両あたり 2〜5回の描画(台車・床下と冷房・パンタの台枠/枠/舟)が全車両ぶん効いていた。部品の Mesh は今までどおり
+   車両の中に置き(位置・LOD の見え方はこれで決まり、検証もこれを測る)、描かない層 CAR_INST.layer へ移す。主シーンを
+   描く直前(scene.onBeforeRender。行列の更新の後)に、見えている部品の世界行列を形と材質の組ごとの InstancedMesh へ
+   書く。書くのは画面か影の範囲に掛かる車両だけ(インスタンスは間引かれないので)。主シーンの外へ出した車両(⑩⑮の
+   照合の描画)は元の Mesh のまま描く */
+const CAR_INST={batches:new Map(), layer:31, R:12, drawn:0};
+function carInstReg(m,car){
+  const k=m.geometry.uuid+'|'+m.material.uuid;
+  let b=CAR_INST.batches.get(k);
+  if(!b){ b={geo:m.geometry,mat:m.material,list:[],im:null,cap:0}; CAR_INST.batches.set(k,b); }
+  b.list.push(m); m.userData.instCar=car;
+}
+const _ciF=new THREE.Frustum(), _ciM=new THREE.Matrix4(), _ciS=new THREE.Sphere(new THREE.Vector3(),CAR_INST.R);
+function carInstSeen(car){
+  _ciS.center.copy(car.position);
+  if(_ciF.intersectsSphere(_ciS)) return true;
+  if(!renderer.shadowMap.enabled) return false;
+  const t=sun.target.position, dx=car.position.x-t.x, dy=car.position.y-t.y, dz=car.position.z-t.z;
+  const a=dx*SUN_N.x+dy*SUN_N.y+dz*SUN_N.z, R=shadowR+CAR_INST.R;   // 影を写す範囲(光の向きの筒)
+  return dx*dx+dy*dy+dz*dz-a*a<R*R;
+}
+function carInstDraw(cam){
+  _ciM.multiplyMatrices(cam.projectionMatrix,cam.matrixWorldInverse); _ciF.setFromProjectionMatrix(_ciM);
+  const seen=new Map(), L=CAR_INST.layer; let tot=0;
+  for(const b of CAR_INST.batches.values()){
+    if(b.list.length>b.cap){
+      if(b.im){ scene.remove(b.im); b.im.dispose(); }
+      b.cap=Math.ceil(b.list.length*1.25)+4;
+      b.im=new THREE.InstancedMesh(b.geo,b.mat,b.cap);
+      b.im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      b.im.frustumCulled=false; b.im.userData.carInst=true;
+      b.im.castShadow=b.list[0].castShadow; b.im.receiveShadow=b.list[0].receiveShadow;
+      scene.add(b.im);
+    }
+    let n=0;
+    for(const m of b.list){
+      const car=m.userData.instCar;
+      if(car.parent!==scene){ if(m.layers.mask!==1) m.layers.set(0); continue; }
+      if(m.layers.mask===1) m.layers.set(L);
+      let o=m, on=true;
+      for(;o;o=o.parent){ if(!o.visible){on=false;break;} if(o===car) break; }
+      if(!on) continue;
+      let v=seen.get(car); if(v===undefined){ v=carInstSeen(car); seen.set(car,v); }
+      if(v) b.im.setMatrixAt(n++,m.matrixWorld);
+    }
+    b.im.count=n; b.im.instanceMatrix.needsUpdate=true; tot+=n;
+  }
+  CAR_INST.drawn=tot;
+}
+scene.onBeforeRender=function(r,sc,cam){ carInstDraw(cam); };
+
 /* ---- 9-12. 1両を組み立てる ------------------------------------------------------
    opt: cabF/cabR=運転台が+x側/−x側 / panto=パンタあり / motor=電動車(軸距2.2)
         hachi=京王八王子方の向き(車体ローカルx の符号) / num=車番
@@ -6171,7 +6223,7 @@ function makeCar(opt){
   }
   // 台車・床下・冷房・幌。台車・床下・冷房・パンタは遠く(LOD_FAR より先)では描かない(1両あたり描画5〜9回・数千三角形。
   // 1.5km 先では数画素にしかならない。全体俯瞰で50両ぶん効く)
-  const mid=[], addMid=(geo,mat,parent)=>{const m=add(geo,mat,parent);mid.push(m);return m;};
+  const mid=[], addMid=(geo,mat,parent)=>{const m=add(geo,mat,parent);mid.push(m);carInstReg(m,g);return m;};
   addMid(o.motor?GEO.bogieM:GEO.bogieT,M_BOG);
   // 床下機器・冷房装置・パンタの台座の小物(京王八王子方へ 5.1m)を1つの形に(幌は頂点カラーの細部にまとめた)
   { const parts=[[GEO.under,false,0],[GEO.ac,false,0]];
@@ -6181,7 +6233,7 @@ function makeCar(opt){
   if(o.panto){
     const pg=new THREE.Group(); pg.position.x=o.hachi*SP.BOGIE_X; if(o.hachi<0) pg.rotation.y=Math.PI;
     g.add(pg); mid.push(pg);
-    add(GEO.panto.base,M_PANS,pg); add(GEO.panto.frame,M_PN,pg); add(GEO.panto.shoe,M_SH,pg);
+    for(const [pgeo,pmat] of [[GEO.panto.base,M_PANS],[GEO.panto.frame,M_PN],[GEO.panto.shoe,M_SH]]) carInstReg(add(pgeo,pmat,pg),g);
     g.userData.panto=pg;
   }
   g.userData.body=body; g.userData.bodyMat=bodyMat; g.userData.tail=tail;
