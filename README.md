@@ -46,7 +46,8 @@ three.js は MIT License で、このリポジトリには含めず cdnjs から
 
 ## 開発
 
-- 作業のルールと現状:`CLAUDE.md`(Claude Code で開発を続けるための引継書)・`TEMPLATE.md`(制作の手引き)
+- 作業のルールと現状:`CLAUDE.md`(Claude Code で開発を続けるための引継書)・`TEMPLATE.md`(制作の手引き)・
+  `HANDOVER_NEW_LINE.md`(別の路線区間へ展開するための引継書)
 - 検証:`bash tools/verify_all.sh`(Node.js と Python 3 + numpy・Pillow。ブラウザで描く検査は、playwright-core と
   three.min.js を環境変数 `K8_PW`・`K8_THREE` で渡したときだけ走る)
 - 沿線のデータの作り直し:`reference/plateau/README.md`
