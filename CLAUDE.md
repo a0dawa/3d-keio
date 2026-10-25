@@ -12,6 +12,7 @@ keio-3d-viewer/
 ├── keio_elevated_3d.html    ← 成果物(単一HTML+Three.js r128)
 ├── plateau_bldg.js          ← 沿線の建物データ(PLATEAU 2025年度。HTML の隣に置く。無ければ模式の街で描く)
 ├── plateau_land.js          ← 沿線の道路・緑地・水面(PLATEAU 2025年度。無ければ模式の道路と一様な地表で描く)
+├── plateau_tex.js           ← 駅の周りの LOD2 の建物の写真テクスチャ(PLATEAU 2025年度・5.5MB。無ければ色で描く。スマホは読まない)
 ├── CREDITS.txt              ← クレジット・出典表記(PLATEAU=CC BY 4.0・three.js=MIT・写真とパースの権利の確認事項)
 ├── LICENSE                  ← MIT License(プログラム)。データ・文書は CC BY 4.0(README.md の表)
 ├── README.md                ← 公開用の説明(開き方・操作・ライセンスの表・非公式であること)
@@ -52,6 +53,9 @@ keio-3d-viewer/
     ├── plateau_import.py    ← PLATEAU の建築物 CityGML → 足跡+高さ(plateau_bldg.js を作る)
     ├── plateau_land.py      ← PLATEAU の道路・土地利用・水部 CityGML → 地表の面(plateau_land.js を作る)
     ├── plateau_meshes.py    ← 線路の帯にかかる3次・2次メッシュ(PLATEAU のどのファイルが要るか)を数える
+    ├── plateau_tex.py       ← PLATEAU の LOD2 の写真テクスチャ → 詰め合わせの画像と面ごとの u,v(plateau_tex.js を作る)
+    ├── plateau_used.js      ← ビューアが実際に描く LOD2 の建物の一覧(plateau_tex.py --used に渡す)
+    ├── plateau_zip.py       ← PLATEAU の zip から要るファイルだけを HTTP の範囲指定で取り出す(写真・地形が使う)
     └── patch_helper.py      ← 厳密一致置換のヘルパー
 ```
 
@@ -594,6 +598,12 @@ Claude(AI)は自分が生成した3D描画を安定して見られない。見�
   壁は軒(高さ−屋根の高さ)まで。⑦が窓の材質・窓が壁の上端を超えない・三角屋根が灰色を、⑨が窓明かりの昼夜を見る。
   形は3段(`CITY_LODS`/`cityLod()`。`lodStruct()` から呼ぶ):近く400m=足跡の押し出し(近づいたまとまりで
   初めて作る。**LOD2 のある約550棟は屋根面・壁面そのもの**=`plbDecodeL2`・`polyTri3`。⑦が面の点と面の向きを測る)・中1.4km=向きを合わせた外接矩形の箱・遠く=120m²以上か9.5m以上の箱(中・遠はインスタンス)。
+  **LOD2 の面には PLATEAU の写真テクスチャ**(2026-10-25 利用者指示。「写真は同梱しない」の例外=CC BY 4.0 で再配布できる):
+  `plateau_tex.js`(`tools/plateau_tex.py`。描く531棟・8,454面を 1m 5画素まで縮めて詰め合わせ5枚)。`plbDecodeTex()` が面ごとの
+  詰め合わせの番号 `ta` と u,v を建物に足し、近くの形は詰め合わせごとに1つの Mesh(`C.mt`。Lambert+写真を sRGB で・`ptxMat()`)。
+  写真は暗い(壁の平均 sRGB 87)ので材質の色でリニア 3.4倍(`PTX_GAIN`)、中・遠の箱は写真の平均色を同じ倍率で(`ptxBoxHex`)。
+  夜の窓は同じシェーダ(`bldWinPatch(m,true)`=昼の暗いガラスは塗らない)。画像の読み込み(`ptxLoad`・`PTX_READY`)が済むまでは
+  色で描き、済んだらそのまとまりの近くの形を作り直す(`C.pend`)。スマホは読まない。⑦が面の点と u,v・材質・箱の色を見る。
   s の240mごと。樹木・街灯は足跡の中・縁に置かない(`occFree` が `PLB_GRID` を見る)。登録簿 `CITY.buildings` に
   足跡 `poly`・外接矩形 w/d/向き a を残す(夜の窓の殻は外接矩形)。出典は画面右下(CC BY 4.0)。
   データの作り直しは `reference/plateau/README.md`。**ファイルが無いときは下の模式の街**。
@@ -1054,7 +1064,7 @@ node tools/capture.js --out /tmp/vid --w 480 --h 270 --fps 12 --workers 3 \
 ## 公開・配布について(2026-10-11)
 
 - GitHub の a0dawa/3d-keio は **public**(main と作業ブランチの両方が誰でも見られる)。
-- **配布(公開フォルダ)に要るのは**:`keio_elevated_3d.html`・`plateau_bldg.js`・`plateau_land.js`(HTML の隣。無ければ模式の街)と、
+- **配布(公開フォルダ)に要るのは**:`keio_elevated_3d.html`・`plateau_bldg.js`・`plateau_land.js`・`plateau_tex.js`(HTML の隣。無ければ模式の街・色の建物)と、
   ライセンスの表示に要る `LICENSE`(MIT の本文)・`CREDITS.txt`(PLATEAU の CC BY 4.0 の出典表記)。`README.md` はあれば親切。
   three.js は cdnjs から読む(同梱しない)。`tools/`・`reference/`・`CLAUDE.md`・`TEMPLATE.md` は開発用で、画面は読まない
 - 権利の記録が無い写真(`reference/keio8000_v4/ref/ftex.png`=8000系の前面写真・`reference/keio9000/ftex9.png`=利用者提供の
@@ -1062,6 +1072,8 @@ node tools/capture.js --out /tmp/vid --w 480 --h 270 --fps 12 --workers 3 \
   書き換えて全コミットから消した**(main と作業ブランチを強制プッシュ。コミットの番号はすべて変わった)。
   ⑩の前面14項目の照合は写真があるときだけ走る(`ref/ftex.png` に置くか `K8_FTEX`。側面45項目とほかの検証は写真なしで動く)。
 - **写真・発表資料の画像は今後も同梱しない**(測った値と測り方だけを measured_*.md に残す)。出典と権利の一覧は `CREDITS.txt`。
+  **例外は PLATEAU の写真テクスチャ `plateau_tex.js` だけ**(2026-10-25 利用者指示。国土交通省の公開データで CC BY 4.0=加工・再配布が
+  許されている。画面と CREDITS.txt に出典を出す)。ほかの写真(車両の写真・発表のパース)はこれまでどおり同梱しない。
 - **ライセンス**(2026-10-11 利用者が決定):プログラム=MIT(`LICENSE`)、データ・文書(寸法の表・説明の文書・Blender 用モデル v4 の
   数値と形・見本の画像)=CC BY 4.0、`plateau_*.js`=PLATEAU と同じ CC BY 4.0。著作権者の表記は「a0とnonkyuruの駅攻略」。
   対象外(京王電鉄の社名・ロゴ・車両や駅の意匠、three.js)と表示の例は `README.md`・`CREDITS.txt`。ファイルを足すときは
@@ -1076,5 +1088,6 @@ node tools/capture.js --out /tmp/vid --w 480 --h 270 --fps 12 --workers 3 \
 ## ローカルでの開き方
 
 `keio_elevated_3d.html` をブラウザで開くだけ(Three.js を cdnjs から読むので
-初回はネット接続が必要)。沿線の実際の建物・道路を出すには `plateau_bldg.js`・`plateau_land.js` を同じフォルダに置く。スマホは横画面。
+初回はネット接続が必要)。沿線の実際の建物・道路を出すには `plateau_bldg.js`・`plateau_land.js`(建物の写真は `plateau_tex.js`)を
+同じフォルダに置く。スマホは横画面。
 検証ツールの依存:Node.js、Python3 + numpy + pillow。

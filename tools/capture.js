@@ -83,7 +83,7 @@ const PAGE = path.join(OUT, 'page.html');
     if (src === before) { console.error('three のscriptタグが見つからない'); process.exit(1); }
   }
   // 沿線の建物データ(別ファイル)。HTML の隣にあれば一緒に写す
-  for (const nm of ['plateau_bldg.js', 'plateau_land.js']) {   // 沿線の建物・道路(PLATEAU。あれば)
+  for (const nm of ['plateau_bldg.js', 'plateau_land.js', 'plateau_tex.js']) {   // 沿線の建物・道路(PLATEAU。あれば)
     const pl = path.join(path.dirname(OPT.html), nm);
     if (fs.existsSync(pl)) fs.copyFileSync(pl, path.join(OUT, nm));
   }
@@ -202,6 +202,7 @@ async function runWorker(id, pw, exe, shots, log) {
     t=t+Math.imul(t^t>>>7,61|t)^t;return ((t^t>>>14)>>>0)/4294967296;};})()`);
   await page.goto('file://' + PAGE, { timeout: 180000 });   // 街並みの生成に時間がかかる
   await page.waitForFunction('window.CINE!==undefined', { timeout: 180000 });
+  await page.waitForFunction('typeof PTX_READY==="undefined"||PTX_READY.all', { timeout: 180000 });   // 写真テクスチャの画像が読めるまで(どのワーカも同じ絵に)
   await page.evaluate(PAGE_API.replace('__W', OPT.w).replace('__H', OPT.h)
     .replace('__SS', OPT.ss).replace('__FPS', OPT.fps).replace('__Q', OPT.quality)
     .replace('__EVENTS', JSON.stringify(EVENTS)));
@@ -254,6 +255,7 @@ async function runWorker(id, pw, exe, shots, log) {
   const p0 = await b0.newPage({ viewport: { width: 64, height: 64 } });
   await p0.goto('file://' + PAGE, { timeout: 180000 });
   await p0.waitForFunction('window.CINE!==undefined', { timeout: 180000 });
+  await p0.waitForFunction('typeof PTX_READY==="undefined"||PTX_READY.all', { timeout: 180000 });
   const stations = await p0.evaluate(() => CINE.stations.map((s) => ({ n: s.n, x: s.x })));
   await b0.close();
 

@@ -383,6 +383,7 @@ if (LAND) {
   ok('街灯が掘割の中に無い', !bL, '擁壁の外', bL ? '(' + bL[0].toFixed(0) + ',' + bL[1].toFixed(0) + ')' : X.ROAD_LAMPS.length + '基すべて');
 }
 
+let L2_ALL = null, P0_ALL = null;          // 4c で読んだ LOD2 の面(建物ごと)と足跡の1点目(4c1 の写真の検査が使う)
 /* ---- 4c. LOD2(屋根の形) ----------------------------------------------------
    plateau_bldg.js の LOD2 の面を検証側で独自に読み、近くの形(足跡の押し出しの代わりに面そのもの)を実際に作らせて、
    ・データの面の点がすべて描かれた頂点にある(LOD2 の建物が平らな箱のままになっていない)
@@ -397,16 +398,19 @@ if (LAND) {
   if (D && D.lod2b64) {
     // 足跡の1点目(LOD2 の点の基準)を PLT1 から
     const b = Buffer.from(D.b64, 'base64'); const N = b.readUInt32LE(4); let o = 8; const P0 = [];
-    for (let n = 0; n < N; n++) { const nv = b.readUInt8(o); o += 4; P0.push([b.readInt32LE(o) / 10, b.readInt32LE(o + 4) / 10]); o += 8 + 4 * (nv - 1); }
+    for (let n = 0; n < N; n++) { const nv = b.readUInt8(o), hh = b.readUInt16LE(o + 1) / 10; o += 4; P0.push([b.readInt32LE(o) / 10, b.readInt32LE(o + 4) / 10, hh]); o += 8 + 4 * (nv - 1); }
     const w = Buffer.from(D.lod2b64, 'base64'); const M = w.readUInt32LE(4); let q = 8; const L2 = [];
     for (let k = 0; k < M; k++) {
-      const bi = w.readUInt32LE(q), ns = w.readUInt16LE(q + 4); q += 6; const V = []; let roofs = 0;
+      const bi = w.readUInt32LE(q), ns = w.readUInt16LE(q + 4); q += 6; const V = [], SF = []; let roofs = 0;
       for (let j = 0; j < ns; j++) {
         const t = w.readUInt8(q), nv = w.readUInt8(q + 1); q += 2; if (t === 1) roofs++;
-        for (let i = 0; i < nv; i++) { V.push([P0[bi][0] + w.readInt16LE(q) / 10, w.readUInt16LE(q + 4) / 10, P0[bi][1] + w.readInt16LE(q + 2) / 10]); q += 6; }
+        const sv = [];
+        for (let i = 0; i < nv; i++) { const v = [P0[bi][0] + w.readInt16LE(q) / 10, w.readUInt16LE(q + 4) / 10, P0[bi][1] + w.readInt16LE(q + 2) / 10]; V.push(v); sv.push(v); q += 6; }
+        SF.push(sv);
       }
-      L2.push({ p0: P0[bi], V: V, roofs: roofs });
+      L2.push({ p0: P0[bi], V: V, roofs: roofs, bi: bi, SF: SF });
     }
+    L2_ALL = L2; P0_ALL = P0;
     // 描かれている(登録簿にある)LOD2 の建物:足跡の1点目で対応を取る
     const key = (x, z) => x.toFixed(1) + ',' + z.toFixed(1);
     const drawn = new Set(B.filter((e) => e.poly).map((e) => key(e.poly[0][0], e.poly[0][1])));
@@ -415,7 +419,9 @@ if (LAND) {
     const VS = new Set(); let tris = 0, flip = 0, made = 0;
     for (const C of X.CITY_LODS) {
       if (!C.B.some((e) => e.l2)) continue;
-      const m = C.m[0] || C.make(C); made++;
+      if (!C.m[0]) C.m[0] = C.make(C);
+      made++;
+      for (const m of [C.m[0]].concat(C.mt || [])) {             // 色の形と写真の形(詰め合わせごと)
       const gg = m.geometry, Pa = gg.attributes.position.array, Na = gg.attributes.normal.array, Ia = gg.index.array;
       for (let i = 0; i < Pa.length; i += 3) VS.add(Pa[i].toFixed(1) + ',' + Pa[i + 1].toFixed(1) + ',' + Pa[i + 2].toFixed(1));
       for (let t = 0; t < Ia.length; t += 3) {
@@ -425,6 +431,7 @@ if (LAND) {
         if (Math.hypot(nx, ny, nz) < 1e-6) continue;
         tris++;
         if (nx * Na[a] + ny * Na[a + 1] + nz * Na[a + 2] < 0) flip++;
+      }
       }
     }
     let miss = 0, tot = 0, ex = null;
@@ -436,6 +443,103 @@ if (LAND) {
       want.length + '棟(データ' + L2.length + ')・点' + tot + '・欠け' + miss + (ex ? ' 例' + ex : ''));
     ok('建物の面が裏返らない', tris > 0 && flip === 0, '巻き順の法線=頂点の法線の側',
       'まとまり' + made + '・三角形' + tris + '・裏返り' + flip);
+  }
+}
+
+/* ---- 4c1. 写真テクスチャ(2026-10-25 利用者指示:駅の周りの LOD2 の建物に PLATEAU の写真を貼る) -------------
+   plateau_tex.js を検証側で独自に読み(PTX1 の形式。モデルの登録簿ではなくファイルそのもの)、描かれている LOD2 の建物
+   (足跡の1点目で対応)のうち写真のある面について:
+   ・面の点が写真の形(詰め合わせごとの Mesh)の頂点に、データと同じ位置・同じ u,v で描かれている(面の番号と写真がずれない)
+   ・写真の形の材質は写真(map)を sRGB として読み、窓の材質(夜の明かり)で写真の面の印が立つ(昼の暗いガラスは塗らない)。
+     シェーダの元の文字列で、写真の面では暗いガラスの式を飛ばす
+   ・写真のある建物の中・遠の箱の色(インスタンスの色)は、データの写真の平均色をリニアで REF_PTX_GAIN 倍した色(±1。近くの写真の材質と同じ倍率)
+   ・写真の材質の色(リニアの倍率)も REF_PTX_GAIN
+   ・数:写真の面のある建物 400 棟以上・面 8,000 以上が描かれる */
+{
+  const fs = require('fs'), pth = require('path');
+  const f = pth.join(pth.dirname(path), 'plateau_tex.js');
+  const html = fs.readFileSync(path, 'utf8');
+  const g = {};
+  if (html.includes('<script src="plateau_tex.js">') && fs.existsSync(f) && L2_ALL) new Function('globalThis', fs.readFileSync(f, 'utf8'))(g);
+  const T = g.PLATEAU_TEX;
+  const REF_PTX_GAIN = 3.4;                  // 写真の明るさの倍率(リニア)。写真の壁の平均 sRGB 87 → 用途の色の約半分(CLAUDE.md)
+  const s2l = (v) => (v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4)), l2s = (v) => (v <= 0.0031308 ? v * 12.92 : 1.055 * Math.pow(v, 1 / 2.4) - 0.055);
+  const gainHex = (h) => [16, 8, 0].reduce((a, sh) => a | (Math.max(0, Math.min(255, Math.round(255 * l2s(Math.min(1, s2l(((h >> sh) & 255) / 255) * REF_PTX_GAIN))))) << sh), 0);
+  if (T && T.uv64) {
+    const w = Buffer.from(T.uv64, 'base64'); let o = 8; const TX = new Map();
+    const byBi = new Map(L2_ALL.map((e) => [e.bi, e]));
+    let bad = null;
+    if (w.toString('latin1', 0, 4) !== 'PTX1') bad = '形式が PTX1 でない';
+    const N = bad ? 0 : w.readUInt32LE(4);
+    for (let k = 0; k < N && !bad; k++) {
+      const bi = w.readUInt32LE(o), ns = w.readUInt16LE(o + 4), rgb = (w[o + 6] << 16) | (w[o + 7] << 8) | w[o + 8]; o += 9;
+      const e = byBi.get(bi); if (!e || e.SF.length !== ns) { bad = '建物 ' + bi + ' の面の数が LOD2 と合わない'; break; }
+      const S = [];
+      for (let j = 0; j < ns; j++) {
+        const a = w[o]; o++;
+        if (a === 255) continue;
+        const uv = [];
+        // 描いた頂点は 32bit の浮動小数なので、同じ丸めで比べる(小数4桁の境で食い違わない)
+        for (let i = 0; i < e.SF[j].length; i++) { uv.push([Math.fround(w.readUInt16LE(o) / 65535), Math.fround(w.readUInt16LE(o + 2) / 65535)]); o += 4; }
+        S.push({ j: j, a: a, uv: uv });
+      }
+      TX.set(bi, { rgb: rgb, S: S, e: e });
+    }
+    if (!bad && o !== w.length) bad = 'データの長さが合わない';
+    // 写真の形の頂点(位置 0.1m・u,v 1e-4)と材質
+    const VT = new Set(); let nMesh = 0, mBad = null;
+    for (const C of X.CITY_LODS) {
+      if (!C.B.some((e) => e.l2)) continue;
+      if (!C.m[0]) C.m[0] = C.make(C);
+      for (const m of (C.mt || [])) {
+        nMesh++;
+        const ma = m.material, at = m.geometry.attributes;
+        if (!(ma && ma.map && ma.map.encoding === 3001 && ma.userData && ma.userData.bldWin && ma.userData.bldWinPhoto && at.uv && at.aBld) && !mBad)
+          mBad = '詰め合わせ ' + m.userData.ptx + ' の材質(写真の sRGB・窓の材質・写真の印・uv・aBld)';
+        if (ma && ma.color && [ma.color.r, ma.color.g, ma.color.b].some((v) => Math.abs(v - REF_PTX_GAIN) > 1e-6) && !mBad)
+          mBad = '詰め合わせ ' + m.userData.ptx + ' の材質の色(リニア)が ' + REF_PTX_GAIN + ' 倍でない';
+        const Pa = at.position.array, Ua = at.uv ? at.uv.array : [];
+        if (Ua.length !== Pa.length / 3 * 2) { if (!mBad) mBad = '詰め合わせ ' + m.userData.ptx + ' の u,v の数が頂点の数と合わない'; continue; }
+        for (let i = 0; i < Pa.length / 3; i++)
+          if (!(Number.isFinite(Ua[2 * i]) && Number.isFinite(Ua[2 * i + 1]))) { if (!mBad) mBad = '詰め合わせ ' + m.userData.ptx + ' の u,v が数でない(点 ' + i + ')'; break; }
+          else VT.add(m.userData.ptx + '|' + Pa[3 * i].toFixed(1) + ',' + Pa[3 * i + 1].toFixed(1) + ',' + Pa[3 * i + 2].toFixed(1) + '|' + Ua[2 * i].toFixed(4) + ',' + Ua[2 * i + 1].toFixed(4));
+      }
+    }
+    const shOK = /photo\?'':' diffuseColor\.rgb=mix/.test(X.BLD_WIN_SRC);
+    // 描かれている LOD2 の建物で照合(足跡の1点目が同じ別の建物があるので、高さも合わせて対応を取る)
+    const key = (x, z, h) => x.toFixed(1) + ',' + z.toFixed(1) + ',' + h.toFixed(1);
+    const drawn = new Set(B.filter((e) => e.poly).map((e) => key(e.poly[0][0], e.poly[0][1], e.h)));
+    let nB = 0, nS = 0, miss = 0, ex = null;
+    for (const [bi, t] of TX) {
+      if (!drawn.has(key(t.e.p0[0], t.e.p0[1], t.e.p0[2])) || !t.S.length) continue;
+      nB++;
+      for (const s of t.S) {
+        nS++;
+        const V = t.e.SF[s.j];
+        for (let i = 0; i < V.length; i++) {
+          const k = s.a + '|' + V[i][0].toFixed(1) + ',' + V[i][1].toFixed(1) + ',' + V[i][2].toFixed(1) + '|' + s.uv[i][0].toFixed(4) + ',' + s.uv[i][1].toFixed(4);
+          if (!VT.has(k)) { miss++; if (!ex) ex = '建物 ' + bi + ' 面 ' + s.j + ' 点 ' + i + ' (' + k + ')'; break; }
+        }
+      }
+    }
+    // 中・遠の箱の色=写真の平均色(足跡の1点目と高さで対応)
+    const rgbOf = new Map();
+    for (const [bi, t] of TX) rgbOf.set(key(t.e.p0[0], t.e.p0[1], t.e.p0[2]), gainHex(t.rgb));
+    let nC = 0, cBad = null;
+    for (const C of X.CITY_LODS) {
+      const im = C.m[1]; if (!im || !im.cols) continue;
+      C.B.forEach((e, j) => {
+        const want = e.l2 ? rgbOf.get(key(e.P[0][0], e.P[0][1], e.h)) : undefined;
+        if (want === undefined || !TX.size) return;
+        const got = im.cols[j]; nC++;
+        const d = [16, 8, 0].map((sh) => Math.abs(((got >> sh) & 255) - ((want >> sh) & 255)));
+        if (Math.max(...d) > 1 && !cBad) cBad = '(' + e.ox.toFixed(0) + ',' + e.oz.toFixed(0) + ') 箱の色 #' + (got >>> 0).toString(16) + ' ≠ 写真の平均色 #' + want.toString(16);
+      });
+    }
+    ok('写真テクスチャ(LOD2 の面)', !bad && !mBad && shOK && miss === 0 && nB >= 400 && nS >= 8000 && !cBad && nC > 0,
+      '面の点が写真の形に同じ u,v で・sRGB・窓の材質・昼のガラスを塗らない・箱の色=写真の平均色・400棟/8,000面以上',
+      bad || mBad || cBad || (shOK ? '' : 'シェーダに写真の分岐が無い ') + (ex ? '欠け ' + miss + ' 例 ' + ex :
+        nB + '棟・' + nS + '面・写真の形 ' + nMesh + '(詰め合わせ ' + (T.atlases || []).length + '枚)・箱の色 ' + nC + '棟'));
   }
 }
 
@@ -451,9 +555,11 @@ if (LAND) {
       if (!m) continue; nM++;
       if (!(m.material && m.material.userData && m.material.userData.bldWin) || !m.geometry.attributes.iBld) { if (!bM) bM = '箱のインスタンス'; }
     }
-    const m = C.m[0] || C.make(C); nM++;
-    const g = m.geometry, Pa = g.attributes.position.array, Na = g.attributes.normal.array, Ca = g.attributes.color.array, A = g.attributes.aBld, Ia = g.index.array;
-    if (!(m.material && m.material.userData && m.material.userData.bldWin) || !A || A.array.length !== Pa.length) { if (!bM) bM = '近くの形'; continue; }
+    if (!C.m[0]) C.m[0] = C.make(C);
+    for (const m of [C.m[0]].concat(C.mt || [])) {               // 写真の形(詰め合わせごと)にも窓の材質(夜の明かり)
+    nM++;
+    const g = m.geometry, Pa = g.attributes.position.array, Na = g.attributes.normal.array, Ca = g.attributes.color ? g.attributes.color.array : null, A = g.attributes.aBld, Ia = g.index.array;
+    if (!(m.material && m.material.userData && m.material.userData.bldWin) || !A || A.array.length !== Pa.length) { if (!bM) bM = m.userData.ptx !== undefined ? '写真の形' : '近くの形'; continue; }
     for (let t = 0; t < Ia.length; t += 3) {
       const v = [Ia[t], Ia[t + 1], Ia[t + 2]], ny = Na[v[0] * 3 + 1];
       if (Math.abs(ny) < 0.5) {                       // 壁:同じ面(種・向き・上端の基準が同じ三角形)ごとに最も高い点を集める
@@ -461,11 +567,12 @@ if (LAND) {
         const top = A.array[v[0] * 3 + 1], my = Math.max(...v.map((k) => Pa[k * 3 + 1]));
         const kk = A.array[v[0] * 3 + 2] + '|' + top.toFixed(3) + '|' + Na[v[0] * 3].toFixed(2) + ',' + Na[v[0] * 3 + 2].toFixed(2);
         const q = WG.get(kk); if (!q || q.my < my) WG.set(kk, { my: my, top: top, x: Pa[v[0] * 3], z: Pa[v[0] * 3 + 2] });
-      } else if (ny > 0.3 && ny < 0.97) {             // 傾いた屋根面
+      } else if (Ca && ny > 0.3 && ny < 0.97) {       // 傾いた屋根面(写真の屋根は写真の色)
         nR++;
         const c = [0, 1, 2].map((k) => Ca[v[0] * 3 + k]), mx = Math.max(...c), mn = Math.min(...c), lum = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
         if ((mx - mn > 0.25 * mx || lum > 0.25) && !bR) bR = 'rgb(' + c.map((u) => u.toFixed(2)).join(',') + ')';
       }
+    }
     }
   }
   for (const q of WG.values()) if (q.top > q.my + 0.001 && !bT) bT = '(' + q.x.toFixed(0) + ',' + q.z.toFixed(0) + ') 窓の上端の基準 ' + q.top.toFixed(2) + ' > 壁 ' + q.my.toFixed(2);

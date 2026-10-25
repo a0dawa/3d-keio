@@ -78,6 +78,30 @@ python3 -I tools/plateau_import.py --html keio_elevated_3d.html --min-area 25 --
 - ビューア:近くの形(400m)で、LOD2 のある建物は足跡の押し出しの代わりに面そのものを描く(3次元の多角形は法線の最も大きい
   成分の軸を落として耳切り。屋根は上向き、壁は建物の重心から外向きに表を向ける)。中・遠の箱は今のまま。描かれるのは547棟
 
+## LOD2 の写真テクスチャ(2026-10-25。`plateau_tex.js`)
+
+利用者指示で「写真は同梱しない」方針の例外にした(PLATEAU の画像は CC BY 4.0 で加工・再配布ができる)。
+
+- LOD2 の建物の GML の先頭の外観(`app:appearanceMember` の `app:ParameterizedTexture`)に、画像(`app:imageURI` =
+  `<メッシュ>_bldg_6697_appearance/xxx.jpg`)・貼る面(`app:target uri="#poly_…"`)・輪ごとの写真の座標
+  (`app:textureCoordinates ring="#line_…"`。t は画像の下から)がある。画像は zip の `udx/bldg/` の下(1メッシュで数百枚・合計 約1.4GB)
+- `tools/plateau_tex.py`:`plateau_import.py` と同じ読み方で建物の並びと LOD2 の面を作り直し、`plateau_bldg.js` の PLT1・PL2A と
+  **バイト単位で一致**することを確かめてから、面の外周の輪の id で写真の座標を引く(一致しなければ止まる)。画像は無い物だけ zip から
+  範囲指定で取り出す(`tools/plateau_zip.py`)。面の大きさから写真の細かさを測って 1m あたり5画素まで縮め、写真の座標の重なる面を
+  1つの島にして、s の並びの近い建物ごとに 2048 画素四方の詰め合わせ(JPEG)へ詰める(周りを4画素だけ縁の画素で延ばす)。
+  `--used`(`tools/plateau_used.js` の出力=ビューアが実際に描く建物)で描かない建物の写真を詰めない
+  ```bash
+  node tools/plateau_used.js keio_elevated_3d.html > used.json
+  python3 -I tools/plateau_tex.py --html keio_elevated_3d.html --bldg plateau_bldg.js --used used.json \
+    --images <画像を置く空のフォルダ> --zip <世田谷区の zip の URL> --zip <杉並区の zip の URL> \
+    --source '国土交通省 3D都市モデル(Project PLATEAU)2025年度 渋谷区・杉並区・世田谷区・調布市' --out plateau_tex.js <bldg の GML…>
+  ```
+  2025年度のデータで:描く LOD2 の建物 531棟・面 8,454・島 4,294 → 詰め合わせ5枚(2048×2048 が4枚と 2048×832)・5.5MB
+- ビューア:近くの形(400m)の LOD2 の面に写真を貼る(詰め合わせごとに1回の描画。Lambert+写真を sRGB で読む)。写真は用途の色より
+  暗い(壁の平均が sRGB 87)ので、材質の色でリニアに 3.4 倍(`PTX_GAIN`)。中・遠の箱は写真の平均色を同じ倍率で。夜の窓明かりは
+  同じシェーダ(昼の暗いガラスは写真に写っているので塗らない)。画像の読み込みが済むまでは色で描き、済んだら近くの形を作り直す。
+  スマートフォンは読まない(色で描く)
+
 ## 建物の用途(2026-10。`plateau_bldg.js` の use64)
 
 - `bldg:usage`(Building_usage):411 戸建て住宅・412 共同住宅・413/415 店舗/作業所併用住宅・414 店舗併用共同住宅・401 業務・

@@ -99,7 +99,7 @@ def simplify(p, tol):
     return q if len(q) >= 3 else p
 
 
-def read_buildings(path, proj, margin, min_area, tol, band=0):
+def read_buildings(path, proj, margin, min_area, tol, band=0, ids=False):
     raw = open(path, 'rb').read(4096)
     if b'<!DOCTYPE' in raw or b'<!ENTITY' in raw:
         raise SystemExit('DOCTYPE/ENTITY を含むファイルは読まない: ' + path)
@@ -144,7 +144,7 @@ def read_buildings(path, proj, margin, min_area, tol, band=0):
         if not foot:
             el.clear()
             continue
-        lod2 = read_lod2(el) if el.find('bldg:lod2Solid', NS) is not None else None
+        lod2 = read_lod2(el, ids) if el.find('bldg:lod2Solid', NS) is not None else None
         h = el.find('bldg:measuredHeight', NS)
         height = float(h.text) if h is not None and h.text and float(h.text) > 0 else (max(zs) - min(zs) if zs else 0.0)
         us = el.find('bldg:usage', NS)
@@ -165,14 +165,16 @@ def read_buildings(path, proj, margin, min_area, tol, band=0):
             continue
         p = simplify(p, tol)
         if lod2:
-            lod2 = [(t, [((q[1] - lon0) * mlon, -(q[0] - lat0) * mlat, q[2]) for q in r]) for t, r in lod2]
+            lod2 = [(s[0], [((q[1] - lon0) * mlon, -(q[0] - lat0) * mlat, q[2]) for q in s[1]]) + tuple(s[2:]) for s in lod2]
         out.append((p, height, storeys, lod2, usage))
     return out
 
 
-def read_lod2(el):
+def read_lod2(el, ids=False):
     """LOD2 の屋根面・壁面(boundedBy の RoofSurface/WallSurface の lod2MultiSurface)を [(種別1=屋根/2=壁, 外周の点(緯度,経度,標高)…)]。
-    高さの基準は GroundSurface(無ければ全ての面)の最も低い標高。返す点の標高は基準からの高さ。"""
+    高さの基準は GroundSurface(無ければ全ての面)の最も低い標高。返す点の標高は基準からの高さ。
+    ids=True なら各面に外周の LinearRing の gml:id と、閉じた輪で終点を除いたか・元の点の数を足す
+    (写真テクスチャの座標 app:textureCoordinates は ring の id で引く。tools/plateau_tex.py が使う)。面と点の並びは変えない"""
     surf, zs, gz = [], [], []
     for b in el.findall('bldg:boundedBy', NS):
         for s in b:
@@ -184,21 +186,30 @@ def read_lod2(el):
                 ext = pg.find('gml:exterior', NS)
                 if ext is None:
                     continue
+                rid = {}
+                if ids:
+                    for lr in ext.iter('{%s}LinearRing' % NS['gml']):
+                        for pl in lr.iter('{%s}posList' % NS['gml']):
+                            rid[id(pl)] = lr.get('{%s}id' % NS['gml'])
                 for pl in ext.iter('{%s}posList' % NS['gml']):
                     r = poslist(pl)
+                    n0, closed = len(r), False
                     if len(r) > 1 and r[0] == r[-1]:
                         r = r[:-1]
+                        closed = True
                     if len(r) < 3:
                         continue
                     zs += [q[2] for q in r]
                     if t == 0:
                         gz += [q[2] for q in r]
+                    elif ids:
+                        surf.append((t, r, rid.get(id(pl)), closed, n0))
                     else:
                         surf.append((t, r))
     if not surf:
         return None
     base = min(gz) if gz else min(zs)
-    return [(t, [(q[0], q[1], q[2] - base) for q in r]) for t, r in surf]
+    return [(s[0], [(q[0], q[1], q[2] - base) for q in s[1]]) + tuple(s[2:]) for s in surf]
 
 
 def encode(blds):

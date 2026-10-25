@@ -12,13 +12,13 @@ Copyright (c) 2026 a0とnonkyuruの駅攻略
 - プログラム(keio_elevated_3d.html のコード、tools/・reference/ の中のスクリプト) …… MIT License(LICENSE)
 - データ・文書(寸法の表・説明の文書・Blender 用モデル v4 の数値と形・見本の画像など、ほかの制作物) …… CC BY 4.0
   https://creativecommons.org/licenses/by/4.0/deed.ja
-- plateau_bldg.js・plateau_land.js …… PLATEAU の加工物。元のデータと同じ CC BY 4.0(下の1の出典の表示が必要)
+- plateau_bldg.js・plateau_land.js・plateau_tex.js …… PLATEAU の加工物。元のデータと同じ CC BY 4.0(下の1の出典の表示が必要)
 - 対象外:京王電鉄の社名・ロゴ・車両や駅の意匠とデザイン(下の7・8)、three.js(MIT。同梱しない。下の2)
 
 
 ■ 表示が必要なもの(ライセンス上の義務)
 
-1. 3D都市モデル(建物・道路・土地利用・水面) …… plateau_bldg.js / plateau_land.js
+1. 3D都市モデル(建物・道路・土地利用・水面・建物の写真) …… plateau_bldg.js / plateau_land.js / plateau_tex.js
    出典:国土交通省 3D都市モデル(Project PLATEAU)2025年度
          渋谷区・杉並区・世田谷区・調布市(CityGML)
    ライセンス:クリエイティブ・コモンズ 表示 4.0 国際(CC BY 4.0)
@@ -26,7 +26,11 @@ Copyright (c) 2026 a0とnonkyuruの駅攻略
    加工の内容:建築物の足跡と高さ・LOD2 の屋根と壁、道路区域(tran:Road)、土地利用(公園・緑地・農地・
          山林・平面駐車場)、水部(河川・池)を取り出し、ビューアの座標へ射影して単純化した
          (tools/plateau_import.py・tools/plateau_land.py)。
-   画面の表示:右下に「建物・道路・土地利用:国土交通省 3D都市モデル(Project PLATEAU)2025年度 …
+         LOD2 の建物の写真テクスチャ(CityGML の外観 app:ParameterizedTexture の画像。航空写真から作った壁と屋根の画像)は、
+         ビューアが描く建物の分だけを 1m あたり5画素まで縮め、詰め合わせの画像(JPEG 5枚)にまとめ直した(tools/plateau_tex.py)。
+         ※このリポジトリは写真を同梱しない方針だが、PLATEAU の写真テクスチャは CC BY 4.0 で加工・再配布が許されて
+         いるので、利用者の指示(2026-10-25)でこれだけ例外として同梱する。
+   画面の表示:右下に「建物・道路・土地利用・建物の写真:国土交通省 3D都市モデル(Project PLATEAU)2025年度 …
          (CC BY 4.0)を加工」と出す。
    入手元:G空間情報センター https://www.geospatial.jp/ (PLATEAU のデータカタログ)
    ※建築物のデータは ODbL・ODC-BY とのマルチライセンスで公開されている。CC BY 4.0 を選んで利用している。
