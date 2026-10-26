@@ -14,7 +14,7 @@
    - three.js を cdnjs から読むので、初回はインターネットに接続しておく。
    - 沿線の実際の建物・道路・緑地は `plateau_bldg.js`・`plateau_land.js`(同梱)を HTML と同じフォルダに置くと出る。
      無いときは模式の街で描く。駅の周りの建物の写真(壁と屋根)は `plateau_tex.js`(同梱・5.5MB)。無ければ色で描く
-     (スマートフォンでは読まない)。
+     (スマートフォンでは読まない)。土地の起伏(谷と台地)は `plateau_dem.js`(同梱・0.4MB)。無ければ平らな地表で描く。
    - スマートフォンは横画面で。
 
 ## 操作
@@ -34,7 +34,7 @@ Copyright (c) 2026 a0とnonkyuruの駅攻略
 |---|---|
 | プログラム(`keio_elevated_3d.html` のコード、`tools/`・`reference/` の中のスクリプト) | MIT License(`LICENSE`) |
 | データ・文書(寸法の表・説明の文書・Blender 用モデル v4 の数値と形・見本の画像など、上と下以外の制作物) | [クリエイティブ・コモンズ 表示 4.0 国際(CC BY 4.0)](https://creativecommons.org/licenses/by/4.0/deed.ja) |
-| `plateau_bldg.js`・`plateau_land.js`・`plateau_tex.js`(建物の写真) | 国土交通省 3D都市モデル(Project PLATEAU)を加工したもの。元のデータと同じ CC BY 4.0(出典の表示が必要) |
+| `plateau_bldg.js`・`plateau_land.js`・`plateau_tex.js`(建物の写真)・`plateau_dem.js`(地形)・`reference/plateau/bldg_ground.json`(検証の基準) | 国土交通省 3D都市モデル(Project PLATEAU)を加工したもの。元のデータと同じ CC BY 4.0(出典の表示が必要) |
 
 **このライセンスの対象外**:京王電鉄の社名・ロゴ(KEIO ロゴなど)・車両や駅の意匠とデザインは、それぞれの権利者に帰属します。
 このビューアは実物を再現する目的で描いていますが、これらの権利を許諾するものではありません。
@@ -43,7 +43,7 @@ three.js は MIT License で、このリポジトリには含めず cdnjs から
 出典と権利の一覧は `CREDITS.txt`。CC BY 4.0 の部分を使うときの表示の例:
 
 > 京王線 連続立体交差事業 3Dビューア(a0とnonkyuruの駅攻略)CC BY 4.0
-> 建物・道路・土地利用・建物の写真:国土交通省 3D都市モデル(Project PLATEAU)2025年度(CC BY 4.0)を加工して作成
+> 建物・道路・土地利用・建物の写真・地形:国土交通省 3D都市モデル(Project PLATEAU)2025年度(CC BY 4.0)を加工して作成
 
 ## 開発
 

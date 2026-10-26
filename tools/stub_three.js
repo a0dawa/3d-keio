@@ -172,12 +172,35 @@ class LineSeg extends Obj3D {
 class Mesh extends Obj3D {
   constructor(g, mat) { super(); this.geometry = g; this.material = mat; this.isMesh = true; }
 }
-// 位置と拡大率だけを記録する Matrix4。インスタンスの配置を後から測れるようにする。
+/* 回転(三角関数の式は three.js r128 の Quaternion.setFromEuler と同じ)。インスタンスの向き(車の縦の傾き)を測れるように実体で持つ */
+class Euler {
+  constructor(x, y, z, order) { this.x = x || 0; this.y = y || 0; this.z = z || 0; this.order = order || 'XYZ'; return soft(this); }
+  set(x, y, z, order) { this.x = x; this.y = y; this.z = z; this.order = order || this.order; return this; }
+  copy(e) { this.x = e.x; this.y = e.y; this.z = e.z; this.order = e.order; return this; }
+}
+class Quat {
+  constructor(x, y, z, w) { this.x = x || 0; this.y = y || 0; this.z = z || 0; this.w = w === undefined ? 1 : w; this.isQuaternion = true; return soft(this); }
+  set(x, y, z, w) { this.x = x; this.y = y; this.z = z; this.w = w; return this; }
+  copy(q) { this.x = q.x; this.y = q.y; this.z = q.z; this.w = q.w; return this; }
+  setFromEuler(e) {
+    const c1 = Math.cos(e.x / 2), c2 = Math.cos(e.y / 2), c3 = Math.cos(e.z / 2), s1 = Math.sin(e.x / 2), s2 = Math.sin(e.y / 2), s3 = Math.sin(e.z / 2);
+    const o = e.order || 'XYZ';
+    if (o === 'XYZ') this.set(s1 * c2 * c3 + c1 * s2 * s3, c1 * s2 * c3 - s1 * c2 * s3, c1 * c2 * s3 + s1 * s2 * c3, c1 * c2 * c3 - s1 * s2 * s3);
+    else if (o === 'YXZ') this.set(s1 * c2 * c3 + c1 * s2 * s3, c1 * s2 * c3 - s1 * c2 * s3, c1 * c2 * s3 - s1 * s2 * c3, c1 * c2 * c3 + s1 * s2 * s3);
+    else if (o === 'ZXY') this.set(s1 * c2 * c3 - c1 * s2 * s3, c1 * s2 * c3 + s1 * c2 * s3, c1 * c2 * s3 + s1 * s2 * c3, c1 * c2 * c3 - s1 * s2 * s3);
+    else if (o === 'ZYX') this.set(s1 * c2 * c3 - c1 * s2 * s3, c1 * s2 * c3 + s1 * c2 * s3, c1 * c2 * s3 - s1 * s2 * c3, c1 * c2 * c3 + s1 * s2 * s3);
+    else if (o === 'YZX') this.set(s1 * c2 * c3 + c1 * s2 * s3, c1 * s2 * c3 + s1 * c2 * s3, c1 * c2 * s3 - s1 * s2 * c3, c1 * c2 * c3 - s1 * s2 * s3);
+    else if (o === 'XZY') this.set(s1 * c2 * c3 - c1 * s2 * s3, c1 * s2 * c3 - s1 * c2 * s3, c1 * c2 * s3 + s1 * s2 * c3, c1 * c2 * c3 + s1 * s2 * s3);
+    return this;
+  }
+}
+// 位置・回転・拡大率を記録する Matrix4。インスタンスの配置を後から測れるようにする。
 class M4 {
-  constructor() { this.p = null; this.s = null; return soft(this); }
+  constructor() { this.p = null; this.s = null; this.q = null; return soft(this); }
   compose(pos, q, sc) {
     this.p = { x: pos.x, y: pos.y, z: pos.z };
     this.s = { x: sc.x, y: sc.y, z: sc.z };
+    this.q = (q && q.isQuaternion === true) ? { x: q.x, y: q.y, z: q.z, w: q.w } : null;
     return this;
   }
   makeBasis() { return this; }
@@ -196,7 +219,7 @@ class Inst extends Mesh {
   setColorAt(i, c) { this.cols[i] = (c && c.getHex) ? c.getHex() : null; }
   setMatrixAt(i, m) {
     this.mats[i] = (m && m.p) ? { p: { x: m.p.x, y: m.p.y, z: m.p.z },
-                                  s: m.s ? { x: m.s.x, y: m.s.y, z: m.s.z } : null } : null;
+                                  s: m.s ? { x: m.s.x, y: m.s.y, z: m.s.z } : null, q: m.q || null } : null;
   }
   getMatrixAt() {}
 }
@@ -257,7 +280,7 @@ class PMREM {
 const REAL = {
   Vector3: V3, Vector2: V2, Vector4: V4, Object3D: Obj3D, Group, Scene, Mesh, BufferGeometry: BufGeo, DirectionalLight: DirLight,
   PerspectiveCamera: PerspCam, CanvasTexture: Tex, Texture: Tex, WebGLRenderer: Renderer,
-  Matrix4: M4, InstancedMesh: Inst, Color, Fog,
+  Matrix4: M4, InstancedMesh: Inst, Color, Fog, Euler, Quaternion: Quat,
   Float32BufferAttribute: Attr, BufferAttribute: Attr, InstancedBufferAttribute: Attr, HemisphereLight: HemiLight,
   BoxGeometry: param('Box'), CylinderGeometry: param('Cyl'), PlaneGeometry: param('Plane'),
   SphereGeometry: param('Sph'), ConeGeometry: param('Cone'), CircleGeometry: param('Cir'),
@@ -309,7 +332,7 @@ module.exports = function runHtml(htmlPath, exportExpr) {
   if (!m) { console.error('NO_SCRIPT'); process.exit(1); }
   install();
   // 別ファイルの沿線の建物データ(<script src="plateau_bldg.js">)。HTML と同じ場所にあれば先に読む
-  for (const nm of ['plateau_bldg.js', 'plateau_land.js', 'plateau_tex.js']) {
+  for (const nm of ['plateau_bldg.js', 'plateau_land.js', 'plateau_tex.js', 'plateau_dem.js']) {
     const pl = nodePath.join(nodePath.dirname(htmlPath), nm);
     if (html.includes('<script src="' + nm + '">') && fs.existsSync(pl)) (0, eval)(fs.readFileSync(pl, 'utf8'));
   }

@@ -9,7 +9,7 @@ if (!m) { console.error('NO_SCRIPT'); process.exit(1); }
 const code = m[1];
 // 別ファイルの沿線の建物データ(あれば先に読む)
 {
-  for (const nm of ['plateau_bldg.js', 'plateau_land.js', 'plateau_tex.js']) {
+  for (const nm of ['plateau_bldg.js', 'plateau_land.js', 'plateau_tex.js', 'plateau_dem.js']) {
     const pl = require('path').join(require('path').dirname(path), nm);
     if (html.includes('<script src="' + nm + '">') && fs.existsSync(pl)) (0, eval)(fs.readFileSync(pl, 'utf8'));
   }

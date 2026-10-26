@@ -188,6 +188,7 @@
 <script src="plateau_bldg.js"></script><!-- 沿線の建物(PLATEAU)。無ければ模式の街で描く -->
 <script src="plateau_land.js"></script><!-- 沿線の道路(PLATEAU)。無ければ模式の道路で描く -->
 <script src="plateau_tex.js"></script><!-- 駅の周りの LOD2 の建物の写真(PLATEAU)。無ければ色で描く -->
+<script src="plateau_dem.js"></script><!-- 沿線の地形(PLATEAU)。無ければ平らな地表で描く -->
 <script>
 'use strict';
 if(!window.THREE){document.body.insertAdjacentHTML('beforeend','<div class="panel" style="top:50%;left:50%;transform:translate(-50%,-50%);padding:20px">3Dライブラリを読み込めませんでした。通信環境をご確認ください。</div>');throw new Error('three missing');}
@@ -451,6 +452,10 @@ function axisOf(rl){const A=toXY(rl.a[0],rl.a[1]),B=toXY(rl.b[0],rl.b[1]);
   const dx=A.x-B.x,dz=A.z-B.z,L=Math.hypot(dx,dz),C=toXY(rl.c[0],rl.c[1]);
   return {x:C.x,z:C.z, ax:dx/L,az:dz/L, nx:-dz/L,nz:dx/L, phi:Math.atan2(dz,dx)};}
 const INO=axisOf(RAW.rail.ino), SETA=axisOf(RAW.rail.seta);   // ax,az=軸(a側=北寄り正)
+/* 交差鉄道の諸元。線路の敷設・車両の走行・占有域の判定・地形の平らな所(4章 TER)がすべてここを見る。
+   XR.RAILTOP を直せば車両の載る高さも一緒に動く(片方だけ変えると車輪が沈む)。 */
+const XR={U0:-440,U1:440, TRK:[-3,3], RAILY:.83, RAILH:.12, SETA_U0:-370, SETA_U1:-10};
+XR.RAILTOP=XR.RAILY+XR.RAILH/2;                          // レール頭頂面(車両の原点を置く高さ)
 const DOM={x0:Math.max(CTS0+20,-560)+200, x1:Math.min(CTS1-20,STA[9].x+280), z:470};
 // --- 縦断・断面(位置sは上で確定した実測値) ---
 function railY(x){
@@ -1190,19 +1195,257 @@ function lodStruct(){
 }
 
 /* ============ 4. 地表・道路・水緑・施設(平面図準拠) ============ */
+/* ---- 道路:PLATEAU の実データ(別ファイル plateau_land.js があるとき) -----------------------
+   国土交通省 3D都市モデル(Project PLATEAU)2025年度の道路(tran:Road の lod1MultiSurface=道路区域の平面形)。
+   tools/plateau_land.py が作る。ファイルが無ければ下の模式の道路(甲州街道・交差道路の帯)で描く。
+   ・種別 k:0=一般(区市町村道)/1=幹線(国道・都道)/2=自動車専用。区間 sec:1=道路・2=橋梁・3=トンネル・4=交差部
+   ・地表の道路は平らな面を地表の 0.10m(幹線 0.12m)上に敷く。400m 角のまとまり×材質ごとに1つの Mesh
+   ・自動車専用の橋梁(首都高4号・中央道)は高架の床版にして、内側に橋脚を立てる。京王線の上を渡る所は
+     レール面+9.0m(架線の上)より高くする。橋脚は京王線の高架下・側道には立てない
+   ・建物・樹木は道路の面に掛からない(cityFree が roadHit を見る)。登録簿 ROADS_PL */
+const PLL=(typeof globalThis!=='undefined'&&globalThis.PLATEAU_LAND&&globalThis.PLATEAU_LAND.road64)?globalThis.PLATEAU_LAND:null;
+// 実データの建物(plateau_bldg.js)があるか。8章の PLB より前(4章の施設・占有域)で使う
+const HAS_PLB=!!(typeof globalThis!=='undefined'&&globalThis.PLATEAU_BLDG&&globalThis.PLATEAU_BLDG.b64);
+const ROADS_PL=[], LANDS_PL=[], LU={tint:null,col:null,geos:[],water:[]}, ROAD_XING=[], PLR_GRID=new Map(), PLR_CELL=30, ROAD_LAMPS=[], EXPY={deck:[],piers:[]};
+const ROAD_Y=[0.10,0.12,0.12], EXPY_TOP=11.5, EXPY_DEPTH=1.8;
+/* ---- 地形(PLATEAU の地形モデル。別ファイル plateau_dem.js があるとき。2026-10-25 利用者指示) ---------------------------
+   国土交通省 3D都市モデル(Project PLATEAU)2025年度の地形モデル(dem:TINRelief。点は約2.6m おき)を tools/plateau_dem.py が
+   10m 格子の標高にしたもの。ビューアの線路・高架・駅は「線路の地盤=0」の上に作ってあるので、地形は**線路の地盤からの差**
+   (相対の起伏)にする。手順(⑦ は同じ手順を検証側に別に書いて照合する):
+   1. 細い溝を閉じる:最大→最小(半径 CLOSE マス=20m の円)。幅 40m 未満の溝(鉄道の掘割・道路の切り下げ・河川の水路)を埋める。
+      ビューアはそれらを別に描く(井の頭線・道路は平ら、河川は水面)ので、地形に残すと二重になる
+   2. ぼかす(σ BLUR マス=10m)
+   3. 線路の地盤 Gs(s):中心線と ±20m の3点の中央値を σ 60m でならす。起伏 T = 標高 − Gs(線路へ射影した s)
+   4. 平らにする所(起伏 0):京王線の構造物の帯(|off|≤21m。高架・駅・掘割・側道)・井の頭線と世田谷線の線路(擁壁・ホームまで)・
+      千歳烏山の駅前広場。その外へ 40m(交差鉄道と広場は 30m)でなめらかに起伏へ。線路から 480〜600m と事業区間の両端の外
+      100〜300m でも 0 へ戻す(データの無い所・建物を置かない所)
+   5. 地表は 25m の格子(対角は (i,j)-(i+1,j+1))の区分線形。平らな所に掛かるセルは4隅を 0 にする(セルの中が全部 0 になる)。
+      terH(x,z) はこの格子の面の高さそのもの(地表の網と同じ式)なので、道路・建物・木・車・人は terH で載せれば地表と食い違わない。
+      地表に敷く面(道路・緑地・水面)は格子の線で切ってから載せる(terDrape。切った片はどれも1つの面の上なので高さが正確)
+   ・実データの道路と建物(plateau_land.js・plateau_bldg.js)があるときだけ使う(模式の街・道路は平らなまま)。スマホも同じ
+   ・登録簿 TER(格子の高さ H・平らなセル flat・線路の地盤 GS・平らな所の定義 CORR/DISC) */
+const PLD=(typeof globalThis!=='undefined'&&globalThis.PLATEAU_DEM&&globalThis.PLATEAU_DEM.h64)?globalThis.PLATEAU_DEM:null;
+const TER={on:!!(PLD&&PLL&&HAS_PLB), DX:25, X0:-9100, X1:1900, Z0:-1950, Z1:3250,
+  AS:21, BL:40, FAR0:480, FAR1:600, END0:100, END1:300, CLOSE:2, BLUR:1, GS_SIG:60, GS_OFF:20,
+  GX:0, GZ:0, H:null, NN:null, flat:null, GS:null, stat:{}};
+TER.GX=Math.round((TER.X1-TER.X0)/TER.DX); TER.GZ=Math.round((TER.Z1-TER.Z0)/TER.DX);
+TER.CORR=[{A:INO, hw:17, u0:XR.U0-10, u1:XR.U1+10, bl:30, n:'井の頭線'},
+          {A:SETA, hw:7, u0:XR.SETA_U0-10, u1:XR.SETA_U1+10, bl:30, n:'世田谷線'}];
+TER.DISC=[{p:frame(PLAZA_S,PLAZA_OFF), r:26, bl:30, n:'千歳烏山の駅前広場'}];
+// 交差鉄道の線路(矩形)からの距離(中は負。端の先は軸に沿う距離との大きい方)
+TER.corrD=(C,x,z)=>{const dx=x-C.A.x, dz=z-C.A.z, u=dx*C.A.ax+dz*C.A.az, n=Math.abs(dx*C.A.nx+dz*C.A.nz);
+  return Math.max(n-C.hw, C.u0-u, u-C.u1);};
+// 線形の端の先は prjXY が端で止まるので、端の接線に沿ってはみ出した分を s に足す
+TER.prj=(x,z)=>{
+  const q=prjXY(x,z), n=DP.x.length-1;
+  for(const [i,j] of [[0,1],[n,n-1]]){
+    const sE=DP.s[i]-S_OFS; if(Math.abs(q.s-sE)>0.5) continue;
+    const L=Math.hypot(DP.x[i]-DP.x[j],DP.z[i]-DP.z[j])||1, tx=(DP.x[i]-DP.x[j])/L, tz=(DP.z[i]-DP.z[j])/L;   // 外向き
+    const d=(x-DP.x[i])*tx+(z-DP.z[i])*tz;
+    if(d>0) return {s:sE+(i===0?-d:d), off:q.off};
+  }
+  return q;
+};
+// 起伏を残す重み(0=平ら・1=起伏のまま)。off/s は線路の座標、x,z は世界座標
+TER.weight=(s,off,x,z)=>{
+  const a=Math.abs(off);
+  let w=sstep((a-TER.AS)/TER.BL)*(1-sstep((a-TER.FAR0)/(TER.FAR1-TER.FAR0)))
+       *(1-sstep((DOM.x0-TER.END0-s)/(TER.END1-TER.END0)))*(1-sstep((s-DOM.x1-TER.END0)/(TER.END1-TER.END0)));
+  for(const C of TER.CORR) w*=sstep(TER.corrD(C,x,z)/C.bl);
+  for(const D of TER.DISC) w*=sstep((Math.hypot(x-D.p.x,z-D.p.z)-D.r)/D.bl);
+  return w;
+};
+if(TER.on){
+  const D=PLD, NX=D.nx, NZ=D.nz, t0=performance.now();
+  // 1) 10m 格子を復号(帯の外は NaN)
+  const rb=atob(D.r64), hb=atob(D.h64), u16=(s,i)=>s.charCodeAt(2*i)|(s.charCodeAt(2*i+1)<<8);
+  let A=new Float32Array(NX*NZ).fill(NaN);
+  for(let j=0,o=0;j<NZ;j++){const i0=u16(rb,2*j), n=u16(rb,2*j+1);
+    for(let k=0;k<n;k++){const v=u16(hb,o+k); if(v!==65535) A[j*NX+i0+k]=D.h0+v*D.q;} o+=n;}
+  // 2) 閉じる(最大の後に最小。半径 CLOSE マスの円。データの無いマスは見ない)
+  const R=TER.CLOSE, DK=[];
+  for(let dj=-R;dj<=R;dj++)for(let di=-R;di<=R;di++) if(di*di+dj*dj<=R*R+0.01) DK.push([di,dj]);
+  const morph=(S,mx)=>{const O=new Float32Array(NX*NZ).fill(NaN);
+    for(let j=0;j<NZ;j++)for(let i=0;i<NX;i++){const c=S[j*NX+i]; if(c!==c) continue; let v=c;
+      for(const [di,dj] of DK){const a=i+di, b=j+dj; if(a<0||b<0||a>=NX||b>=NZ) continue; const w=S[b*NX+a]; if(w!==w) continue; v=mx?(w>v?w:v):(w<v?w:v);}
+      O[j*NX+i]=v;}
+    return O;};
+  A=morph(morph(A,true),false);
+  // 3) ぼかす(σ BLUR マスのガウス。縦横に分けて。データの無いマスは重みから外す)
+  const sg=TER.BLUR, KR=Math.ceil(2*sg), KW=[]; for(let k=-KR;k<=KR;k++) KW.push(Math.exp(-0.5*(k/sg)*(k/sg)));
+  const blur=(S,hor)=>{const O=new Float32Array(NX*NZ).fill(NaN);
+    for(let j=0;j<NZ;j++)for(let i=0;i<NX;i++){if(S[j*NX+i]!==S[j*NX+i]) continue; let a=0,w=0;
+      for(let k=-KR;k<=KR;k++){const ii=hor?i+k:i, jj=hor?j:j+k; if(ii<0||jj<0||ii>=NX||jj>=NZ) continue; const v=S[jj*NX+ii]; if(v!==v) continue; a+=v*KW[k+KR]; w+=KW[k+KR];}
+      O[j*NX+i]=a/w;}
+    return O;};
+  A=blur(blur(A,true),false);
+  // 10m 格子の双線形(4マスのどれかが無ければ NaN)
+  const dem=(x,z)=>{const fx=(x-D.x0)/D.dx-0.5, fz=(z-D.z0)/D.dx-0.5, i=Math.floor(fx), j=Math.floor(fz);
+    if(i<0||j<0||i+1>=NX||j+1>=NZ) return NaN;
+    const tx=fx-i, tz=fz-j, k=j*NX+i;
+    return (A[k]*(1-tx)+A[k+1]*tx)*(1-tz)+(A[k+NX]*(1-tx)+A[k+NX+1]*tx)*tz;};
+  TER.dem=dem;
+  // 4) 線路の地盤 Gs(s)
+  const GS0=DOM.x0-700, GDS=10, g0=[];
+  for(let s=GS0;s<=DOM.x1+700+1e-6;s+=GDS){
+    const v=[-TER.GS_OFF,0,TER.GS_OFF].map(f=>{const p=frame(s,f); return dem(p.x,p.z);}).filter(v=>v===v).sort((a,b)=>a-b);
+    g0.push(v.length?v[(v.length-1)>>1]:NaN);}
+  const GK=Math.ceil(3*TER.GS_SIG/GDS), GS=g0.map((_,i)=>{let a=0,w=0;
+    for(let k=-GK;k<=GK;k++){const v=g0[i+k]; if(v===undefined||v!==v) continue; const ww=Math.exp(-0.5*(k*GDS/TER.GS_SIG)*(k*GDS/TER.GS_SIG)); a+=v*ww; w+=ww;}
+    return w?a/w:NaN;});
+  TER.GS={s0:GS0, ds:GDS, v:GS};
+  TER.gsAt=s=>{const f=clamp((s-GS0)/GDS,0,GS.length-1), i=Math.min(GS.length-2,Math.floor(f)), t=f-i; return GS[i]*(1-t)+GS[i+1]*t;};
+  // 5) 25m 格子の高さ。平らな所に掛かるセル(中心の距離−半対角で見る)の4隅は 0
+  const W=TER.GX+1, H=new Float32Array(W*(TER.GZ+1)), F=new Uint8Array(TER.GX*TER.GZ), hd=TER.DX*Math.SQRT1_2;
+  const inDem=(x,z)=>x>D.x0+D.dx&&x<D.x0+(NX-1)*D.dx&&z>D.z0+D.dx&&z<D.z0+(NZ-1)*D.dx;
+  for(let j=0;j<=TER.GZ;j++)for(let i=0;i<=TER.GX;i++){
+    const x=TER.X0+i*TER.DX, z=TER.Z0+j*TER.DX; if(!inDem(x,z)) continue;
+    const q=TER.prj(x,z), w=TER.weight(q.s,q.off,x,z); if(w<=0) continue;
+    const h=dem(x,z)-TER.gsAt(q.s); if(h!==h) continue;
+    const v=w*h; H[j*W+i]=Math.abs(v)<0.003?0:v;
+  }
+  let nForce=0;
+  for(let j=0;j<TER.GZ;j++)for(let i=0;i<TER.GX;i++){
+    const x=TER.X0+(i+0.5)*TER.DX, z=TER.Z0+(j+0.5)*TER.DX; if(!inDem(x,z)) continue;
+    const q=TER.prj(x,z);
+    let f=Math.abs(q.off)-hd<=TER.AS;
+    for(const C of TER.CORR) if(TER.corrD(C,x,z)-hd<=0) f=true;
+    for(const Dc of TER.DISC) if(Math.hypot(x-Dc.p.x,z-Dc.p.z)-hd<=Dc.r) f=true;
+    if(f){ H[j*W+i]=0; H[j*W+i+1]=0; H[(j+1)*W+i]=0; H[(j+1)*W+i+1]=0; nForce++; }
+  }
+  for(let j=0;j<TER.GZ;j++)for(let i=0;i<TER.GX;i++){const k=j*W+i; F[j*TER.GX+i]=(H[k]===0&&H[k+1]===0&&H[k+W]===0&&H[k+W+1]===0)?1:0;}
+  // 頂点の法線(中央差分)。平らなセルの隅は真上(平らな面と同じ。継ぎ目で陰が跳ばない)
+  const NN=new Float32Array(3*W*(TER.GZ+1));
+  const hAt=(i,j)=>H[clamp(j,0,TER.GZ)*W+clamp(i,0,TER.GX)];
+  const flatAt=(i,j)=>i>=0&&j>=0&&i<TER.GX&&j<TER.GZ&&F[j*TER.GX+i]===1;
+  for(let j=0;j<=TER.GZ;j++)for(let i=0;i<=TER.GX;i++){
+    const k=3*(j*W+i);
+    if(flatAt(i-1,j-1)||flatAt(i,j-1)||flatAt(i-1,j)||flatAt(i,j)){NN[k]=0;NN[k+1]=1;NN[k+2]=0;continue;}
+    const nx=-(hAt(i+1,j)-hAt(i-1,j))/(2*TER.DX), nz=-(hAt(i,j+1)-hAt(i,j-1))/(2*TER.DX), l=Math.hypot(nx,1,nz);
+    NN[k]=nx/l; NN[k+1]=1/l; NN[k+2]=nz/l;
+  }
+  TER.H=H; TER.flat=F; TER.NN=NN;
+  let nT=0, hmin=0, hmax=0; for(let c=0;c<F.length;c++) if(!F[c]) nT++;
+  for(let k=0;k<H.length;k++){hmin=Math.min(hmin,H[k]); hmax=Math.max(hmax,H[k]);}
+  TER.stat={cells:F.length, terrain:nT, forced:nForce, hmin:hmin, hmax:hmax, ms:Math.round(performance.now()-t0)};
+}
+// 格子の面の高さ(地表の網と同じ式)。格子の外・地形が無いときは 0
+function terH(x,z){
+  if(!TER.H) return 0;
+  const fx=(x-TER.X0)/TER.DX, fz=(z-TER.Z0)/TER.DX, i=Math.floor(fx), j=Math.floor(fz);
+  if(i<0||j<0||i>=TER.GX||j>=TER.GZ) return 0;
+  const tx=fx-i, tz=fz-j, W=TER.GX+1, k=j*W+i, H=TER.H;
+  return tx>=tz ? H[k]+(H[k+1]-H[k])*tx+(H[k+W+1]-H[k+1])*tz : H[k]+(H[k+W]-H[k])*tz+(H[k+W+1]-H[k+W])*tx;
+}
+// 格子の面の法線(頂点の法線を面の中で線形に。地表の網を描くときの補間と同じなので、敷く面と地表の陰が揃う)。out=[nx,ny,nz]
+function terN(x,z,out){
+  out=out||[0,1,0];
+  if(!TER.H){out[0]=0;out[1]=1;out[2]=0;return out;}
+  const fx=(x-TER.X0)/TER.DX, fz=(z-TER.Z0)/TER.DX, i=Math.floor(fx), j=Math.floor(fz);
+  if(i<0||j<0||i>=TER.GX||j>=TER.GZ||TER.flat[j*TER.GX+i]){out[0]=0;out[1]=1;out[2]=0;return out;}
+  const tx=fx-i, tz=fz-j, W=TER.GX+1, k=j*W+i, N=TER.NN;
+  const c=tx>=tz?[[k,1-tx],[k+1,tx-tz],[k+W+1,tz]]:[[k,1-tz],[k+W,tz-tx],[k+W+1,tx]];
+  out[0]=0;out[1]=0;out[2]=0;
+  for(const [m,w] of c){out[0]+=N[3*m]*w; out[1]+=N[3*m+1]*w; out[2]+=N[3*m+2]*w;}
+  return out;
+}
+// 多角形(足跡)の下の地表の最も低い所:頂点と辺の 2m ごとの点と重心
+function terMin(P){
+  if(!TER.H) return 0;
+  let m=1e9, cx=0, cz=0;
+  for(let i=0;i<P.length;i++){
+    const a=P[i], b=P[(i+1)%P.length], n=Math.max(1,Math.ceil(Math.hypot(b[0]-a[0],b[1]-a[1])/2));
+    for(let k=0;k<n;k++) m=Math.min(m,terH(a[0]+(b[0]-a[0])*k/n,a[1]+(b[1]-a[1])*k/n));
+    cx+=a[0]; cz+=a[1];
+  }
+  return Math.min(m,terH(cx/P.length,cz/P.length));
+}
+/* ---- 地表に敷く面を地形に載せる(terDrape)----
+   多角形 P(または三角形の組 {V,T})を、掛かる格子のセルごとに切る。起伏のあるセルは対角でさらに2つに切るので、切った片は
+   どれも格子の1つの面の上にあり、頂点を terH+y0 に置けば面ごと正確に載る(地表と同じ高さ+y0)。平らなセルだけに掛かる多角形は
+   切らない。凹んだ多角形を凸の窓で切ると(Sutherland–Hodgman)ばらばらの片が縮退した辺でつながることがあるので、耳切りの三角形の
+   面積が切った多角形の面積と合わないときは、三角形ごとに切る。out={P,N,I,C} に積み、積んだ頂点の数を返す */
+const TER_DRAPE={poly:0, clip:0, tri:0, fall:0};
+function terClipHP(Q,a,b,c){                       // a*x+b*z+c ≥ 0 の側を残す
+  const R=[];
+  for(let k=0;k<Q.length;k++){const p=Q[k], q=Q[(k+1)%Q.length], dp=a*p[0]+b*p[1]+c, dq=a*q[0]+b*q[1]+c;
+    if(dp>=0) R.push(p);
+    if((dp>=0)!==(dq>=0)){const t=dp/(dp-dq); R.push([p[0]+(q[0]-p[0])*t, p[1]+(q[1]-p[1])*t]);}}
+  return R;
+}
+function terWin(Q,i,j,half){                        // セル (i,j) の窓で切る。half=0:セル全体/1:tx≥tz の三角形/2:tx≤tz の三角形
+  const xa=TER.X0+i*TER.DX, za=TER.Z0+j*TER.DX, xb=xa+TER.DX, zb=za+TER.DX;
+  Q=terClipHP(Q,1,0,-xa); if(Q.length<3) return Q; Q=terClipHP(Q,-1,0,xb); if(Q.length<3) return Q;
+  Q=terClipHP(Q,0,1,-za); if(Q.length<3) return Q; Q=terClipHP(Q,0,-1,zb); if(Q.length<3) return Q;
+  if(half===1) Q=terClipHP(Q,1,-1,za-xa); else if(half===2) Q=terClipHP(Q,-1,1,xa-za);
+  return Q;
+}
+const terArea=Q=>{let A=0; for(let k=0;k<Q.length;k++){const a=Q[k], b=Q[(k+1)%Q.length]; A+=a[0]*b[1]-b[0]*a[1];} return A/2;};
+function terDrape(P,y0,out,col,G){
+  const o0=out.P.length/3, nrm=[0,1,0];
+  const emit=(V,T)=>{                               // V:[[x,z]…]・T:[[a,b,c]…] を地形に載せて積む(上向きの巻き順)
+    const o=out.P.length/3;
+    for(const v of V){out.P.push(v[0],terH(v[0],v[1])+y0,v[1]); terN(v[0],v[1],nrm); out.N.push(nrm[0],nrm[1],nrm[2]); if(col) out.C.push(col.r,col.g,col.b);}
+    for(const t of T){const A=V[t[0]], B=V[t[1]], C=V[t[2]], up=(B[1]-A[1])*(C[0]-A[0])-(B[0]-A[0])*(C[1]-A[1]);
+      if(up>=0) out.I.push(o+t[0],o+t[1],o+t[2]); else out.I.push(o+t[0],o+t[2],o+t[1]);}
+  };
+  const GT=G||{V:P,T:earTri(P)};
+  let x0=1e9,x1=-1e9,z0=1e9,z1=-1e9;
+  for(const v of GT.V){x0=Math.min(x0,v[0]);x1=Math.max(x1,v[0]);z0=Math.min(z0,v[1]);z1=Math.max(z1,v[1]);}
+  const i0=clamp(Math.floor((x0-TER.X0)/TER.DX),0,TER.GX-1), i1=clamp(Math.floor((x1-TER.X0)/TER.DX),0,TER.GX-1),
+        j0=clamp(Math.floor((z0-TER.Z0)/TER.DX),0,TER.GZ-1), j1=clamp(Math.floor((z1-TER.Z0)/TER.DX),0,TER.GZ-1);
+  let allFlat=!TER.H;
+  if(!allFlat){ allFlat=true; for(let j=j0;j<=j1&&allFlat;j++)for(let i=i0;i<=i1;i++) if(!TER.flat[j*TER.GX+i]){allFlat=false;break;} }
+  if(allFlat){ emit(GT.V,GT.T); TER_DRAPE.poly++; return out.P.length/3-o0; }
+  TER_DRAPE.clip++;
+  const tris=GT.T.map(t=>[GT.V[t[0]],GT.V[t[1]],GT.V[t[2]]]);
+  for(let j=j0;j<=j1;j++)for(let i=i0;i<=i1;i++){
+    const halves=TER.flat[j*TER.GX+i]?[0]:[1,2];
+    for(const hf of halves){
+      let done=false;
+      if(!G){                                        // 多角形ごと切る(片の数が少ない)
+        let Q=terWin(P,i,j,hf);
+        if(Q.length>=3){
+          Q=Q.filter((p,k)=>{const q=Q[(k+1)%Q.length]; return Math.abs(p[0]-q[0])>1e-9||Math.abs(p[1]-q[1])>1e-9;});
+          const a=Math.abs(terArea(Q));
+          if(Q.length<3||a<1e-6) done=true;
+          else{ const T=earTri(Q); let s=0, neg=false;
+            for(const t of T){const v=terArea([Q[t[0]],Q[t[1]],Q[t[2]]]); s+=Math.abs(v); if(v<-1e-9) neg=true;}   // 耳切りの耳は反時計回り(正)
+            if(!neg&&Math.abs(s-a)<=1e-6*Math.max(1,a)){ emit(Q,T); done=true; } else TER_DRAPE.fall++; }
+        }else done=true;
+      }
+      if(done) continue;
+      for(const t of tris){                          // 三角形ごとに切る(凸なので片は1つ)
+        const Q=terWin(t,i,j,hf); if(Q.length<3||Math.abs(terArea(Q))<1e-6) continue;
+        const T=[]; for(let k=1;k<Q.length-1;k++) T.push([0,k,k+1]); emit(Q,T); TER_DRAPE.tri++;
+      }
+    }
+  }
+  return out.P.length/3-o0;
+}
 // 地表面(ワールド絶対座標で配置する数少ない要素。線形を動かしたらここも確認)
-/* 地表は 11000m×5200m の上面(y=0)。仙川の掘割(5c章)の所に穴を開ける:擁壁の芯の線で囲んだ穴(ワールドの x の向きに
-   単調)を、穴の頂点の x で短冊に切り、各短冊の穴の北と南を埋める。以前は箱の上面だった(穴を開けられない) */
+/* 地表は 11000m×5200m の上面。仙川の掘割(5c章)の所に穴を開ける:擁壁の芯の線で囲んだ穴(ワールドの x の向きに単調)。以前は箱の
+   上面だった(穴を開けられない)。
+   ・地形が無いとき:y=0 の面。穴の頂点の x で短冊に切り、各短冊の穴の北と南を埋める
+   ・地形があるとき(TER):25m の格子。起伏のあるセルは2つの三角形(頂点は格子の高さと法線)。平らなセルは行ごとに続く所を
+     まとめ、まとめた片の上下の辺には、隣の行の片の端と起伏のあるセル・穴のセルの隅を全部頂点に入れる(T 字の継ぎ目を作らない。
+     T 字の所は遠くで地表に針穴のような隙間が光る)。穴に掛かるセルは「セル−穴」を北と南の片にする(片の頂点はセルの隅・穴の線と
+     セルの辺の交点・セルの中の穴の頂点だけ=隣のセルと同じ点) */
+function cutHolePoly(){                        // 穴(擁壁の芯):南の線を東から西へ、北の線を西から東へ
+  const H=[], HN=[];
+  for(let s=DECK_END;s<CUT_END+1e-6;s+=2) H.push(frame(s,-(cutHalf(s,-1)-CUT_W.MID)));
+  H.push(frame(CUT_END,-(cutHalf(CUT_END,-1)-CUT_W.MID)));
+  for(let s=DECK_END;s<CUT_END+1e-6;s+=2) HN.push(frame(s,cutHalf(s,1)-CUT_W.MID));
+  HN.push(frame(CUT_END,cutHalf(CUT_END,1)-CUT_W.MID));
+  return H.concat(HN.reverse()).map(f=>[f.x,f.z]);
+}
 const groundMesh=(function(){
- const X0=-9100,X1=1900,Z0=-1950,Z1=3250, H=[], P=[], I=[];
- for(let s=DECK_END;s<CUT_END+1e-6;s+=2) H.push(frame(s,-(cutHalf(s,-1)-CUT_W.MID)));
- H.push(frame(CUT_END,-(cutHalf(CUT_END,-1)-CUT_W.MID)));
- const HN=[]; for(let s=DECK_END;s<CUT_END+1e-6;s+=2) HN.push(frame(s,cutHalf(s,1)-CUT_W.MID));
- HN.push(frame(CUT_END,cutHalf(CUT_END,1)-CUT_W.MID));
- const poly=H.concat(HN.reverse()).map(f=>[f.x,f.z]), n=poly.length;
- const quad=(a,b,c,d)=>{const o=P.length/3; for(const q of[a,b,c,d]) P.push(q[0],0,q[1]);
+ const X0=TER.X0,X1=TER.X1,Z0=TER.Z0,Z1=TER.Z1, P=[], N=[], I=[];
+ const poly=cutHolePoly(), n=poly.length;
+ const quad=(a,b,c,d)=>{const o=P.length/3; for(const q of[a,b,c,d]){P.push(q[0],0,q[1]); N.push(0,1,0);}
    const up=(b[1]-a[1])*(c[0]-a[0])-(b[0]-a[0])*(c[1]-a[1]);           // 上向き(+y)の巻き順に
    if(up>=0) I.push(o,o+1,o+2,o,o+2,o+3); else I.push(o,o+2,o+1,o,o+3,o+2);};
+ if(!TER.H){
  const xs=[...new Set(poly.map(q=>q[0]))].sort((a,b)=>b-a);
  quad([X1,Z0],[X1,Z1],[xs[0],Z1],[xs[0],Z0]);                            // 穴より東
  quad([xs[xs.length-1],Z0],[xs[xs.length-1],Z1],[X0,Z1],[X0,Z0]);       // 穴より西
@@ -1217,22 +1460,118 @@ const groundMesh=(function(){
    quad([xa,Z0],[xa,hit[0][1]],[xb,hit[0][2]],[xb,Z0]);                  // 穴の北
    quad([xa,hit[1][1]],[xa,Z1],[xb,Z1],[xb,hit[1][2]]);                  // 穴の南
  }
- const N=[]; for(let i=0;i<P.length/3;i++) N.push(0,1,0);
+ }else{
+ const DX=TER.DX, GX=TER.GX, GZ=TER.GZ, W=GX+1, HH=TER.H, NN=TER.NN, F=TER.flat;
+ const NV=new Int32Array(W*(GZ+1)).fill(-1);
+ const node=(i,j)=>{const k=j*W+i; if(NV[k]<0){NV[k]=P.length/3; P.push(X0+i*DX,HH[k],Z0+j*DX); N.push(NN[3*k],NN[3*k+1],NN[3*k+2]);} return NV[k];};
+ const pt=(x,z)=>{const i=Math.round((x-X0)/DX), j=Math.round((z-Z0)/DX);   // 格子の点なら共有、ほかは新しい頂点(平ら・真上)
+   if(Math.abs(X0+i*DX-x)<1e-7&&Math.abs(Z0+j*DX-z)<1e-7&&i>=0&&j>=0&&i<=GX&&j<=GZ) return node(i,j);
+   P.push(x,0,z); N.push(0,1,0); return P.length/3-1;};
+ const tri=(a,b,c)=>{const ax=P[3*a],az=P[3*a+2],bx=P[3*b],bz=P[3*b+2],cx=P[3*c],cz=P[3*c+2];
+   const up=(bz-az)*(cx-ax)-(bx-ax)*(cz-az); if(Math.abs(up)<1e-12) return; if(up>0) I.push(a,b,c); else I.push(a,c,b);};
+ // 穴の2本の鎖(x の小さい端から大きい端へ)。cA=北(z の小さい側)・cB=南
+ const Q=[]; for(const p of poly) if(!Q.length||Math.hypot(p[0]-Q[Q.length-1][0],p[1]-Q[Q.length-1][1])>1e-9) Q.push(p);
+ if(Math.hypot(Q[0][0]-Q[Q.length-1][0],Q[0][1]-Q[Q.length-1][1])<1e-9) Q.pop();
+ let im=0, iM=0; Q.forEach((p,k)=>{ if(p[0]<Q[im][0]) im=k; if(p[0]>Q[iM][0]) iM=k; });
+ const chain=st=>{const c=[]; for(let k=im;;k=(k+st+Q.length)%Q.length){c.push(Q[k]); if(k===iM) break;} return c;};
+ let cA=chain(1), cB=chain(-1);
+ const zAt=(c,x)=>{ if(x<=c[0][0]) return c[0][1]; let lo=0, hi=c.length-1; if(x>=c[hi][0]) return c[hi][1];
+   while(hi-lo>1){const m=(lo+hi)>>1; if(c[m][0]<=x) lo=m; else hi=m;}
+   const a=c[lo], b=c[hi]; return a[1]+(b[1]-a[1])*(x-a[0])/((b[0]-a[0])||1e-12);};
+ const hx0=Q[im][0], hx1=Q[iM][0];
+ if(zAt(cA,(hx0+hx1)/2)>zAt(cB,(hx0+hx1)/2)){const t=cA; cA=cB; cB=t;}
+ let mono=true; for(const c of [cA,cB]) for(let k=1;k<c.length;k++) if(!(c[k][0]>c[k-1][0])) mono=false;
+ // 北の片の下の線 L(x)=min(zb, zN(x))(穴の x の範囲の外は zb)と、南の片の上の線 U(x)=max(za, zS(x))(穴の範囲だけ)
+ const brk=(xa,xb,za,zb)=>{
+   const X=[xa,xb];
+   for(const c of [cA,cB]) for(let k=0;k<c.length;k++){
+     const p=c[k]; if(p[0]>xa&&p[0]<xb) X.push(p[0]);
+     if(k+1<c.length){const q=c[k+1]; for(const zz of [za,zb]) if((p[1]-zz)*(q[1]-zz)<0){const x=p[0]+(q[0]-p[0])*(zz-p[1])/(q[1]-p[1]); if(x>xa&&x<xb) X.push(x);}}
+   }
+   X.sort((a,b)=>a-b); return X.filter((x,k)=>k===0||x-X[k-1]>1e-7);
+ };
+ const Lf=(x,zb,side)=>(x<hx0||x>hx1||(x===hx0&&side<0)||(x===hx1&&side>0))?zb:Math.min(zb,zAt(cA,x));   // side:-1=左の極限・+1=右の極限
+ const Uf=(x,za)=>Math.max(za,zAt(cB,x));
+ const holeCell=(i,j)=>{                     // セル (i,j) − 穴 の片(北と南)
+   const xa=X0+i*DX, xb=xa+DX, za=Z0+j*DX, zb=za+DX, X=brk(xa,xb,za,zb), out=[];
+   // 北の片:L(x)>za の所。区間の中点で見る
+   const covN=k=>Lf((X[k]+X[k+1])/2,zb,0)>za+1e-9;
+   for(let k=0;k<X.length-1;){
+     if(!covN(k)){k++;continue;}
+     let q=k; while(q<X.length-1&&covN(q)) q++;
+     const pts=[[X[k],za],[X[q],za]];
+     const v0=Lf(X[q],zb,-1); if(v0>za+1e-9) pts.push([X[q],v0]);
+     for(let m=q-1;m>k;m--){
+       const r=Lf(X[m],zb,1), l=Lf(X[m],zb,-1), bL=Lf((X[m-1]+X[m])/2,zb,0)>=zb-1e-9, bR=Lf((X[m]+X[m+1])/2,zb,0)>=zb-1e-9;
+       if(!(r>=zb-1e-9&&l>=zb-1e-9&&bL&&bR)) pts.push([X[m],r]);       // 下の辺の上で途中の点は入れない(T 字にしない)
+       if(Math.abs(l-r)>1e-9) pts.push([X[m],l]);
+     }
+     const v1=Lf(X[k],zb,1); if(v1>za+1e-9) pts.push([X[k],v1]);
+     out.push(pts); k=q;
+   }
+   // 南の片:穴の x の範囲で U(x)<zb の所
+   const covS=k=>{const x=(X[k]+X[k+1])/2; return x>hx0&&x<hx1&&Uf(x,za)<zb-1e-9;};
+   for(let k=0;k<X.length-1;){
+     if(!covS(k)){k++;continue;}
+     let q=k; while(q<X.length-1&&covS(q)) q++;
+     const pts=[[X[q],zb],[X[k],zb]];
+     const v0=Uf(X[k],za); if(v0<zb-1e-9) pts.push([X[k],v0]);
+     for(let m=k+1;m<q;m++){
+       const u=Uf(X[m],za), tL=Uf((X[m-1]+X[m])/2,za)<=za+1e-9, tR=Uf((X[m]+X[m+1])/2,za)<=za+1e-9;
+       if(!(u<=za+1e-9&&tL&&tR)) pts.push([X[m],u]);                   // 上の辺の上で途中の点は入れない
+     }
+     const v1=Uf(X[q],za); if(v1<zb-1e-9) pts.push([X[q],v1]);
+     out.push(pts); k=q;
+   }
+   return out;
+ };
+ const holeHit=(i,j)=>{                      // セルが穴に掛かるか(区切りの点と区間の中点で)
+   const xa=X0+i*DX, xb=xa+DX, za=Z0+j*DX, zb=za+DX;
+   if(xb<=hx0||xa>=hx1) return false;
+   const X=brk(Math.max(xa,hx0),Math.min(xb,hx1),za,zb), S=[];
+   for(let k=0;k<X.length;k++){S.push(X[k]); if(k+1<X.length) S.push((X[k]+X[k+1])/2);}
+   return S.some(x=>Math.max(za,zAt(cA,x))<Math.min(zb,zAt(cB,x))-1e-9);
+ };
+ // セルの種類:0=平ら・1=起伏・2=穴に掛かる
+ const T=new Uint8Array(GX*GZ);
+ let hb=[1e9,-1e9,1e9,-1e9]; for(const p of Q){hb[0]=Math.min(hb[0],p[0]);hb[1]=Math.max(hb[1],p[0]);hb[2]=Math.min(hb[2],p[1]);hb[3]=Math.max(hb[3],p[1]);}
+ for(let j=0;j<GZ;j++)for(let i=0;i<GX;i++){
+   const c=j*GX+i; if(!F[c]){T[c]=1;continue;}
+   const xa=X0+i*DX, za=Z0+j*DX;
+   if(xa+DX>hb[0]&&xa<hb[1]&&za+DX>hb[2]&&za<hb[3]&&holeHit(i,j)) T[c]=2;
+ }
+ // 平らな続き(行ごと)と、各行の線の区切り(この点は線の上下どちらの片も頂点にする)
+ const RUNS=[], BP=[]; for(let J=0;J<=GZ;J++) BP.push(new Set([0,GX]));
+ for(let j=0;j<GZ;j++){
+   for(let i=0;i<GX;){
+     if(T[j*GX+i]!==0){ for(const J of [j,j+1]){BP[J].add(i); BP[J].add(i+1);} i++; continue; }
+     let e=i; while(e<GX&&T[j*GX+e]===0) e++;
+     RUNS.push([j,i,e]); for(const J of [j,j+1]){BP[J].add(i); BP[J].add(e);} i=e;
+   }
+ }
+ const BPs=BP.map(S=>[...S].sort((a,b)=>a-b));
+ const sub=(L,a,b)=>{let lo=0,hi=L.length; while(lo<hi){const m=(lo+hi)>>1; if(L[m]<a) lo=m+1; else hi=m;} const r=[]; for(let k=lo;k<L.length&&L[k]<=b;k++) r.push(L[k]); return r;};
+ for(const [j,i0,e] of RUNS){                // 上の線と下の線の頂点を交互に結ぶ(ジッパー)
+   const A=sub(BPs[j],i0,e).map(i=>node(i,j)), B=sub(BPs[j+1],i0,e).map(i=>node(i,j+1));
+   let a=0,b=0;
+   while(a<A.length-1||b<B.length-1){
+     if(b>=B.length-1||(a<A.length-1&&P[3*A[a+1]]<=P[3*B[b+1]])){tri(A[a],B[b],A[a+1]); a++;}
+     else{tri(A[a],B[b],B[b+1]); b++;}
+   }
+ }
+ let nT=0, nH=0, nHP=0;
+ for(let j=0;j<GZ;j++)for(let i=0;i<GX;i++){
+   const c=j*GX+i;
+   if(T[c]===1){ const a=node(i,j), b=node(i+1,j), cc=node(i+1,j+1), d=node(i,j+1); tri(a,cc,b); tri(a,d,cc); nT++; }
+   else if(T[c]===2){ nH++;
+     for(const pts of holeCell(i,j)){ const V=pts.filter((p,k)=>{const q=pts[(k+1)%pts.length]; return Math.abs(p[0]-q[0])>1e-9||Math.abs(p[1]-q[1])>1e-9;});
+       if(V.length<3) continue; nHP++; const id=V.map(p=>pt(p[0],p[1]));
+       for(const t of earTri(V)) tri(id[t[0]],id[t[1]],id[t[2]]); } }
+ }
+ TER.stat.ground={terrain:nT, runs:RUNS.length, hole:nH, holePieces:nHP, mono:mono, verts:P.length/3, tris:I.length/3};
+ }
  const g=new THREE.Mesh(facesGeo(P,N,I),MAT.ground);
  g.name='地表'; scene.add(g); return g;})();
-/* ---- 道路:PLATEAU の実データ(別ファイル plateau_land.js があるとき) -----------------------
-   国土交通省 3D都市モデル(Project PLATEAU)2025年度の道路(tran:Road の lod1MultiSurface=道路区域の平面形)。
-   tools/plateau_land.py が作る。ファイルが無ければ下の模式の道路(甲州街道・交差道路の帯)で描く。
-   ・種別 k:0=一般(区市町村道)/1=幹線(国道・都道)/2=自動車専用。区間 sec:1=道路・2=橋梁・3=トンネル・4=交差部
-   ・地表の道路は平らな面を地表の 0.10m(幹線 0.12m)上に敷く。400m 角のまとまり×材質ごとに1つの Mesh
-   ・自動車専用の橋梁(首都高4号・中央道)は高架の床版にして、内側に橋脚を立てる。京王線の上を渡る所は
-     レール面+9.0m(架線の上)より高くする。橋脚は京王線の高架下・側道には立てない
-   ・建物・樹木は道路の面に掛からない(cityFree が roadHit を見る)。登録簿 ROADS_PL */
-const PLL=(typeof globalThis!=='undefined'&&globalThis.PLATEAU_LAND&&globalThis.PLATEAU_LAND.road64)?globalThis.PLATEAU_LAND:null;
-// 実データの建物(plateau_bldg.js)があるか。8章の PLB より前(4章の施設・占有域)で使う
-const HAS_PLB=!!(typeof globalThis!=='undefined'&&globalThis.PLATEAU_BLDG&&globalThis.PLATEAU_BLDG.b64);
-const ROADS_PL=[], LANDS_PL=[], LU={tint:null,col:null,geos:[],water:[]}, ROAD_XING=[], PLR_GRID=new Map(), PLR_CELL=30, ROAD_LAMPS=[], EXPY={deck:[],piers:[]};
-const ROAD_Y=[0.10,0.12,0.12], EXPY_TOP=11.5, EXPY_DEPTH=1.8;
 function roadHit(px,pz,r){                 // 点(半径 r)が道路の面に掛かるか
   // 半径の範囲に掛かる格子をすべて見る(中心の格子だけでは、隣の格子にだけ登録された道路の縁を見落とす)
   // r が負(道路の内側へ |r| 以上入っているか)のときも、範囲は |r| で取る
@@ -1354,6 +1693,7 @@ if(PLL){
     const o=c.P.length/3, y=ROAD_Y[R.k], cl=RD_COL[R.k];
     // 掘割の中は除く(掘割を渡る道路橋はそのまま。下に床版を作る=5c章)
     const GT=CUT_DECKS.some(D=>D.R===R)?{V:R.P,T:earTri(R.P)}:cutTris(R.P);
+    if(TER.H){ terDrape(R.P,y,c,cl,GT.V===R.P?null:GT); continue; }   // 地形に沿わせる(掘割に掛かる多角形は切り抜いた三角形を)
     for(const p of GT.V){c.P.push(p[0],y,p[1]); c.N.push(0,1,0); c.C.push(cl.r,cl.g,cl.b);}
     for(const t of GT.T){
       const A=GT.V[t[0]],B=GT.V[t[1]],C=GT.V[t[2]], up=(B[1]-A[1])*(C[0]-A[0])-(B[0]-A[0])*(C[1]-A[1]);
@@ -1383,6 +1723,7 @@ if(PLL){
       }
       const o=c.P.length/3, y=R.k===3?0.07:(R.k===4?0.06:0.05);
       const GT=cutTris(R.P);                                // 掘割の中は除く
+      if(TER.H){ const nv=terDrape(R.P,y,c,c.C?PK:null,GT.V===R.P?null:GT); if(R.k<3){ if(!c.G) c.G=[]; c.G.push([o,nv,R.k]); } continue; }
       if(R.k<3){ if(!c.G) c.G=[]; c.G.push([o,GT.V.length,R.k]); }
       for(const p of GT.V){c.P.push(p[0],y,p[1]); c.N.push(0,1,0); if(c.C) c.C.push(PK.r,PK.g,PK.b);}
       for(const t of GT.T){
@@ -1455,7 +1796,7 @@ if(PLL){
     if(piers.length){
       const inst=new THREE.InstancedMesh(new THREE.BoxGeometry(1,1,1),MAT.pier,piers.length);
       const m4=new THREE.Matrix4(),q=new THREE.Quaternion(),v=new THREE.Vector3(),sc=new THREE.Vector3();
-      piers.forEach((p,i)=>{m4.compose(v.set(p[0],p[2]/2,p[1]),q,sc.set(2.0,p[2],2.0)); inst.setMatrixAt(i,m4);});
+      piers.forEach((p,i)=>{const g=terH(p[0],p[1]); p[3]=g; m4.compose(v.set(p[0],(g+p[2])/2,p[1]),q,sc.set(2.0,p[2]-g,2.0)); inst.setMatrixAt(i,m4);});   // 地表(p[3])から床版の下面まで
       inst.instanceMatrix.needsUpdate=true; scene.add(inst);
     }
     EXPY.piers=piers; for(const q of piers) gridPut(EXPY_GRID,q[0]-1,q[0]+1,q[1]-1,q[1]+1,q);
@@ -1499,6 +1840,14 @@ strip(2000,6100,60,x=>[x,12,307.4],x=>[x,13,307.4],MAT.barrier);
    m4.compose(new THREE.Vector3(p.x,6,p.z),q,new THREE.Vector3(1.6,12,1.6));inst.setMatrixAt(i++,m4);}
  scene.add(inst);}
 }
+/* 地形があるときは箱の上面を地表に沿う面にする(箱のままだと起伏に埋まる/浮く)。frame の向き(-a)+ry2 で回した w×d の矩形 */
+function terStrip(w,d,mat,s,y0,off,ry2){
+  const p=frame(s,off), th=-p.a+(ry2||0), ex=[Math.cos(th),-Math.sin(th)], ez=[Math.sin(th),Math.cos(th)];
+  const Q=[[-1,-1],[1,-1],[1,1],[-1,1]].map(q=>[p.x+q[0]*w/2*ex[0]+q[1]*d/2*ez[0], p.z+q[0]*w/2*ex[1]+q[1]*d/2*ez[1]]);
+  const o={P:[],N:[],I:[]}; terDrape(Q,y0,o,null);
+  const m=new THREE.Mesh(facesGeo(o.P,o.N,o.I),mat); m.userData.flat=true; return add(m);
+}
+if(TER.H) terStrip(18,440,MAT.roadPlan,HOSHA23_X,.16,0); else
 box(18,.16,440,MAT.roadPlan,HOSHA23_X,.08,0);     // 放射23号線(井ノ頭通り・計画。実データに無いので常に描く)
 // 交差道路(平面図の位置)。実データがあるときは描かない
 if(!PLL){
@@ -1521,6 +1870,7 @@ const NSx=[];{let x=DOM.x0+70;while(x<DOM.x1-40){NSx.push(x);x+=92+Math.random()
 // 整備側道の歩道の帯(高架の両側に沿う緑がかった帯)は描かない(利用者指示:高架に沿う緑の道のようなものは削除)。
 // 高架下と側道の範囲(桁半幅+5.2m)は引き続き建物・樹木の占有域
 // 水緑・施設
+if(TER.H) terStrip(15,460,MAT.green,JOSUI_X,.08,0,.2); else   // 地形があれば地表の 0.08m 上(緑地 0.05 と道路 0.10 の間)
 box(15,.3,460,MAT.green,JOSUI_X,.15,0,.2);        // 玉川上水(暗渠緑道)
 /* 和田堀給水所・変電所の模式の箱と池は、実データ(PLATEAU の建物)があるときは描かない。
    実際の施設と周りの家・道路・緑地がデータにあり、模式の箱(430m×230m)がそれらを隠していた(占有域でも203棟を消していた) */
@@ -2280,10 +2630,6 @@ function xKit(g){
   };
   return k;
 }
-/* 交差鉄道の諸元。線路の敷設・車両の走行・占有域の判定がすべてここを見る。
-   XR.RAILTOP を直せば車両の載る高さも一緒に動く(片方だけ変えると車輪が沈む)。 */
-const XR={U0:-440,U1:440, TRK:[-3,3], RAILY:.83, RAILH:.12, SETA_U0:-370, SETA_U1:-10};
-XR.RAILTOP=XR.RAILY+XR.RAILH/2;                          // レール頭頂面(車両の原点を置く高さ)
 const XT=XR.RAILTOP-0.153-0.012;                         // 交差鉄道のまくらぎの上面(レールの底の下)
 /* 井の頭線 明大前のホーム(実測緯度から。u の範囲・off)。上り(渋谷方へ=-u)は東側、下り(吉祥寺方へ=+u)は西側。
    線路の敷設と列車の停車位置が同じ値を見る */
@@ -4094,7 +4440,8 @@ function cutTris(P){
    窓は壁の上端(top=軒・陸屋根の上端)の 0.3m 下までに収める。昼は暗いガラス、夜は部屋ごとに灯る(4割は消灯)。
    灯る部屋の乱数は壁の位置と向きだけで決める(建物ごとの種にすると、データで重なる壁が交互に灯って砂目になった)。
    種類(戸建て・共同住宅・業務と商業・倉庫と工場)ごとに窓の間隔・幅・階高・高さの帯を変える。
-   属性:近くの形(頂点)は aBld=(種類,上端,種)、箱のインスタンスは iBld=(種類,種)で上端は箱の上面。殻が無いので描画も減る */
+   属性:近くの形(頂点)は aBld=(種類,上端,種,基部)、箱のインスタンスは iBld=(種類,種)で上端・基部は箱の上面・下面。殻が無いので描画も減る。
+   高さは建物の基部(地形の上=terMin。地形が無ければ 0)から測る(世界座標の y のまま測ると、谷の建物と丘の建物で階の位置がずれる) */
 /* 2026-10-12 利用者指示「窓が多すぎる。北に面する所は実際は窓があまりない」:間隔を広げ、窓の列を壁ごとに間引く。
    間引く割合は南向きの壁で [6]、北向きの壁で [7](向きの北の成分でつなぐ)。どの列を間引くかは列の番号と壁の向きから決める */
 const BLD_WIN=[ // [窓の間隔, 窓の幅, 階高, 窓の下端, 窓の上端(階の床から), 間引く割合(南), 間引く割合(北)] [m]
@@ -4118,17 +4465,17 @@ function bldWinPatch(mat,photo){                     // photo=写真の面(昼�
   const par=BLD_WIN.map((r,i)=>(i?'else ':'')+(i<BLD_WIN.length-1?'if(t<'+(i+0.5)+')':'')+'{P='+r[0].toFixed(3)+';ww='+r[1].toFixed(3)+';fh='+r[2].toFixed(3)+';y0='+r[3].toFixed(3)+';y1='+r[4].toFixed(3)+';d0='+r[5].toFixed(3)+';d1='+r[6].toFixed(3)+';}').join(' ');
   mat.onBeforeCompile=function(sh){
     Object.assign(sh.uniforms,BLD_WIN_U);
-    sh.vertexShader='attribute vec3 aBld; attribute vec2 iBld; varying vec3 vBld; varying vec3 vBW; varying vec3 vBN;\n'+
+    sh.vertexShader='attribute vec4 aBld; attribute vec2 iBld; varying vec4 vBld; varying vec3 vBW; varying vec3 vBN;\n'+
       sh.vertexShader.replace('#include <begin_vertex>','#include <begin_vertex>\n { vec4 w=vec4(transformed,1.); vec3 n=objectNormal;\n'+
-      '#ifdef USE_INSTANCING\n w=instanceMatrix*w; n=mat3(instanceMatrix)*n; vBld=vec3(iBld.x,(modelMatrix*instanceMatrix*vec4(0.,.5,0.,1.)).y,iBld.y);\n'+
+      '#ifdef USE_INSTANCING\n w=instanceMatrix*w; n=mat3(instanceMatrix)*n; vBld=vec4(iBld.x,(modelMatrix*instanceMatrix*vec4(0.,.5,0.,1.)).y,iBld.y,(modelMatrix*instanceMatrix*vec4(0.,-.5,0.,1.)).y);\n'+
       '#else\n vBld=aBld;\n#endif\n w=modelMatrix*w; vBW=w.xyz; vBN=normalize(mat3(modelMatrix)*n); }');
-    sh.fragmentShader='uniform float uWinNight; varying vec3 vBld; varying vec3 vBW; varying vec3 vBN;\n'+
+    sh.fragmentShader='uniform float uWinNight; varying vec4 vBld; varying vec3 vBW; varying vec3 vBN;\n'+
       'void bwPar(float t,out float P,out float ww,out float fh,out float y0,out float y1,out float d0,out float d1){ '+par+' }\n'+
       sh.fragmentShader.replace('#include <color_fragment>','#include <color_fragment>\n float bwWin=0.; vec2 bwCell=vec2(0.);\n'+
       ' if(abs(vBN.y)<.5){ float P,ww,fh,y0,y1,d0,d1; bwPar(vBld.x,P,ww,fh,y0,y1,d0,d1); vec2 tw=normalize(vec2(-vBN.z,vBN.x)); float u=dot(vBW.xz,tw);\n'+
-      '   float cu=fract(u/P), fl=floor(vBW.y/fh), cy=vBW.y-fl*fh, cid=floor(u/P)+floor(tw.x*3.+.5)*7.+floor(tw.y*3.+.5)*13.;\n'+
+      '   float yr=vBW.y-vBld.w, cu=fract(u/P), fl=floor(yr/fh), cy=yr-fl*fh, cid=floor(u/P)+floor(tw.x*3.+.5)*7.+floor(tw.y*3.+.5)*13.;\n'+
       '   float pd=mix(d0,d1,clamp(-normalize(vBN.xz).y,0.,1.)), hc=fract(sin(cid*12.9898+4.1)*43758.5453);\n'+   // 列を間引く(北向きほど多く)
-      '   if(abs(cu-.5)<ww*.5/P&&cy>y0&&cy<y1&&fl*fh+y1<=vBld.y-.3&&vBW.y>.5&&hc>=pd){ bwWin=1.; bwCell=vec2(cid,fl); } }\n'+
+      '   if(abs(cu-.5)<ww*.5/P&&cy>y0&&cy<y1&&fl*fh+y1<=vBld.y-vBld.w-.3&&yr>.5&&hc>=pd){ bwWin=1.; bwCell=vec2(cid,fl); } }\n'+
       (photo?'':' diffuseColor.rgb=mix(diffuseColor.rgb,vec3(.05,.065,.085),bwWin*.85);'))
       .replace('#include <emissivemap_fragment>','#include <emissivemap_fragment>\n if(uWinNight>0.&&bwWin>0.){ float hh=fract(sin(dot(mod(bwCell,vec2(4096.,64.)),vec2(12.9898,78.233)))*43758.5453);\n'+
       '   if(hh>.42) totalEmissiveRadiance+=vec3(1.,.88,.68)*uWinNight*(.45+.55*fract(hh*7.13)); }');
@@ -4210,7 +4557,7 @@ if(PLB){
     const ox=best.uc*best.ux-best.vc*best.uz, oz=best.uc*best.uz+best.vc*best.ux, a=Math.atan2(best.uz,best.ux);
     const h=b.h, pal=PAL_USE[b.use||0]||PALS[h<9.5?0:(h<25?1:2)], hex=pal[Math.abs(Math.round(cx*7+cz*13))%pal.length];
     const r=Math.hypot(best.w,best.d)/2, k=Math.floor(s/CHL);
-    let c=CH.get(k); if(!c){c={B:[],bx:[1e9,-1e9,1e9,-1e9,0]}; CH.set(k,c);}
+    let c=CH.get(k); if(!c){c={B:[],bx:[1e9,-1e9,1e9,-1e9,-1e9,1e9]}; CH.set(k,c);}   // bx=[x0,x1,z0,z1,上端,基部]
     /* 窓の種類と種。三角屋根:LOD2 が無い戸建て(床面積 250m² 以下・高さ 4.5〜12m)は近くで切妻屋根にする(利用者指示)。
        PLATEAU の高さは最も高い所(棟)までなので、軒=高さ−屋根の高さ(短辺の 0.29 倍=約30°・2.4m まで) */
     const wt=winTypeOf(b.use||0,h), seed=Math.abs(Math.round(cx*3.1+cz*7.7))%997;
@@ -4218,9 +4565,10 @@ if(PLB){
     let eave=h-rh;
     if(b.l2){ let m=1e9; for(const S of b.l2) if(S.t===1) for(const v of S.V) m=Math.min(m,v[1]); eave=m<1e8?m:h; }   // LOD2:屋根面の最も低い所
     const roofHex=(gable||b.l2)?ROOF_GRAY[seed%ROOF_GRAY.length]:null;
+    const base=terMin(P);                              // 基部=足跡の下の地表の最も低い所(地形が無ければ 0)。坂の上の側は地面に埋まる
     c.B.push({P:P,h:h,l2:b.l2||null,cx:cx,cz:cz,ox:ox,oz:oz,w:best.w,d:best.d,a:a,ux:best.ux,uz:best.uz,hex:(b.texHex!==undefined?ptxBoxHex(b.texHex):hex),wt:wt,seed:seed,
-      gable:gable,rh:rh,eave:eave,roofHex:roofHex,big:best.w*best.d>=120||h>=9.5});   // 遠くでも描く:120m²以上か9.5m以上(集合住宅・大きな家)
-    c.bx[0]=Math.min(c.bx[0],ox-r); c.bx[1]=Math.max(c.bx[1],ox+r); c.bx[2]=Math.min(c.bx[2],oz-r); c.bx[3]=Math.max(c.bx[3],oz+r); c.bx[4]=Math.max(c.bx[4],h);
+      gable:gable,rh:rh,eave:eave,roofHex:roofHex,base:base,big:best.w*best.d>=120||h>=9.5});   // 遠くでも描く:120m²以上か9.5m以上(集合住宅・大きな家)
+    c.bx[0]=Math.min(c.bx[0],ox-r); c.bx[1]=Math.max(c.bx[1],ox+r); c.bx[2]=Math.min(c.bx[2],oz-r); c.bx[3]=Math.max(c.bx[3],oz+r); c.bx[4]=Math.max(c.bx[4],base+h); c.bx[5]=Math.min(c.bx[5],base);
     // 足跡の格子(樹木・街灯が中や縁に入らない)。外接矩形+余白が掛かるセル全部に入れる。外接矩形 bb は plbHit の前さばき
     P.bb=[1e9,-1e9,1e9,-1e9]; for(const v of P){P.bb[0]=Math.min(P.bb[0],v[0]);P.bb[1]=Math.max(P.bb[1],v[0]);P.bb[2]=Math.min(P.bb[2],v[1]);P.bb[3]=Math.max(P.bb[3],v[1]);}
     for(let gx=Math.floor((ox-r-PLB_PAD)/PLB_CELL);gx<=Math.floor((ox+r+PLB_PAD)/PLB_CELL);gx++)
@@ -4229,7 +4577,7 @@ if(PLB){
       }
     CITY.buildings.push({s:s,off:off,x:ox,z:oz,w:best.w,d:best.d,h:h,a:a,r:r,poly:P,plateau:true,lod2:b.l2?b.l2.length:0,use:b.use||0,hex:hex,
       texHex:(b.texHex!==undefined?b.texHex:null),tex:b.texN||0,
-      wt:wt,roof:gable?'切妻':(b.l2?'LOD2':'陸屋根'),eave:eave,chunk:k});
+      wt:wt,roof:gable?'切妻':(b.l2?'LOD2':'陸屋根'),eave:eave,base:base,chunk:k});
     nIn++;
   }
   /* 中・遠は単位の箱のインスタンス(まとまりごとに外接球を持たせる)。屋根は頂点カラーで少し暗く */
@@ -4241,11 +4589,11 @@ if(PLB){
   const MAT_B=mkMat('MeshLambertMaterial',{color:0xffffff,vertexColors:true});
   bldWinPatch(MAT_B);                                  // 窓(壁の面にシェーダで)
   const m4=new THREE.Matrix4(), q=new THREE.Quaternion(), e=new THREE.Euler(), col=new THREE.Color(), v3=new THREE.Vector3(), sc=new THREE.Vector3();
-  const sphere=(bx)=>new THREE.Sphere(new THREE.Vector3((bx[0]+bx[1])/2,bx[4]/2,(bx[2]+bx[3])/2),Math.hypot(bx[1]-bx[0],bx[4],bx[3]-bx[2])/2);
+  const sphere=(bx)=>new THREE.Sphere(new THREE.Vector3((bx[0]+bx[1])/2,(bx[4]+bx[5])/2,(bx[2]+bx[3])/2),Math.hypot(bx[1]-bx[0],bx[4]-bx[5],bx[3]-bx[2])/2);
   const inst=(list,bx)=>{
     if(!list.length) return null;
     const g=boxGeo(), im=new THREE.InstancedMesh(g,MAT_B,list.length), ib=new Float32Array(list.length*2);
-    list.forEach((b,j)=>{e.set(0,-b.a,0);q.setFromEuler(e);m4.compose(v3.set(b.ox,b.h/2,b.oz),q,sc.set(b.w,b.h,b.d));
+    list.forEach((b,j)=>{e.set(0,-b.a,0);q.setFromEuler(e);m4.compose(v3.set(b.ox,b.base+b.h/2,b.oz),q,sc.set(b.w,b.h,b.d));
       im.setMatrixAt(j,m4); im.setColorAt(j,setSrgb(col,b.hex)); ib[2*j]=b.wt; ib[2*j+1]=b.seed;});
     g.setAttribute('iBld',new THREE.InstancedBufferAttribute(ib,2));   // 窓の種類と種(上端は箱の上面)
     g.boundingSphere=sphere(bx); im.frustumCulled=true;
@@ -4256,41 +4604,41 @@ if(PLB){
   const detail=(C)=>{
     const P=[],N=[],I=[],Cc=[],AB=[], c=new THREE.Color(), TX=new Map();   // TX=詰め合わせごとの写真の形
     C.pend=false; C.need=[];                           // 写真の画像がまだ読めていない詰め合わせ(読めたら作り直す)
-    let cur=[0,0,0];                                   // 今積んでいる建物の窓の種類・壁の上端・種(頂点の属性 aBld)
+    let cur=[0,0,0,0];                                 // 今積んでいる建物の窓の種類・壁の上端・種・基部(頂点の属性 aBld。高さは世界座標)
     const triT=(a,va,vb,vc,ta,tb,tc,n)=>{ let q=TX.get(a); if(!q){q={P:[],N:[],I:[],U:[],AB:[]};TX.set(a,q);}
-      const o=q.P.length/3; for(const v of [va,vb,vc]){q.P.push(v[0],v[1],v[2]);q.N.push(n[0],n[1],n[2]);q.AB.push(cur[0],cur[1],cur[2]);}
+      const o=q.P.length/3; for(const v of [va,vb,vc]){q.P.push(v[0],v[1],v[2]);q.N.push(n[0],n[1],n[2]);q.AB.push(cur[0],cur[1],cur[2],cur[3]);}
       q.U.push(ta[0],ta[1],tb[0],tb[1],tc[0],tc[1]);
       const ux=vb[0]-va[0],uy=vb[1]-va[1],uz=vb[2]-va[2],vx=vc[0]-va[0],vy=vc[1]-va[1],vz=vc[2]-va[2];
       if((uy*vz-uz*vy)*n[0]+(uz*vx-ux*vz)*n[1]+(ux*vy-uy*vx)*n[2]>=0) q.I.push(o,o+1,o+2); else q.I.push(o,o+2,o+1);};
-    const quad=(a,b,cc,d,n,cl)=>{const o=P.length/3; for(const p of [a,b,cc,d]){P.push(p[0],p[1],p[2]);N.push(n[0],n[1],n[2]);Cc.push(cl.r,cl.g,cl.b);AB.push(cur[0],cur[1],cur[2]);}
+    const quad=(a,b,cc,d,n,cl)=>{const o=P.length/3; for(const p of [a,b,cc,d]){P.push(p[0],p[1],p[2]);N.push(n[0],n[1],n[2]);Cc.push(cl.r,cl.g,cl.b);AB.push(cur[0],cur[1],cur[2],cur[3]);}
       // 法線の向きに表を向ける
       const ux=b[0]-a[0],uy=b[1]-a[1],uz=b[2]-a[2],vx=cc[0]-a[0],vy=cc[1]-a[1],vz=cc[2]-a[2];
       if((uy*vz-uz*vy)*n[0]+(uz*vx-ux*vz)*n[1]+(ux*vy-uy*vx)*n[2]>=0) I.push(o,o+1,o+2,o,o+2,o+3); else I.push(o,o+2,o+1,o,o+3,o+2);};
-    const tri=(a,b2,cc,n,cl)=>{const o=P.length/3; for(const q of [a,b2,cc]){P.push(q[0],q[1],q[2]);N.push(n[0],n[1],n[2]);Cc.push(cl.r,cl.g,cl.b);AB.push(cur[0],cur[1],cur[2]);}
+    const tri=(a,b2,cc,n,cl)=>{const o=P.length/3; for(const q of [a,b2,cc]){P.push(q[0],q[1],q[2]);N.push(n[0],n[1],n[2]);Cc.push(cl.r,cl.g,cl.b);AB.push(cur[0],cur[1],cur[2],cur[3]);}
       const ux=b2[0]-a[0],uy=b2[1]-a[1],uz=b2[2]-a[2],vx=cc[0]-a[0],vy=cc[1]-a[1],vz=cc[2]-a[2];
       if((uy*vz-uz*vy)*n[0]+(uz*vx-ux*vz)*n[1]+(ux*vy-uy*vx)*n[2]>=0) I.push(o,o+1,o+2); else I.push(o,o+2,o+1);};
     for(const b of C.B){
       setSrgb(c,b.hex); const roof=c.clone().multiplyScalar(0.86), Q=b.P, h=b.h;
-      const gray=b.roofHex!==null?setSrgb(new THREE.Color(),b.roofHex):roof;
-      cur=[b.wt,b.eave,b.seed];
+      const gray=b.roofHex!==null?setSrgb(new THREE.Color(),b.roofHex):roof, y0=b.base;   // y0=基部(地形の上)
+      cur=[b.wt,y0+b.eave,b.seed,y0];
       if(b.l2){
         /* LOD2:屋根面・壁面をそのまま。屋根は上向き、壁は建物の重心から外向きに表を向ける。傾いた屋根面は灰色(陸屋根はそのまま) */
         for(const S of b.l2){
-          const r=polyTri3(S.V); let n=r.n;
+          const r=polyTri3(S.V), V=y0?S.V.map(v=>[v[0],v[1]+y0,v[2]]):S.V; let n=r.n;   // 面の点の高さは基部から
           if(S.t===1){ if(n[1]<0) n=[-n[0],-n[1],-n[2]]; }
           else{
             let mx=0,mz=0; for(const v of S.V){mx+=v[0];mz+=v[2];} mx=mx/S.V.length-b.cx; mz=mz/S.V.length-b.cz;
             if(n[0]*mx+n[2]*mz<0) n=[-n[0],-n[1],-n[2]];
           }
-          if(S.t!==1){ let my=-1e9; for(const v of S.V) my=Math.max(my,v[1]); cur=[b.wt,Math.min(b.eave,my),b.seed]; }   // 壁ごとの上端(低い棟の壁)
+          if(S.t!==1){ let my=-1e9; for(const v of S.V) my=Math.max(my,v[1]); cur=[b.wt,y0+Math.min(b.eave,my),b.seed,y0]; }   // 壁ごとの上端(低い棟の壁)
           if(S.uv&&PTX_READY.ok[S.ta]){                  // 写真のある面
             const U=S.uv, uvOf=i=>[U[2*i],U[2*i+1]];
-            for(const t of r.T) triT(S.ta,S.V[t[0]],S.V[t[1]],S.V[t[2]],uvOf(t[0]),uvOf(t[1]),uvOf(t[2]),n);
+            for(const t of r.T) triT(S.ta,V[t[0]],V[t[1]],V[t[2]],uvOf(t[0]),uvOf(t[1]),uvOf(t[2]),n);
             continue;
           }
           if(S.uv&&!C.need.includes(S.ta)){ C.pend=true; C.need.push(S.ta); }   // 画像が読めたら写真の形で作り直す
           // 色は面の向きで:上向きで傾いた面は(データで壁とされていても)三角屋根の灰色、平らな上向きは陸屋根
-          for(const t of r.T) tri(S.V[t[0]],S.V[t[1]],S.V[t[2]],n,(S.t===1||n[1]>0.3)?(n[1]<0.97?gray:roof):c);
+          for(const t of r.T) tri(V[t[0]],V[t[1]],V[t[2]],n,(S.t===1||n[1]>0.3)?(n[1]<0.97?gray:roof):c);
         }
         continue;
       }
@@ -4298,13 +4646,13 @@ if(PLB){
       for(let i=0;i<Q.length;i++){
         const a=Q[i], d=Q[(i+1)%Q.length], mx=(a[0]+d[0])/2-b.cx, mz=(a[1]+d[1])/2-b.cz;
         let nx=d[1]-a[1], nz=-(d[0]-a[0]); const l=Math.hypot(nx,nz)||1; nx/=l; nz/=l; if(nx*mx+nz*mz<0){nx=-nx;nz=-nz;}
-        quad([a[0],0,a[1]],[d[0],0,d[1]],[d[0],eave,d[1]],[a[0],eave,a[1]],[nx,0,nz],c);
+        quad([a[0],y0,a[1]],[d[0],y0,d[1]],[d[0],y0+eave,d[1]],[a[0],y0+eave,a[1]],[nx,0,nz],c);
       }
       if(b.gable){
         /* 切妻屋根:外接矩形(長い辺の向きに棟)の上に、軒の出 0.35m。妻面(三角)は壁の色。軒の高さの平らな蓋は作らない
            (足跡は外接矩形の内なので屋根が覆う) */
         const lw=b.w>=b.d, ux=lw?b.ux:-b.uz, uz=lw?b.uz:b.ux, L=(lw?b.w:b.d)/2, E=(lw?b.d:b.w)/2, ov=0.35;
-        const vx=-uz, vz=ux, W=(u,v,y)=>[b.ox+u*ux+v*vx,y,b.oz+u*uz+v*vz], top=eave+b.rh;
+        const vx=-uz, vz=ux, W=(u,v,y)=>[b.ox+u*ux+v*vx,y0+y,b.oz+u*uz+v*vz], top=eave+b.rh;
         for(const sg of[-1,1]){
           const nl=Math.hypot(b.rh,E+ov), n=[sg*vx*b.rh/nl,(E+ov)/nl,sg*vz*b.rh/nl];
           const k=(E+ov)/E;                                   // 軒の出のぶん屋根面を下げる(勾配はそのまま)
@@ -4315,21 +4663,21 @@ if(PLB){
         continue;
       }
       const o=P.length/3;
-      for(const p of Q){P.push(p[0],h,p[1]);N.push(0,1,0);Cc.push(roof.r,roof.g,roof.b);AB.push(cur[0],cur[1],cur[2]);}
+      for(const p of Q){P.push(p[0],y0+h,p[1]);N.push(0,1,0);Cc.push(roof.r,roof.g,roof.b);AB.push(cur[0],cur[1],cur[2],cur[3]);}
       for(const t of earTri(Q)){
         const A0=Q[t[0]],A1=Q[t[1]],A2=Q[t[2]], up=(A1[1]-A0[1])*(A2[0]-A0[0])-(A1[0]-A0[0])*(A2[1]-A0[1]);   // 上向きなら正
         if(up>=0) I.push(o+t[0],o+t[1],o+t[2]); else I.push(o+t[0],o+t[2],o+t[1]);
       }
     }
     const g=facesGeo(P,N,I,Cc); g.boundingSphere=sphere(C.bx);
-    g.setAttribute('aBld',new THREE.Float32BufferAttribute(AB,3));     // 窓の種類・壁の上端・種
+    g.setAttribute('aBld',new THREE.Float32BufferAttribute(AB,4));     // 窓の種類・壁の上端・種・基部
     const m=new THREE.Mesh(g,MAT_B); m.visible=false; scene.add(m);
     m.castShadow=true; m.receiveShadow=true;        // 後から作るので applyShadows() の一括設定に載らない
     C.mt=[];                                          // 写真の形(詰め合わせごとに1回の描画)。表示は m と一緒に cityLod が切り替える
     for(const [a,q] of TX){
       const gt=facesGeo(q.P,q.N,q.I,null); gt.boundingSphere=sphere(C.bx);
       gt.setAttribute('uv',new THREE.Float32BufferAttribute(q.U,2));
-      gt.setAttribute('aBld',new THREE.Float32BufferAttribute(q.AB,3));
+      gt.setAttribute('aBld',new THREE.Float32BufferAttribute(q.AB,4));
       const mt=new THREE.Mesh(gt,ptxMat(a)); mt.visible=false; mt.castShadow=true; mt.receiveShadow=true; mt.userData.ptx=a;
       scene.add(mt); C.mt.push(mt);
     }
@@ -4337,14 +4685,14 @@ if(PLB){
   };
   for(const c of CH.values()){
     const bx=c.bx;
-    CITY_LODS.push({x:(bx[0]+bx[1])/2,y:bx[4]/2,z:(bx[2]+bx[3])/2,r:Math.hypot(bx[1]-bx[0],bx[4],bx[3]-bx[2])/2,
+    CITY_LODS.push({x:(bx[0]+bx[1])/2,y:(bx[4]+bx[5])/2,z:(bx[2]+bx[3])/2,r:Math.hypot(bx[1]-bx[0],bx[4]-bx[5],bx[3]-bx[2])/2,
       near:400,mid:1400,B:c.B,bx:bx,make:detail,m:[null,inst(c.B,bx),inst(c.B.filter(b=>b.big),bx)]});
   }
   CITY.plateau={source:PLB.source,count:PLB.count,used:nIn,tex:N_TX?{buildings:N_TX.nb,surfaces:N_TX.ns,atlases:PTX.atlases.length}:null};
   // 出典の表示(CC BY 4.0)
   try{
     const d=document.createElement('div');
-    d.textContent=(PLL?'建物・道路・土地利用':'建物')+(N_TX?'・建物の写真':'')+':'+PLB.source+'(CC BY 4.0)を加工';   // CREDITS.txt と同じ表記
+    d.textContent=(PLL?'建物・道路・土地利用':'建物')+(N_TX?'・建物の写真':'')+(TER.on?'・地形':'')+':'+PLB.source+'(CC BY 4.0)を加工';   // CREDITS.txt と同じ表記
     d.style.cssText='position:fixed;right:6px;bottom:4px;font:11px sans-serif;color:#334;background:rgba(255,255,255,.7);padding:1px 6px;border-radius:4px;z-index:5;pointer-events:none';
     document.body.appendChild(d);
   }catch(e){}
@@ -4446,9 +4794,10 @@ if(PLB){
     const p=frame(s,off), rad=2.3*sc;
     if(!cityFree(s,off,rad,p.x,p.z,roadIn===undefined?0:rad+roadIn))return false;
     if(!occFree(p.x,p.z,rad))return false;
-    T.push([p.x,p.z,sc,c,s]); i++;
+    const ty=Math.min(terH(p.x,p.z),terH(p.x+0.3,p.z),terH(p.x-0.3,p.z),terH(p.x,p.z+0.3),terH(p.x,p.z-0.3));   // 根元(坂で浮かない)
+    T.push([p.x,p.z,sc,c,s,ty]); i++;
     occAdd(p.x,p.z,rad);
-    CITY.trees.push({s:s,off:off,x:p.x,z:p.z,r:rad,kind:kind||'街路樹'});
+    CITY.trees.push({s:s,off:off,x:p.x,z:p.z,y:ty,r:rad,kind:kind||'街路樹'});
     return true;
   };
   // 街路樹(高架の両側=側道の外)。占有域に当たる区間は自動的に間引かれる
@@ -4534,13 +4883,13 @@ if(PLB){
   T.forEach((t,k)=>{const ci=Math.floor(t[4]/480); let c=TREE_CH.get(ci); if(!c){c={L:[]};TREE_CH.set(ci,c);} CITY.trees[k].ci=ci; CITY.trees[k].j=c.L.length; c.L.push(t);});
   const GN=treeGeo(true), GF=treeGeo(false);
   for(const c of TREE_CH.values()){
-    let x0=1e9,x1=-1e9,z0=1e9,z1=-1e9;
-    for(const t of c.L){x0=Math.min(x0,t[0]-3);x1=Math.max(x1,t[0]+3);z0=Math.min(z0,t[1]-3);z1=Math.max(z1,t[1]+3);}
-    const sph=new THREE.Sphere(new THREE.Vector3((x0+x1)/2,5,(z0+z1)/2),Math.hypot(x1-x0,10,z1-z0)/2);
+    let x0=1e9,x1=-1e9,z0=1e9,z1=-1e9,y0=1e9,y1=-1e9;
+    for(const t of c.L){x0=Math.min(x0,t[0]-3);x1=Math.max(x1,t[0]+3);z0=Math.min(z0,t[1]-3);z1=Math.max(z1,t[1]+3);y0=Math.min(y0,t[5]);y1=Math.max(y1,t[5]);}
+    const sph=new THREE.Sphere(new THREE.Vector3((x0+x1)/2,(y0+y1)/2+5,(z0+z1)/2),Math.hypot(x1-x0,y1-y0+10,z1-z0)/2);
     const mk=(G)=>{const g=G.clone(), im=new THREE.InstancedMesh(g,TREE_MAT,c.L.length);
       c.L.forEach((t,j)=>{const h=0.85+0.4*((Math.sin(t[0]*1.7+t[1]*3.1)+1)/2), w=0.85+0.15*((Math.sin(t[0]*2.3-t[1]*1.3)+1)/2);
         e3.set(0,(t[0]*0.37+t[1]*0.61)%(2*Math.PI),0); q.setFromEuler(e3);
-        m4.compose(v3.set(t[0],0,t[1]),q,s3.set(t[2]*w,t[2]*h,t[2]*w)); im.setMatrixAt(j,m4); im.setColorAt(j,setSrgb(col,t[3]));});
+        m4.compose(v3.set(t[0],t[5],t[1]),q,s3.set(t[2]*w,t[2]*h,t[2]*w)); im.setMatrixAt(j,m4); im.setColorAt(j,setSrgb(col,t[3]));});
       g.boundingSphere=sph; im.frustumCulled=true; im.instanceMatrix.needsUpdate=true; if(im.instanceColor) im.instanceColor.needsUpdate=true;
       scene.add(im); return im;};
     c.m=mk(GF); c.mn=mk(GN); c.mn.visible=false; c.sph=sph;
@@ -4667,7 +5016,7 @@ const NIGHT=(function(){
     }
     pts.forEach(function(p,i){
       const f=frame(p[0],p[1]);
-      m4.compose(new THREE.Vector3(f.x,(p[2]===undefined?5.2:p[2]),f.z),q,sc);
+      m4.compose(new THREE.Vector3(f.x,(p[2]===undefined?5.2+terH(f.x,f.z):p[2]),f.z),q,sc);   // 地上の灯りは地表(地形)から 5.2m
       head.setMatrixAt(i,m4);halo.setMatrixAt(i,m4);
     });
     head.instanceMatrix.needsUpdate=true;halo.instanceMatrix.needsUpdate=true;
@@ -7672,7 +8021,8 @@ function carsDraw(all){                       // all:距離によらず全台(�
     const c=RD_CARS[i], p=roadCarPos(c);
     if(!all&&Math.hypot(p.x-cp.x,p.z-cp.z)>CAR_DRAW*LOD_STRUCT){ c.mi=-1; continue; }
     const im=RD_CARS.meshes[c.kind], j=n[c.kind]++; c.mi=j;
-    _cE.set(0,Math.atan2(-p.fz,p.fx),0); _cQ.setFromEuler(_cE); _cV.set(p.x,ROAD_Y[1]+0.01,p.z); _cS.set(c.k,1,1);
+    const hb=terH(p.x-p.fx*c.L/2,p.z-p.fz*c.L/2), hf=terH(p.x+p.fx*c.L/2,p.z+p.fz*c.L/2);   // 車の後端・前端の路面(地形)
+    _cE.set(0,Math.atan2(-p.fz,p.fx),Math.atan2(hf-hb,c.L),'YZX'); _cQ.setFromEuler(_cE); _cV.set(p.x,(hf+hb)/2+ROAD_Y[1]+0.01,p.z); _cS.set(c.k,1,1);
     _cM.compose(_cV,_cQ,_cS); im.setMatrixAt(j,_cM); im.setColorAt(j,setSrgb(_cC,c.kind==='bus'?0xffffff:c.c));
     _cS.set(c.L/4.44,1,1); _cM.compose(_cV,_cQ,_cS); lm.setMatrixAt(nl,_cM); gm.setMatrixAt(nl,_cM); nl++;
   }
@@ -7698,10 +8048,11 @@ const PED_NEAR=70, PED_FAR=250;
       if([p0,p1].some(q=>Math.abs(prjXY(q.x,q.z).off)>ROAD_NEAR-W.w/2-0.5)) continue;     // 帯の外の縁まで線路から ROAD_NEAR 以内
       W.seg.push([u,u1]); use(p0.x,p0.z);
       const h=W.w/2, n0=[p0.fz,-p0.fx], n1=[p1.fz,-p1.fx];
-      const A=[p0.x+n0[0]*h,yT,p0.z+n0[1]*h], B=[p1.x+n1[0]*h,yT,p1.z+n1[1]*h], C2=[p1.x-n1[0]*h,yT,p1.z-n1[1]*h], D=[p0.x-n0[0]*h,yT,p0.z-n0[1]*h];
+      const tp=(x,y,z)=>[x,y+terH(x,z),z];                                     // 地形の上(2m の区間なので面の折れの差は 1cm 以下)
+      const A=tp(p0.x+n0[0]*h,yT,p0.z+n0[1]*h), B=tp(p1.x+n1[0]*h,yT,p1.z+n1[1]*h), C2=tp(p1.x-n1[0]*h,yT,p1.z-n1[1]*h), D=tp(p0.x-n0[0]*h,yT,p0.z-n0[1]*h);
       quad(D,C2,B,A,[0,1,0],0xc9c6be);                                         // 上面
       for(const sd of[-1,1]){ const e0=[p0.x+sd*n0[0]*h,0,p0.z+sd*n0[1]*h], e1=[p1.x+sd*n1[0]*h,0,p1.z+sd*n1[1]*h];   // 縁石の面
-        quad([e0[0],ROAD_Y[1],e0[2]],[e1[0],ROAD_Y[1],e1[2]],[e1[0],yT,e1[2]],[e0[0],yT,e0[2]],[sd*n0[0],0,sd*n0[1]],0xa8a6a0); }
+        quad(tp(e0[0],ROAD_Y[1],e0[2]),tp(e1[0],ROAD_Y[1],e1[2]),tp(e1[0],yT,e1[2]),tp(e0[0],yT,e0[2]),[sd*n0[0],0,sd*n0[1]],0xa8a6a0); }
     }
   }
   const MS=mkMat('MeshLambertMaterial',{vertexColors:true,side:THREE.DoubleSide});
@@ -7724,7 +8075,7 @@ const PED_NEAR=70, PED_FAR=250;
 }
 function pedPos(m){                              // 歩く人の位置と向き(世界座標)
   const p=m.sw.f(m.u), x=p.x+p.fz*m.lat, z=p.z-p.fx*m.lat;
-  return {x:x,y:ROAD_Y[1]+0.15,z:z,yaw:Math.atan2(-p.fz*m.dir,p.fx*m.dir)};
+  return {x:x,y:ROAD_Y[1]+0.15+terH(x,z),z:z,yaw:Math.atan2(-p.fz*m.dir,p.fx*m.dir)};
 }
 function stepPeds(dt){
   for(const m of PEDS){
@@ -7946,10 +8297,8 @@ let cmdNotch=NIDX_N, accEff=0; const NOTCH_LAG=1.0;   // accEff=実際に効い�
 let chaseOn=false,chaseIdx=0;const chaseEye=new THREE.Vector3();
 const CH={th:Math.PI/2-.35,ph:.92,r:150};   // 追尾カメラの球面パラメータ(操作可能)
 function applyCam(){
-  camera.position.set(
-    cam.tx+cam.r*Math.sin(cam.ph)*Math.cos(cam.th),
-    cam.ty+cam.r*Math.cos(cam.ph),
-    cam.tz+cam.r*Math.sin(cam.ph)*Math.sin(cam.th));
+  const x=cam.tx+cam.r*Math.sin(cam.ph)*Math.cos(cam.th), z=cam.tz+cam.r*Math.sin(cam.ph)*Math.sin(cam.th);
+  camera.position.set(x, Math.max(cam.ty+cam.r*Math.cos(cam.ph), terH(x,z)+3), z);   // 丘(地形)の中へは入らない
   camera.lookAt(cam.tx,cam.ty,cam.tz);
 }
 function flyTo(to,dur){fly={a:Object.assign({},cam),b:Object.assign(Object.assign({},cam),to),t0:performance.now(),dur:dur||1400};}
@@ -8272,7 +8621,7 @@ function loop(now){
     const hx=t.x,ph2=frame(hx,zf(hx));
     const ty=railY(hx)+3;
     const ex=ph2.x+CH.r*Math.sin(CH.ph)*Math.cos(CH.th);
-    const ey=Math.max(ty+CH.r*Math.cos(CH.ph),1.5);   // 地表より下へは行かない(掘割の列車を低い角度で見るとき)
+    const ey=Math.max(ty+CH.r*Math.cos(CH.ph),1.5,terH(ex,ph2.z+CH.r*Math.sin(CH.ph)*Math.sin(CH.th))+1.5);   // 地表(地形)より下へは行かない(掘割の列車を低い角度で見るとき)
     const ez=ph2.z+CH.r*Math.sin(CH.ph)*Math.sin(CH.th);
     const kk=Math.min(1,dt*3.6);
     chaseEye.x+=(ex-chaseEye.x)*kk;chaseEye.y+=(ey-chaseEye.y)*kk;chaseEye.z+=(ez-chaseEye.z)*kk;

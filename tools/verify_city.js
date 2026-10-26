@@ -24,7 +24,8 @@ const X = require('./stub_three')(path,
   'stepRoadCars:(typeof stepRoadCars!=="undefined"?stepRoadCars:()=>{}),carsDraw:carsDraw,camera:camera,' +
   'PEDS:(typeof PEDS!=="undefined"?PEDS:[]),SIDEWALKS:(typeof SIDEWALKS!=="undefined"?SIDEWALKS:[]),pedPos:(typeof pedPos!=="undefined"?pedPos:null),' +
   'stepPeds:(typeof stepPeds!=="undefined"?stepPeds:()=>{}),KANPACHI_X:KANPACHI_X,' +
-  'STRUCT:STRUCT,groundMesh:groundMesh,scene:scene,ROAD_LAMPS:(typeof ROAD_LAMPS!=="undefined"?ROAD_LAMPS:[])');
+  'STRUCT:STRUCT,groundMesh:groundMesh,scene:scene,ROAD_LAMPS:(typeof ROAD_LAMPS!=="undefined"?ROAD_LAMPS:[]),' +
+  'TER:(typeof TER!=="undefined"?TER:null),terH:(typeof terH!=="undefined"?terH:()=>0),DP:DP,S_OFS:S_OFS,MAT:MAT,MAT_FENCE:MAT_FENCE,NIGHT:NIGHT');
 
 /* ---- 期待値(検証側が独立して持つ) ----------------------------------------
    道路の幅は4章の描画寸法(box の第1引数)。ここでは"路面の半幅"だけを持ち、
@@ -411,9 +412,11 @@ let L2_ALL = null, P0_ALL = null;          // 4c で読んだ LOD2 の面(建物
       L2.push({ p0: P0[bi], V: V, roofs: roofs, bi: bi, SF: SF });
     }
     L2_ALL = L2; P0_ALL = P0;
-    // 描かれている(登録簿にある)LOD2 の建物:足跡の1点目で対応を取る
+    // 描かれている(登録簿にある)LOD2 の建物:足跡の1点目で対応を取る。面の点の高さは基部(地形の上。登録簿の base)からなので、
+    // 描いた頂点はデータの高さ+基部(基部そのものは 4f で地表と独立の地盤の高さに照合する)
     const key = (x, z) => x.toFixed(1) + ',' + z.toFixed(1);
     const drawn = new Set(B.filter((e) => e.poly).map((e) => key(e.poly[0][0], e.poly[0][1])));
+    const baseOf = new Map(B.filter((e) => e.poly).map((e) => [key(e.poly[0][0], e.poly[0][1]) + ',' + e.h.toFixed(1), e.base || 0]));
     const want = L2.filter((e) => drawn.has(key(e.p0[0], e.p0[1])));
     // LOD2 の建物を含むまとまりの近くの形を作る
     const VS = new Set(); let tris = 0, flip = 0, made = 0;
@@ -435,10 +438,11 @@ let L2_ALL = null, P0_ALL = null;          // 4c で読んだ LOD2 の面(建物
       }
     }
     let miss = 0, tot = 0, ex = null;
-    for (const e of want) for (const v of e.V) {
-      tot++;
-      if (!VS.has(v[0].toFixed(1) + ',' + v[1].toFixed(1) + ',' + v[2].toFixed(1))) { miss++; if (!ex) ex = '(' + v.map((u) => u.toFixed(1)).join(',') + ')'; }
-    }
+    for (const e of want) { const b0 = baseOf.get(key(e.p0[0], e.p0[1]) + ',' + e.p0[2].toFixed(1)) || 0;
+      for (const v of e.V) {
+        tot++;
+        if (!VS.has(v[0].toFixed(1) + ',' + Math.fround(v[1] + b0).toFixed(1) + ',' + v[2].toFixed(1))) { miss++; if (!ex) ex = '(' + [v[0], v[1] + b0, v[2]].map((u) => u.toFixed(1)).join(',') + ')'; }
+      } }
     ok('LOD2 の面が描かれる', want.length >= 300 && miss === 0, '300棟以上・面の点がすべて頂点に',
       want.length + '棟(データ' + L2.length + ')・点' + tot + '・欠け' + miss + (ex ? ' 例' + ex : ''));
     ok('建物の面が裏返らない', tris > 0 && flip === 0, '巻き順の法線=頂点の法線の側',
@@ -509,15 +513,17 @@ let L2_ALL = null, P0_ALL = null;          // 4c で読んだ LOD2 の面(建物
     // 描かれている LOD2 の建物で照合(足跡の1点目が同じ別の建物があるので、高さも合わせて対応を取る)
     const key = (x, z, h) => x.toFixed(1) + ',' + z.toFixed(1) + ',' + h.toFixed(1);
     const drawn = new Set(B.filter((e) => e.poly).map((e) => key(e.poly[0][0], e.poly[0][1], e.h)));
+    const baseOf = new Map(B.filter((e) => e.poly).map((e) => [key(e.poly[0][0], e.poly[0][1], e.h), e.base || 0]));   // 基部(地形の上)
     let nB = 0, nS = 0, miss = 0, ex = null;
     for (const [bi, t] of TX) {
       if (!drawn.has(key(t.e.p0[0], t.e.p0[1], t.e.p0[2])) || !t.S.length) continue;
       nB++;
+      const b0 = baseOf.get(key(t.e.p0[0], t.e.p0[1], t.e.p0[2])) || 0;
       for (const s of t.S) {
         nS++;
         const V = t.e.SF[s.j];
         for (let i = 0; i < V.length; i++) {
-          const k = s.a + '|' + V[i][0].toFixed(1) + ',' + V[i][1].toFixed(1) + ',' + V[i][2].toFixed(1) + '|' + s.uv[i][0].toFixed(4) + ',' + s.uv[i][1].toFixed(4);
+          const k = s.a + '|' + V[i][0].toFixed(1) + ',' + Math.fround(V[i][1] + b0).toFixed(1) + ',' + V[i][2].toFixed(1) + '|' + s.uv[i][0].toFixed(4) + ',' + s.uv[i][1].toFixed(4);
           if (!VT.has(k)) { miss++; if (!ex) ex = '建物 ' + bi + ' 面 ' + s.j + ' 点 ' + i + ' (' + k + ')'; break; }
         }
       }
@@ -559,13 +565,13 @@ let L2_ALL = null, P0_ALL = null;          // 4c で読んだ LOD2 の面(建物
     for (const m of [C.m[0]].concat(C.mt || [])) {               // 写真の形(詰め合わせごと)にも窓の材質(夜の明かり)
     nM++;
     const g = m.geometry, Pa = g.attributes.position.array, Na = g.attributes.normal.array, Ca = g.attributes.color ? g.attributes.color.array : null, A = g.attributes.aBld, Ia = g.index.array;
-    if (!(m.material && m.material.userData && m.material.userData.bldWin) || !A || A.array.length !== Pa.length) { if (!bM) bM = m.userData.ptx !== undefined ? '写真の形' : '近くの形'; continue; }
+    if (!(m.material && m.material.userData && m.material.userData.bldWin) || !A || A.array.length / 4 !== Pa.length / 3) { if (!bM) bM = m.userData.ptx !== undefined ? '写真の形' : '近くの形'; continue; }
     for (let t = 0; t < Ia.length; t += 3) {
       const v = [Ia[t], Ia[t + 1], Ia[t + 2]], ny = Na[v[0] * 3 + 1];
       if (Math.abs(ny) < 0.5) {                       // 壁:同じ面(種・向き・上端の基準が同じ三角形)ごとに最も高い点を集める
         nW++;
-        const top = A.array[v[0] * 3 + 1], my = Math.max(...v.map((k) => Pa[k * 3 + 1]));
-        const kk = A.array[v[0] * 3 + 2] + '|' + top.toFixed(3) + '|' + Na[v[0] * 3].toFixed(2) + ',' + Na[v[0] * 3 + 2].toFixed(2);
+        const top = A.array[v[0] * 4 + 1], my = Math.max(...v.map((k) => Pa[k * 3 + 1]));     // aBld=(種類,上端,種,基部)
+        const kk = A.array[v[0] * 4 + 2] + '|' + top.toFixed(3) + '|' + Na[v[0] * 3].toFixed(2) + ',' + Na[v[0] * 3 + 2].toFixed(2);
         const q = WG.get(kk); if (!q || q.my < my) WG.set(kk, { my: my, top: top, x: Pa[v[0] * 3], z: Pa[v[0] * 3 + 2] });
       } else if (Ca && ny > 0.3 && ny < 0.97) {       // 傾いた屋根面(写真の屋根は写真の色)
         nR++;
@@ -797,6 +803,203 @@ let L2_ALL = null, P0_ALL = null;          // 4c で読んだ LOD2 の面(建物
     sLo.toFixed(1) + '〜' + sHi.toFixed(1) + 'm');
   ok('世田谷線の折り返し範囲が正の長さ', X.SETA_HI > X.SETA_LO, '走行する',
     'SETA' + X.SETA_LO.toFixed(0) + '〜' + X.SETA_HI.toFixed(0));
+}
+
+/* ---- 4f. 地形(2026-10-25 利用者指示:地形を入れる)------------------------------------------------------------
+   検証側の決まり(地形の手順を検証側に別に書き、データのファイルから独立に計算して照合する。値はモデルから読まない):
+   (a) 格子の高さ:plateau_dem.js を検証側で復号し、文書(CLAUDE.md)の手順=閉じる(半径2マスの円の最大→最小)→ぼかす(σ1マス)→
+       線路の地盤 Gs(s)(中心線と ±20m の中央値を σ60m)→起伏 × 重み(京王線の帯 21m・40m で起伏へ/交差鉄道・駅前広場は 30m/
+       線路から 480〜600m と両端の外 100〜300m で 0)→平らな所に掛かるセルの4隅は 0、で 25m 格子の節点の高さを計算し、
+       ビューアの格子(TER.H)と ±2cm で一致。京王線の帯の中(|off|≤21m)の点は 0
+   (b) 地表の網:頂点の高さと三角形の重心が検証側の格子の面の上(±1cm)。起伏のあるセル 10,000 以上
+   (c) 敷いた面(道路・緑地・水面・計画道路・緑道):起伏の上の頂点は地表+決まった高さ(0.05〜0.16m の7通り)、三角形の重心も
+       (格子の1つの面の上=切ってから載せた)
+   (d) 建物の基部:足跡の頂点・辺の 2m ごとの点・頂点の重心で測った地表の最も低い所(±1cm)。中・遠の箱の下面も基部
+   (e) 実際の建物の地盤(reference/plateau/bldg_ground.json:地形モデルとは別のデータ=LOD1 の立体の最も低い標高)との照合:
+       起伏がそのまま残る所(足跡の頂点の重みが全部 1)の建物で、基部 −(地盤 − Gs)の中央値が ±0.5m、中央値から 0.6m 以内が
+       80% 以上・1.5m 以内が 95% 以上(10m 格子の平均・閉じる・25m 格子にした分の差)
+   (f) 木の根元(幹の中心と 0.3m 外の4点の最も低い所)・地上の街灯(+5.2m)・自動車(前後の端の路面の平均+0.13m、縦の傾き=前後の
+       路面の差)・歩く人(+0.27m)・歩道の頂点(+0.12/0.27m)・自動車道の橋脚の足元が地表に合う
+   (g) 起伏が効いている:重み 1 の節点の標準偏差 1m 以上・高低差 8m 以上
+   地形を描くべきかは検証側がファイルから決める(HTML が plateau_dem.js・plateau_land.js・plateau_bldg.js を読み、3つとも隣にある)。
+   モデルの TER.on だけを見ると、地形を切った故障で (a)〜(g) が全部飛んで素通りした */
+const TER_DATA = (() => { const fs = require('fs'), pth = require('path'), html = fs.readFileSync(path, 'utf8');
+  return ['plateau_dem.js', 'plateau_land.js', 'plateau_bldg.js'].every((f) => html.includes('<script src="' + f + '">') && fs.existsSync(pth.join(pth.dirname(path), f))); })();
+const TER_ON = !!(X.TER && X.TER.on && X.TER.H);
+if (TER_DATA && !TER_ON) ok('起伏がある', false, '地形・道路・建物のデータが揃っていれば地形を描く', '地形が描かれていない(TER.on=' + !!(X.TER && X.TER.on) + ')');
+if (TER_ON) {
+  const fs = require('fs'), pth = require('path');
+  const TR = { DX: 25, X0: -9100, X1: 1900, Z0: -1950, Z1: 3250, AS: 21, BL: 40, FAR0: 480, FAR1: 600, END0: 100, END1: 300,
+    CLOSE: 2, BLUR: 1, GS_SIG: 60, GS_OFF: 20, GS_STEP: 10, GS_EXT: 700, SNAP: 0.003, CORR: [['INO', 17, 'U0', 'U1'], ['SETA', 7, 'SETA_U0', 'SETA_U1']],
+    CORR_EXT: 10, CORR_BL: 30, DISC_R: 26, DISC_BL: 30, OFFS: [0.05, 0.06, 0.07, 0.08, 0.10, 0.12, 0.16], CAR_Y: 0.13, PED_Y: 0.27, SW_Y: [0.12, 0.27], LAMP_Y: 5.2 };
+  const g = {};
+  new Function('globalThis', fs.readFileSync(pth.join(pth.dirname(path), 'plateau_dem.js'), 'utf8'))(g);
+  const D = g.PLATEAU_DEM, NX = D.nx, NZ = D.nz;
+  // 1) 復号
+  const rb = Buffer.from(D.r64, 'base64'), hb = Buffer.from(D.h64, 'base64');
+  let A = new Float64Array(NX * NZ).fill(NaN);
+  for (let j = 0, o = 0; j < NZ; j++) { const i0 = rb.readUInt16LE(4 * j), n = rb.readUInt16LE(4 * j + 2);
+    for (let k = 0; k < n; k++) { const v = hb.readUInt16LE(2 * (o + k)); if (v !== 65535) A[j * NX + i0 + k] = D.h0 + v * D.q; } o += n; }
+  // 2) 閉じる(最大→最小)
+  const disk = []; for (let dj = -TR.CLOSE; dj <= TR.CLOSE; dj++) for (let di = -TR.CLOSE; di <= TR.CLOSE; di++) if (di * di + dj * dj <= TR.CLOSE * TR.CLOSE) disk.push([di, dj]);
+  const mm = (S, f) => { const O = new Float64Array(NX * NZ).fill(NaN);
+    for (let j = 0; j < NZ; j++) for (let i = 0; i < NX; i++) { if (Number.isNaN(S[j * NX + i])) continue; let v = S[j * NX + i];
+      for (const [di, dj] of disk) { const a = i + di, b = j + dj; if (a >= 0 && b >= 0 && a < NX && b < NZ && !Number.isNaN(S[b * NX + a])) v = f(v, S[b * NX + a]); }
+      O[j * NX + i] = v; } return O; };
+  A = mm(mm(A, Math.max), Math.min);
+  // 3) ぼかす(縦横のガウス。データの無いマスは重みから外す)
+  const KR = Math.ceil(2 * TR.BLUR), KW = []; for (let k = -KR; k <= KR; k++) KW.push(Math.exp(-0.5 * (k / TR.BLUR) ** 2));
+  const bl = (S, di, dj) => { const O = new Float64Array(NX * NZ).fill(NaN);
+    for (let j = 0; j < NZ; j++) for (let i = 0; i < NX; i++) { if (Number.isNaN(S[j * NX + i])) continue; let a = 0, w = 0;
+      for (let k = -KR; k <= KR; k++) { const ii = i + k * di, jj = j + k * dj; if (ii < 0 || jj < 0 || ii >= NX || jj >= NZ || Number.isNaN(S[jj * NX + ii])) continue; a += S[jj * NX + ii] * KW[k + KR]; w += KW[k + KR]; }
+      O[j * NX + i] = a / w; } return O; };
+  A = bl(bl(A, 1, 0), 0, 1);
+  const dem = (x, z) => { const fx = (x - D.x0) / D.dx - 0.5, fz = (z - D.z0) / D.dx - 0.5, i = Math.floor(fx), j = Math.floor(fz);
+    if (i < 0 || j < 0 || i + 1 >= NX || j + 1 >= NZ) return NaN; const tx = fx - i, tz = fz - j, k = j * NX + i;
+    return (A[k] * (1 - tx) + A[k + 1] * tx) * (1 - tz) + (A[k + NX] * (1 - tx) + A[k + NX + 1] * tx) * tz; };
+  // 4) 線路の地盤 Gs
+  const G0 = X.DOM.x0 - TR.GS_EXT, gv = [];
+  for (let s = G0; s <= X.DOM.x1 + TR.GS_EXT + 1e-6; s += TR.GS_STEP) {
+    const v = [-TR.GS_OFF, 0, TR.GS_OFF].map((f) => { const p = X.frame(s, f); return dem(p.x, p.z); }).filter((v) => !Number.isNaN(v)).sort((a, b) => a - b);
+    gv.push(v.length ? v[(v.length - 1) >> 1] : NaN); }
+  const GK = Math.ceil(3 * TR.GS_SIG / TR.GS_STEP);
+  const GS = gv.map((_, i) => { let a = 0, w = 0; for (let k = -GK; k <= GK; k++) { const v = gv[i + k]; if (v === undefined || Number.isNaN(v)) continue;
+    const ww = Math.exp(-0.5 * (k * TR.GS_STEP / TR.GS_SIG) ** 2); a += v * ww; w += ww; } return w ? a / w : NaN; });
+  const gsAt = (s) => { const f = Math.max(0, Math.min(GS.length - 1, (s - G0) / TR.GS_STEP)), i = Math.min(GS.length - 2, Math.floor(f)), t = f - i; return GS[i] * (1 - t) + GS[i + 1] * t; };
+  // 線路の座標(端の先は端の接線に沿ってはみ出した分を s に足す)
+  const DPn = X.DP.x.length - 1;
+  const prj = (x, z) => { const q = X.prjXY(x, z);
+    for (const [i, j] of [[0, 1], [DPn, DPn - 1]]) { const sE = X.DP.s[i] - X.S_OFS; if (Math.abs(q.s - sE) > 0.5) continue;
+      const L = Math.hypot(X.DP.x[i] - X.DP.x[j], X.DP.z[i] - X.DP.z[j]) || 1, d = ((x - X.DP.x[i]) * (X.DP.x[i] - X.DP.x[j]) + (z - X.DP.z[i]) * (X.DP.z[i] - X.DP.z[j])) / L;
+      if (d > 0) return { s: sE + (i === 0 ? -d : d), off: q.off }; }
+    return q; };
+  const ss = (t) => { t = Math.max(0, Math.min(1, t)); return t * t * (3 - 2 * t); };
+  const CR = TR.CORR.map((c) => ({ A: X[c[0]], hw: c[1], u0: X.XR[c[2]] - TR.CORR_EXT, u1: X.XR[c[3]] + TR.CORR_EXT }));
+  const corrD = (C, x, z) => { const dx = x - C.A.x, dz = z - C.A.z, u = dx * C.A.ax + dz * C.A.az, n = Math.abs(dx * C.A.nx + dz * C.A.nz); return Math.max(n - C.hw, C.u0 - u, u - C.u1); };
+  const PZ = X.frame(X.PLAZA_S, X.PLAZA_OFF);
+  const wOf = (x, z) => { const q = prj(x, z), a = Math.abs(q.off);
+    let w = ss((a - TR.AS) / TR.BL) * (1 - ss((a - TR.FAR0) / (TR.FAR1 - TR.FAR0))) * (1 - ss((X.DOM.x0 - TR.END0 - q.s) / (TR.END1 - TR.END0))) * (1 - ss((q.s - X.DOM.x1 - TR.END0) / (TR.END1 - TR.END0)));
+    for (const C of CR) w *= ss(corrD(C, x, z) / TR.CORR_BL);
+    w *= ss((Math.hypot(x - PZ.x, z - PZ.z) - TR.DISC_R) / TR.DISC_BL);
+    return { w: w, s: q.s, off: q.off }; };
+  // 5) 25m 格子
+  const GX = Math.round((TR.X1 - TR.X0) / TR.DX), GZ = Math.round((TR.Z1 - TR.Z0) / TR.DX), W = GX + 1, H = new Float64Array(W * (GZ + 1)), WN = new Float64Array(W * (GZ + 1));
+  const inD = (x, z) => x > D.x0 + D.dx && x < D.x0 + (NX - 1) * D.dx && z > D.z0 + D.dx && z < D.z0 + (NZ - 1) * D.dx;
+  for (let j = 0; j <= GZ; j++) for (let i = 0; i <= GX; i++) { const x = TR.X0 + i * TR.DX, z = TR.Z0 + j * TR.DX; if (!inD(x, z)) continue;
+    const r = wOf(x, z); WN[j * W + i] = r.w; if (r.w <= 0) continue; const h = dem(x, z) - gsAt(r.s); if (Number.isNaN(h)) continue; const v = r.w * h; H[j * W + i] = Math.abs(v) < TR.SNAP ? 0 : v; }
+  const hd = TR.DX / Math.SQRT2;
+  for (let j = 0; j < GZ; j++) for (let i = 0; i < GX; i++) { const x = TR.X0 + (i + 0.5) * TR.DX, z = TR.Z0 + (j + 0.5) * TR.DX; if (!inD(x, z)) continue;
+    const q = prj(x, z); let f = Math.abs(q.off) - hd <= TR.AS; for (const C of CR) if (corrD(C, x, z) - hd <= 0) f = true; if (Math.hypot(x - PZ.x, z - PZ.z) - hd <= TR.DISC_R) f = true;
+    if (f) for (const [a, b] of [[0, 0], [1, 0], [0, 1], [1, 1]]) H[(j + b) * W + i + a] = 0; }
+  const tH = (x, z) => { const fx = (x - TR.X0) / TR.DX, fz = (z - TR.Z0) / TR.DX, i = Math.floor(fx), j = Math.floor(fz);
+    if (i < 0 || j < 0 || i >= GX || j >= GZ) return 0; const tx = fx - i, tz = fz - j, k = j * W + i;
+    return tx >= tz ? H[k] + (H[k + 1] - H[k]) * tx + (H[k + W + 1] - H[k + 1]) * tz : H[k] + (H[k + W] - H[k]) * tz + (H[k + W + 1] - H[k + W]) * tx; };
+  // (a)
+  let dMax = 0, nBad = 0, ex = null;
+  const VH = X.TER.H;
+  if (!VH || VH.length !== H.length) ex = '格子の大きさが違う';
+  else for (let k = 0; k < H.length; k++) { const d = Math.abs(VH[k] - H[k]); if (d > dMax) dMax = d; if (d > 0.02) { nBad++; if (!ex) ex = '節点 (' + (k % W) + ',' + Math.floor(k / W) + ') ' + VH[k].toFixed(2) + ' ≠ ' + H[k].toFixed(2); } }
+  let bandBad = null;
+  for (let s = X.DOM.x0; s <= X.DOM.x1 && !bandBad; s += 7) for (const o of [-21, -14, -7, 0, 7, 14, 21]) { const f = X.frame(s, o); if (Math.abs(X.terH(f.x, f.z)) > 1e-9) { bandBad = 's=' + s + ' off=' + o + ' 地表 ' + X.terH(f.x, f.z).toFixed(3); break; } }
+  ok('地形の高さ(格子)', ex === null && bandBad === null, 'plateau_dem.js から検証側で計算した 25m 格子と ±2cm・京王線の帯(±21m)は 0',
+    ex ? ex + (nBad ? '(' + nBad + '点)' : '') : bandBad ? bandBad : '節点 ' + H.length + '・最大の差 ' + dMax.toFixed(4) + 'm');
+  // (b) 地表の網
+  { const ga = X.groundMesh.geometry.attributes.position.array, gi = X.groundMesh.geometry.index.array;
+    let bad = null, nT = 0;
+    for (let k = 0; k < ga.length && !bad; k += 3) if (Math.abs(ga[k + 1] - tH(ga[k], ga[k + 2])) > 0.01) bad = '頂点 (' + ga[k].toFixed(0) + ',' + ga[k + 2].toFixed(0) + ') ' + ga[k + 1].toFixed(2) + ' ≠ ' + tH(ga[k], ga[k + 2]).toFixed(2);
+    for (let t = 0; t < gi.length && !bad; t += 3) { let x = 0, y = 0, z = 0; for (let e = 0; e < 3; e++) { x += ga[gi[t + e] * 3]; y += ga[gi[t + e] * 3 + 1]; z += ga[gi[t + e] * 3 + 2]; }
+      if (Math.abs(y / 3 - tH(x / 3, z / 3)) > 0.01) bad = '三角形の重心 (' + (x / 3).toFixed(0) + ',' + (z / 3).toFixed(0) + ') が格子の面から ' + (y / 3 - tH(x / 3, z / 3)).toFixed(2) + 'm'; }
+    for (let j = 0; j < GZ; j++) for (let i = 0; i < GX; i++) { const k = j * W + i; if (H[k] || H[k + 1] || H[k + W] || H[k + W + 1]) nT++; }
+    ok('地表の網が起伏の面', bad === null && nT >= 10000, '頂点と三角形の重心が格子の面の上(±1cm)・起伏のセル 10,000 以上', bad || '起伏のセル ' + nT + '・三角形 ' + gi.length / 3); }
+  // (c) 敷いた面
+  { let bad = null, nV = 0, nO = 0; const OK = (d) => TR.OFFS.some((o) => Math.abs(d - o) < 0.002);
+    X.scene.traverse((o) => {
+      if (bad || !o.isMesh || !o.userData || !o.userData.flat || o === X.groundMesh || o.name === '歩道' || o.material === X.MAT_FENCE || !o.geometry || !o.geometry.index) return;
+      const P = o.geometry.attributes.position.array, I = o.geometry.index.array;
+      for (let k = 0; k < P.length && !bad; k += 3) { const t = tH(P[k], P[k + 2]); if (Math.abs(t) < 1e-6) continue; nV++;
+        if (!OK(P[k + 1] - t)) bad = (o.name || '面') + ' の頂点 (' + P[k].toFixed(0) + ',' + P[k + 2].toFixed(0) + ') 地表+' + (P[k + 1] - t).toFixed(3) + 'm'; else nO++; }
+      for (let t = 0; t < I.length && !bad; t += 3) { let x = 0, y = 0, z = 0, e = 0;
+        for (let m = 0; m < 3; m++) { const v = I[t + m] * 3; x += P[v]; y += P[v + 1]; z += P[v + 2]; e += P[v + 1] - tH(P[v], P[v + 2]); }
+        if (Math.abs((y / 3 - tH(x / 3, z / 3)) - e / 3) > 0.003) bad = (o.name || '面') + ' の三角形 (' + (x / 3).toFixed(0) + ',' + (z / 3).toFixed(0) + ') が地表の折れ目をまたぐ(' + ((y / 3 - tH(x / 3, z / 3)) - e / 3).toFixed(3) + 'm)'; }
+    });
+    ok('敷いた面が起伏に沿う', bad === null && nV >= 50000, '道路・緑地・水面・計画道路・緑道の頂点が地表+0.05〜0.16m・三角形が格子の1つの面の上', bad || '起伏の上の頂点 ' + nV); }
+  // (d) 建物の基部
+  const tMinP = (P) => { let m = 1e9, cx = 0, cz = 0;
+    for (let i = 0; i < P.length; i++) { const a = P[i], b = P[(i + 1) % P.length], n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / 2));
+      for (let k = 0; k < n; k++) m = Math.min(m, tH(a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n)); cx += a[0]; cz += a[1]; }
+    return Math.min(m, tH(cx / P.length, cz / P.length)); };
+  { let bad = null, n = 0, nUp = 0;
+    for (const e of B) { if (!e.plateau || !e.poly) continue; n++; const want = tMinP(e.poly); if (Math.abs(want) > 0.5) nUp++;
+      if (!(Math.abs((e.base || 0) - want) <= 0.01) && !bad) bad = '(' + e.x.toFixed(0) + ',' + e.z.toFixed(0) + ') 基部 ' + (e.base || 0).toFixed(2) + ' ≠ 地表の最低 ' + want.toFixed(2); }
+    for (const C of X.CITY_LODS) { const im = C.m[1]; if (!im || !im.mats) continue;
+      C.B.forEach((b, j) => { const q = im.mats[j]; if (!q || bad) return; if (Math.abs(q.p.y - q.s.y / 2 - b.base) > 0.01) bad = '箱の下面 ' + (q.p.y - q.s.y / 2).toFixed(2) + ' ≠ 基部 ' + b.base.toFixed(2); }); }
+    ok('建物は地表の最も低い所から建つ', bad === null && n > 9000 && nUp > 2000, '足跡の下の地表の最も低い所(±1cm)・中の箱の下面も・起伏の上の建物 2,000棟以上', bad || n + '棟(起伏 0.5m 超の上 ' + nUp + '棟)'); }
+  // (e) 実際の建物の地盤
+  { const G = JSON.parse(fs.readFileSync(pth.join(__dirname, '..', 'reference', 'plateau', 'bldg_ground.json'), 'utf8')), zb = Buffer.from(G.b64, 'base64');
+    const gB = {}; new Function('globalThis', fs.readFileSync(pth.join(pth.dirname(path), 'plateau_bldg.js'), 'utf8'))(gB);
+    const pb = Buffer.from(gB.PLATEAU_BLDG.b64, 'base64'), N = pb.readUInt32LE(4), idx = new Map(); let o = 8;
+    for (let n = 0; n < N; n++) { const nv = pb.readUInt8(o), hh = pb.readUInt16LE(o + 1) / 10; o += 4; idx.set((pb.readInt32LE(o) / 10).toFixed(1) + ',' + (pb.readInt32LE(o + 4) / 10).toFixed(1) + ',' + hh.toFixed(1), n); o += 8 + 4 * (nv - 1); }
+    const D2 = [];
+    let nW = 0;
+    for (const e of B) { if (!e.plateau || !e.poly) continue;
+      const i = idx.get(e.poly[0][0].toFixed(1) + ',' + e.poly[0][1].toFixed(1) + ',' + e.h.toFixed(1)); if (i === undefined || i >= G.n) continue;
+      const v = zb.readUInt16LE(2 * i); if (v === 65535) continue;
+      if (!e.poly.every((p) => wOf(p[0], p[1]).w >= 0.999)) continue;
+      nW++;
+      let cx = 0, cz = 0; for (const p of e.poly) { cx += p[0]; cz += p[1]; } cx /= e.poly.length; cz /= e.poly.length;
+      D2.push((e.base || 0) - (G.z0 + v * G.q - gsAt(prj(cx, cz).s)));
+    }
+    D2.sort((a, b) => a - b); const med = D2.length ? D2[D2.length >> 1] : NaN;
+    const f06 = D2.filter((d) => Math.abs(d - med) <= 0.6).length / Math.max(1, D2.length), f15 = D2.filter((d) => Math.abs(d - med) <= 1.5).length / Math.max(1, D2.length);
+    ok('地形 ⇄ 実際の建物の地盤', D2.length >= 3000 && Math.abs(med) <= 0.5 && f06 >= 0.8 && f15 >= 0.95,
+      '起伏のそのままの所の建物で 基部−(地盤−線路の地盤) の中央値 ±0.5m・0.6m 以内 80%・1.5m 以内 95%(bldg_ground.json)',
+      D2.length + '棟・中央値 ' + med.toFixed(2) + 'm・0.6m 以内 ' + (f06 * 100).toFixed(1) + '%・1.5m 以内 ' + (f15 * 100).toFixed(1) + '%'); }
+  // (f) 木・街灯・自動車・歩く人・歩道・橋脚
+  { let bad = null, nT = 0, nTU = 0;
+    for (const t of X.CITY.trees) { nT++; const want = Math.min(tH(t.x, t.z), tH(t.x + 0.3, t.z), tH(t.x - 0.3, t.z), tH(t.x, t.z + 0.3), tH(t.x, t.z - 0.3)); if (Math.abs(want) > 0.5) nTU++;
+      if (!(Math.abs((t.y === undefined ? 0 : t.y) - want) <= 0.005) && !bad) bad = '木 (' + t.x.toFixed(0) + ',' + t.z.toFixed(0) + ') 根元 ' + (t.y === undefined ? '無し' : t.y.toFixed(2)) + ' ≠ ' + want.toFixed(2); }
+    const yAt = new Map(X.CITY.trees.map((t) => [t.x + ',' + t.z, t.y]));
+    for (const c of X.CITY.treeChunks.values()) for (const m of [c.m, c.mn]) if (!bad) m.mats.forEach((q) => { if (bad || !q) return; const y = yAt.get(q.p.x + ',' + q.p.z); if (y === undefined || Math.abs(q.p.y - y) > 1e-6) bad = '木の形の高さ ' + q.p.y.toFixed(2) + ' ≠ 根元 ' + (y === undefined ? '無し' : y.toFixed(2)); });
+    ok('木は地表に立つ', bad === null && nTU > 300, '根元=幹の中心と 0.3m 外の4点の地表の最も低い所・起伏の上の木 300本以上', bad || nT + '本(起伏 0.5m 超の上 ' + nTU + '本)'); }
+  { let bad = null, nG = 0, nGU = 0;
+    const head = X.NIGHT.group.children.find((m) => m.isMesh && m.mats && m.mats.length === X.NIGHT.stat.lamp && m.geometry && m.geometry.type === 'Sph');
+    if (!head) bad = '街灯の灯具が見つからない';
+    else for (const q of head.mats) { if (!q) continue; const t = tH(q.p.x, q.p.z);
+      if (Math.abs(q.p.y - (t + TR.LAMP_Y)) < 0.01) { nG++; if (Math.abs(t) > 0.5) nGU++; }
+      else if (q.p.y < t + 6.5 && !bad) bad = '街灯 (' + q.p.x.toFixed(0) + ',' + q.p.z.toFixed(0) + ') の高さ ' + q.p.y.toFixed(2) + '(地表+' + (q.p.y - t).toFixed(2) + 'm。地上は +5.2・高架の灯りは高架の上)'; }
+    ok('地上の街灯は地表から 5.2m', bad === null && nG > 200 && nGU >= 20, '灯具=地表+5.2m(高架の上の灯りは除く)・起伏の上 20基以上', bad || '地上 ' + nG + '基(起伏 0.5m 超の上 ' + nGU + '基)'); }
+  { let bad = null, nC = 0, nS = 0;
+    X.carsDraw(true);
+    for (const c of X.RD_CARS) {
+      const im = X.RD_CARS.meshes[c.kind], q = im && im.mats && im.mats[c.mi]; if (!q) continue;
+      const p = c.lane.pos(c.u), hb2 = tH(p.x - p.fx * c.L / 2, p.z - p.fz * c.L / 2), hf = tH(p.x + p.fx * c.L / 2, p.z + p.fz * c.L / 2);
+      const yw = (hf + hb2) / 2 + TR.CAR_Y, sw = Math.sin(Math.atan2(hf - hb2, c.L)); nC++; if (Math.abs(hf - hb2) > 0.05) nS++;
+      const Q = q.q, fy = Q ? 2 * (Q.x * Q.y + Q.w * Q.z) : NaN, fxz = Q ? [1 - 2 * (Q.y * Q.y + Q.z * Q.z), 2 * (Q.x * Q.z - Q.w * Q.y)] : [NaN, NaN];
+      if (!(Math.abs(q.p.y - yw) <= 0.005) && !bad) bad = '車 (' + p.x.toFixed(0) + ',' + p.z.toFixed(0) + ') の高さ ' + q.p.y.toFixed(3) + ' ≠ 路面+0.13 ' + yw.toFixed(3);
+      else if (!(Math.abs(fy - sw) <= 0.002) && !bad) bad = '車 (' + p.x.toFixed(0) + ',' + p.z.toFixed(0) + ') の縦の傾き ' + fy.toFixed(4) + ' ≠ ' + sw.toFixed(4);
+      else if (!(Math.abs(fxz[0] * p.fz - fxz[1] * p.fx) <= 0.002 && fxz[0] * p.fx + fxz[1] * p.fz > 0) && !bad) bad = '車の向きが進行方向でない';
+    }
+    ok('自動車は路面に載る', bad === null && nC >= 40 && nS >= 10, '前後の端の路面の平均+0.13m・縦の傾き=前後の路面の差/車の長さ・向き=進行方向・坂の上の車 10台以上', bad || nC + '台(坂 ' + nS + '台)'); }
+  { let bad = null, nP = 0, nPU = 0;
+    for (const m of X.PEDS) { const q = X.pedPos(m), t = tH(q.x, q.z); nP++; if (Math.abs(t) > 0.5) nPU++;
+      if (!(Math.abs(q.y - (t + TR.PED_Y)) <= 0.003) && !bad) bad = '歩く人 (' + q.x.toFixed(0) + ',' + q.z.toFixed(0) + ') ' + q.y.toFixed(2) + ' ≠ 地表+0.27 ' + (t + TR.PED_Y).toFixed(2); }
+    let nSW = 0;
+    X.scene.traverse((o) => { if (bad || o.name !== '歩道' || !o.geometry) return; const P = o.geometry.attributes.position.array;
+      for (let k = 0; k < P.length && !bad; k += 3) { const t = tH(P[k], P[k + 2]); if (Math.abs(t) < 1e-6) continue; nSW++;
+        if (!TR.SW_Y.some((y) => Math.abs(P[k + 1] - t - y) < 0.003)) bad = '歩道の頂点 (' + P[k].toFixed(0) + ',' + P[k + 2].toFixed(0) + ') 地表+' + (P[k + 1] - t).toFixed(3); } });
+    ok('歩く人と歩道が地表に載る', bad === null && nPU >= 20 && nSW > 1000, '歩く人=地表+0.27m・歩道の頂点=地表+0.12/0.27m・起伏の上の人 20人以上', bad || nP + '人(起伏の上 ' + nPU + ')・歩道の頂点 ' + nSW); }
+  { let bad = null, n = 0;
+    const pm = []; X.scene.traverse((o) => { if (o.isMesh && o.mats && o.mats.length === X.EXPY.piers.length && o.material === X.MAT.pier) pm.push(o); });
+    if (pm.length !== 1) bad = '自動車道の橋脚のインスタンスが見つからない(' + pm.length + ')';
+    else pm[0].mats.forEach((q, i) => { if (bad || !q) return; n++; const p = X.EXPY.piers[i], t = tH(q.p.x, q.p.z), bot = q.p.y - q.s.y / 2, top = q.p.y + q.s.y / 2;
+      if (Math.abs(bot - t) > 0.005) bad = '橋脚 (' + q.p.x.toFixed(0) + ',' + q.p.z.toFixed(0) + ') の足元 ' + bot.toFixed(2) + ' ≠ 地表 ' + t.toFixed(2);
+      else if (Math.abs(top - p[2]) > 0.005) bad = '橋脚の上端 ' + top.toFixed(2) + ' ≠ 床版の下面 ' + p[2].toFixed(2); });
+    ok('自動車道の橋脚は地表から', bad === null && n > 100, '橋脚の足元=地表・上端=床版の下面', bad || n + '基'); }
+  // (g) 起伏が効いている
+  { const V = []; for (let k = 0; k < H.length; k++) if (WN[k] >= 0.999) V.push(H[k]);
+    const mu = V.reduce((a, v) => a + v, 0) / Math.max(1, V.length), sd = Math.sqrt(V.reduce((a, v) => a + (v - mu) ** 2, 0) / Math.max(1, V.length));
+    const lo = Math.min(...V), hi = Math.max(...V);
+    ok('起伏がある', V.length > 5000 && sd >= 1.0 && hi - lo >= 8, '起伏のそのままの所の節点:標準偏差 1m 以上・高低差 8m 以上', V.length + '点・標準偏差 ' + sd.toFixed(2) + 'm・' + lo.toFixed(1) + '〜' + hi.toFixed(1) + 'm'); }
 }
 
 /* ---- 出力 ---------------------------------------------------------------- */

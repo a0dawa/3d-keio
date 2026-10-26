@@ -99,7 +99,7 @@ def simplify(p, tol):
     return q if len(q) >= 3 else p
 
 
-def read_buildings(path, proj, margin, min_area, tol, band=0, ids=False):
+def read_buildings(path, proj, margin, min_area, tol, band=0, ids=False, zmin=False):
     raw = open(path, 'rb').read(4096)
     if b'<!DOCTYPE' in raw or b'<!ENTITY' in raw:
         raise SystemExit('DOCTYPE/ENTITY を含むファイルは読まない: ' + path)
@@ -166,7 +166,8 @@ def read_buildings(path, proj, margin, min_area, tol, band=0, ids=False):
         p = simplify(p, tol)
         if lod2:
             lod2 = [(s[0], [((q[1] - lon0) * mlon, -(q[0] - lat0) * mlat, q[2]) for q in s[1]]) + tuple(s[2:]) for s in lod2]
-        out.append((p, height, storeys, lod2, usage))
+        # zmin=True:LOD1 の立体の最も低い標高(地盤の高さ。無ければ nan)を最後に足す(tools/plateau_ground.py が地形の検証の基準に使う)
+        out.append((p, height, storeys, lod2, usage) + ((min(zs) if zs else float('nan')),) * bool(zmin))
     return out
 
 

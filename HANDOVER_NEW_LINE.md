@@ -255,7 +255,7 @@ Claude は地図・航空写真・自分の描画を安定して見られない�
 
 ---
 
-## 5. PLATEAU(建物・道路・土地利用・水面)
+## 5. PLATEAU(建物・道路・土地利用・水面・建物の写真・地形)
 
 ### 5-1. 使っている物と形
 
@@ -263,6 +263,9 @@ Claude は地図・航空写真・自分の描画を安定して見られない�
 |---|---|---|
 | `plateau_bldg.js` | `globalThis.PLATEAU_BLDG={source,license,files,count,b64,lod2,lod2b64,use64,…}`。`b64`=足跡と高さ(`PLT1`)、`lod2b64`=LOD2 の屋根面・壁面(`PL2A`)、`use64`=用途(1棟1バイト)。帯で約3.2万棟・LOD2 715棟、2.1MB | `tools/plateau_import.py` |
 | `plateau_land.js` | `globalThis.PLATEAU_LAND={road64,land64,…}`。`road64`=道路区域(`PLR1`:一般/幹線/自動車専用・道路/橋梁/トンネル/交差部)、`land64`=緑・農地・山林・駐車場・水面(`PLU1`)。道路12,343面・地表2,120面、0.8MB | `tools/plateau_land.py` |
+| `plateau_tex.js` | `globalThis.PLATEAU_TEX={atlases:[{w,h,jpg}],uv64,…}`。LOD2 の面の写真の詰め合わせ(JPEG)と面ごとの u,v(`PTX1`)。描く531棟・5.5MB。`plateau_bldg.js` と建物の並び・LOD2 の面がバイト単位で一致することを道具が確かめる | `tools/plateau_tex.py`(`--used` は `tools/plateau_used.js`) |
+| `plateau_dem.js` | `globalThis.PLATEAU_DEM={x0,z0,dx,nx,nz,h0,q,r64,h64,…}`。地形モデル(dem の TIN)の 10m 格子の標高(帯の中だけ。行ごとの範囲 `r64`+uint16 `h64`)。0.4MB | `tools/plateau_dem.py` |
+| `reference/plateau/bldg_ground.json` | 建物ごとの地盤の高さ(LOD1 の最も低い標高。`plateau_bldg.js` と同じ並び)。地形の検証の基準(⑦) | `tools/plateau_ground.py` |
 
 - 形式は各道具の先頭の説明に書いてある(リトルエンディアン・0.1m 単位の差分)。HTML は `plbDecode`・`plbDecodeL2`・`plrDecode` で読む
 - ファイルが無ければ模式の街(`HAS_PLB`/`PLL` が偽)。**区市町村の一部だけ無い場合、その区間は建物が出ない**(模式との混在はしない)
@@ -277,8 +280,10 @@ Claude は地図・航空写真・自分の描画を安定して見られない�
    (`assets.cms.plateau.reearth.io` の上。京王の4区市は `131xx_*_pref_2025_citygml_1_op.zip` の形)を引く
 3. **要るファイルだけ取り出す**:`udx/bldg/<3次>_bldg_6697_op.gml`・`udx/tran/<3次>_tran_6697_op.gml`・
    `udx/luse/<2次>_luse_6697_op.gml`・`udx/wtr/` の水部の GML(京王では世田谷区の zip に土地利用と水部がそろっていた)。
-   zip は1つ 0.4〜1GB あるので、京王では HTTP の範囲指定で zip の末尾(中央ディレクトリ)を読み、要るファイルの位置だけを取った。**この道具はリポジトリに無い**(未実装。作るなら `tools/plateau_fetch.py`:中央ディレクトリ→ローカルヘッダ→
-   deflate を解く。取り出した物は新しい空のフォルダへ)。回線に余裕があれば zip を全部落として取り出してもよい
+   zip は1つ 0.4〜1GB あるので、HTTP の範囲指定で zip の末尾(中央ディレクトリ)を読み、要るファイルの位置だけを取る
+   (`tools/plateau_zip.py`:目次・1ファイルの取り出し・解凍しながら流す・近くのファイルをまとめて。写真の `plateau_tex.py --zip` と
+   地形の `plateau_dem.py --zip` はこれで取り出す。建物・道路の GML を取り出す口はまだ無いので、`plateau_zip.read()` を使う小さな
+   手順を書くか、回線に余裕があれば zip を全部落として取り出す。取り出した物は新しい空のフォルダへ)
 4. **道具を走らせる**(外部のデータなので `python3 -I`。DOCTYPE/ENTITY を含むファイルは道具が読まない):
    ```bash
    python3 -I tools/plateau_import.py --html <HTML> --min-area 25 --tol 0.5 \
@@ -303,6 +308,9 @@ Claude は地図・航空写真・自分の描画を安定して見られない�
 - 自動車専用の橋梁(名称に「高速」「自動車道」・function 1)は床版+高欄+橋脚(`EXPY`。京王線の上ではレール面+9m 以上)
 - 緑と水面:`LU.tint` が季節と夜に緑の頂点の色だけを書き換える。実データの緑があれば地表を灰褐色へ3割寄せる(`URBAN_MIX`)
 - 木:公園・緑地(11m格子)と山林(6.5m格子)・幹線の縁の外の街路樹(上限2,500本)。建物・道路・水面に入らない
+- 地形(`TER`):線路の地盤からの差。**平らにする所(構造物の帯の幅・交差鉄道の線路・駅前広場)は線区ごとに表 `TER.AS`・`TER.CORR`・`TER.DISC`
+  を見直す**(京王は帯 ±21m)。細い溝を閉じる半径・ぼかし・線路の地盤のならし方も表。⑦の (a) は検証側に同じ値を持つ(`TR`)ので両方を直す。
+  建物の地盤の基準(`bldg_ground.json`)は `plateau_bldg.js` を作り直したら作り直す(並びが変わる)
 
 ### 5-4. 落とし穴(京王で起きた・起きうる)
 
@@ -638,7 +646,7 @@ Claude は地図・航空写真・自分の描画を安定して見られない�
   (車両の外観・塗装・ロゴ・駅のデザイン=事業者と設計者)・参考にした資料
 - ライセンス(京王の例):プログラム=MIT・データと文書=CC BY 4.0・`plateau_*.js`=CC BY 4.0。事業者の社名・ロゴ・意匠は対象外と明記
 - 「非公式であること」を README と画面に書く
-- **公開フォルダに要る物**:HTML・`plateau_bldg.js`・`plateau_land.js`・`LICENSE`・`CREDITS.txt`(`README.md` はあれば親切)。
+- **公開フォルダに要る物**:HTML・`plateau_bldg.js`・`plateau_land.js`・`plateau_tex.js`・`plateau_dem.js`・`LICENSE`・`CREDITS.txt`(`README.md` はあれば親切)。
   three.js は cdnjs から読む。`tools/`・`reference/`・`CLAUDE.md`・`TEMPLATE.md`・本書は開発用
 
 ---
