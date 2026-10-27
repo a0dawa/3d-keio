@@ -4391,7 +4391,10 @@ keepRect(SUBK.s,16,SUBK.off,12);keepRect(SUBC.s,17,SUBC.off,13);   // 変電所
 keepDisc(PLAZA_S,PLAZA_OFF,26);                 // 千歳烏山駅前広場
 // 交差鉄道:掘割・擁壁・ホームまで含めた幅で確保する(9章の車両もここを走る)
 keepLine(INO,15,XR.U0-10,XR.U1+10);
-keepLine(SETA,12,XR.SETA_U0-10,XR.SETA_U1+10);
+// 世田谷線は線路の脇まで建物が建つ(2026-10-27 利用者指示:脇の建物を消さない)。架線柱の外(線路の中心から 3.8m)だけ空け、
+// 終端のホームと上屋の所(u が ホームの南端−4m より北)は 6.8m
+keepLine(SETA,3.8,XR.SETA_U0-10,SETA_PLAT.u[0]-4);
+keepLine(SETA,6.8,SETA_PLAT.u[0]-4,XR.SETA_U1+2);
 /* (s,off)に半径radの物を置けるか。高架下・側道は桁半幅から求める(桁幅を変えれば追従)。 */
 function cityFree(s,off,rad,px,pz,roadIn){       // roadIn:道路の面への食い込みを許す量[m](実データの建物)
   // 高架下+側道。掘割(DECK_END より西)は側ごとの幅(仙川は北に広い単式ホームがあり、南は狭い)

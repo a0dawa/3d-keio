@@ -37,7 +37,9 @@ const REF = {
   MIN_TREES: 2000,          // 倍増後の下限(前回1,100本)
   DECK_CLEAR: 4.6,          // 高架下+側道の外縁(桁半幅からの距離[m])
   // 交差鉄道の建築限界の半幅[m]。井の頭線=複線+掘割擁壁(±9.4)、世田谷線=単線+ホーム
-  XRAIL_HALF: { 井の頭線: 13.0, 世田谷線: 7.5 },
+  XRAIL_HALF: { 井の頭線: 13.0, 世田谷線: 3.7 },   // 世田谷線は線路の脇まで建物が建つ(架線柱の外まで。2026-10-27 利用者指示)
+  SETA_TERM: { u: -48, hw: 6.6 },   // 世田谷線の終端(u=0)から 48m はホームと上屋があるので 6.6m
+  SETA_KEEP_MAX: 4.5,       // 世田谷線の脇の建物を消しすぎない:終端の外では、線路の中心から この距離の内に掛かって外した建物が無い
   GAP: 0.0,                 // 物同士は外接円が重ならなければよい(接触=NG)
   // [s位置, 路面の半幅[m], offの半長([m]。省略=全幅)]
   CROSS: [['環七', 'KAN7_X', 15], ['中野通り', 'NAKANO_X', 10], ['放射23', 'HOSHA23_X', 9], ['旧井の頭', 'KYU_INOKA_X', 7],
@@ -193,15 +195,42 @@ ok('樹木の数', T.length >= REF.MIN_TREES, '≥' + REF.MIN_TREES + '本', T.l
     for (const e of ALL) for (const q of pts(e.o)) {
       const p = A.uv(q.x, q.z), du = p.u, dn = Math.abs(p.n);
       if (du < u0 - q.r || du > u1 + q.r) continue;      // 線路の延長の外
-      const clear = dn - q.r;
-      if (clear - REF.XRAIL_HALF[nm] < worst) worst = clear - REF.XRAIL_HALF[nm];
-      if (clear < REF.XRAIL_HALF[nm] && !bad)
+      const clear = dn - q.r, lim = nm === '世田谷線' && du > REF.SETA_TERM.u ? REF.SETA_TERM.hw : REF.XRAIL_HALF[nm];
+      if (clear - lim < worst) worst = clear - lim;
+      if (clear < lim && !bad)
         bad = [nm, e.kind, 'u=' + du.toFixed(0), '離隔' + clear.toFixed(1) + 'm'];
     }
   }
   ok('交差鉄道の上に無い', bad === null,
-    '離隔≥' + REF.XRAIL_HALF['井の頭線'] + 'm/' + REF.XRAIL_HALF['世田谷線'] + 'm',
+    '離隔≥' + REF.XRAIL_HALF['井の頭線'] + 'm/' + REF.XRAIL_HALF['世田谷線'] + 'm(終端 ' + REF.SETA_TERM.hw + 'm)',
     bad ? bad.join(' ') : '余裕' + worst.toFixed(1) + 'm');
+}
+
+/* ---- 3b. 世田谷線の脇の建物を消しすぎない(2026-10-27 利用者指示:線路の脇の建物が無くなっていた) -------------------
+   plateau_bldg.js を検証側で読み、足跡(頂点と辺の 1m ごとの点)が世田谷線の中心線から REF.SETA_KEEP_MAX〜20m に掛かる建物
+   (終端のホームの外・線路の範囲の中)のうち、街(CITY.buildings)に残っている割合が 90% 以上 */
+{
+  const fs = require('fs'), pth = require('path'), f = pth.join(pth.dirname(path), 'plateau_bldg.js');
+  if (fs.readFileSync(path, 'utf8').includes('<script src="plateau_bldg.js">') && fs.existsSync(f)) {
+    const gB = {}; new Function('globalThis', fs.readFileSync(f, 'utf8'))(gB);
+    const pb = Buffer.from(gB.PLATEAU_BLDG.b64, 'base64'), N = pb.readUInt32LE(4), A = XC.SETA;
+    const kept = new Set(B.filter((e) => e.plateau && e.poly).map((e) => e.poly[0][0].toFixed(1) + ',' + e.poly[0][1].toFixed(1) + ',' + e.h.toFixed(1)));
+    let nNear = 0, nKept = 0, miss = null;
+    for (let n = 0, o = 8; n < N; n++) {
+      const nv = pb.readUInt8(o), h = pb.readUInt16LE(o + 1) / 10; o += 4;
+      let x = pb.readInt32LE(o), z = pb.readInt32LE(o + 4); o += 8; const P = [[x / 10, z / 10]];
+      for (let i = 1; i < nv; i++) { x += pb.readInt16LE(o); z += pb.readInt16LE(o + 2); o += 4; P.push([x / 10, z / 10]); }
+      if (P.length < 3 || !(h > 0)) continue;
+      let dmin = 1e9, uIn = false;
+      for (let i = 0; i < P.length && dmin > 0; i++) { const a = P[i], c = P[(i + 1) % P.length], m = Math.max(1, Math.ceil(Math.hypot(c[0] - a[0], c[1] - a[1])));
+        for (let k = 0; k < m; k++) { const q = A.uv(a[0] + (c[0] - a[0]) * k / m, a[1] + (c[1] - a[1]) * k / m);
+          if (q.u > X.XR.SETA_U0 + 10 && q.u < REF.SETA_TERM.u - 5) { uIn = true; dmin = Math.min(dmin, Math.abs(q.n)); } } }
+      if (!uIn || dmin < REF.SETA_KEEP_MAX || dmin > 20) continue;
+      nNear++; if (kept.has(P[0][0].toFixed(1) + ',' + P[0][1].toFixed(1) + ',' + h.toFixed(1))) nKept++; else if (!miss) miss = '(' + P[0][0].toFixed(0) + ',' + P[0][1].toFixed(0) + ') 線路から ' + dmin.toFixed(1) + 'm';
+    }
+    ok('世田谷線の脇の建物が残る', nNear >= 50 && nKept >= 0.9 * nNear, '線路の中心から ' + REF.SETA_KEEP_MAX + '〜20m に掛かる実際の建物の 90% 以上',
+      nKept + '/' + nNear + '棟' + (miss ? '(外した例 ' + miss + ')' : ''));
+  }
 }
 
 /* ---- 4. 道路・河川の上に無い --------------------------------------------- */
