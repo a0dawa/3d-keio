@@ -37,7 +37,10 @@ const REF = {
   MIN_TREES: 2000,          // 倍増後の下限(前回1,100本)
   DECK_CLEAR: 4.6,          // 高架下+側道の外縁(桁半幅からの距離[m])
   // 交差鉄道の建築限界の半幅[m]。井の頭線=複線+掘割擁壁(±9.4)、世田谷線=単線+ホーム
-  XRAIL_HALF: { 井の頭線: 13.0, 世田谷線: 3.7 },   // 世田谷線は線路の脇まで建物が建つ(架線柱の外まで。2026-10-27 利用者指示)
+  XRAIL_HALF: { 井の頭線: 13.0, 世田谷線: 3.7 },   // 井の頭線は 2026-10-27 から下の INO_CLEAR(線路から測る)。13.0 は写真の検査で近くを除く幅だけに使う
+  INO_CLEAR: 3.2,           // 井の頭線:建物は実際の線路の中心から 3.2m(擁壁の外面)より外。ホームの範囲は INO_PLAT_CLEAR
+  INO_PLAT_CLEAR: 1.55 + 8.4 + 0.5 + 0.3,   // ホームの縁 1.55+幅 8.4+背面の擁壁 0.5(+厚さの半分)
+  INO_KEEP_MAX: 4.0,        // 井の頭線の脇の建物を消しすぎない:ホームの外で、線路の中心から この距離の外の建物は残る   // 世田谷線は線路の脇まで建物が建つ(架線柱の外まで。2026-10-27 利用者指示)
   SETA_TERM: { u: -48, hw: 6.6 },   // 世田谷線の終端(u=0)から 48m はホームと上屋があるので 6.6m
   SETA_KEEP_MAX: 4.5,       // 世田谷線の脇の建物を消しすぎない:終端の外では、線路の中心から この距離の内に掛かって外した建物が無い
   GAP: 0.0,                 // 物同士は外接円が重ならなければよい(接触=NG)
@@ -83,6 +86,8 @@ function ok(name, cond, expect, got) {
 // 交差鉄道の線形(検証側の実装。tools/xcurve.js):RAW.rail の tr から検証側の換算で作った曲線
 const xCurve = (rl, origin) => require('./xcurve')(X, rl, origin);
 const XC = { INO: xCurve(X.RAW.rail.ino, 'cross'), SETA: xCurve(X.RAW.rail.seta, 'end') };
+// 井の頭線の線路 k(0=西・下り/1=東・上り)の側のホームの u の範囲(利用者が測った緯度から 110m。端から m の余裕)
+const inoPlat = (k, u, m) => { const q = REF.INO_PLAT[k ? 0 : 1], u0 = XC.INO.uAtZ(-(q.lat - X.LAT0) * X.MLAT); return u > u0 - m && u < u0 + REF.INO_PLAT_LEN + m; };
 
 const B = X.CITY.buildings, T = X.CITY.trees;
 /* 測る点:模式の建物・樹木は外接円(中心と半径)。PLATEAU の建物は足跡の多角形なので、頂点と辺の1mごとの点
@@ -195,41 +200,52 @@ ok('樹木の数', T.length >= REF.MIN_TREES, '≥' + REF.MIN_TREES + '本', T.l
     for (const e of ALL) for (const q of pts(e.o)) {
       const p = A.uv(q.x, q.z), du = p.u, dn = Math.abs(p.n);
       if (du < u0 - q.r || du > u1 + q.r) continue;      // 線路の延長の外
-      const clear = dn - q.r, lim = nm === '世田谷線' && du > REF.SETA_TERM.u ? REF.SETA_TERM.hw : REF.XRAIL_HALF[nm];
+      let clear = dn - q.r, lim = nm === '世田谷線' && du > REF.SETA_TERM.u ? REF.SETA_TERM.hw : REF.XRAIL_HALF[nm];
+      if (nm === '井の頭線') { if (dn > 25) continue; const sd = p.n < 0 ? 0 : 1; clear = dn - Math.abs(A.trackV(sd, du)) - q.r; lim = inoPlat(sd, du, 1.5) ? REF.INO_PLAT_CLEAR : REF.INO_CLEAR; }
       if (clear - lim < worst) worst = clear - lim;
       if (clear < lim && !bad)
         bad = [nm, e.kind, 'u=' + du.toFixed(0), '離隔' + clear.toFixed(1) + 'm'];
     }
   }
   ok('交差鉄道の上に無い', bad === null,
-    '離隔≥' + REF.XRAIL_HALF['井の頭線'] + 'm/' + REF.XRAIL_HALF['世田谷線'] + 'm(終端 ' + REF.SETA_TERM.hw + 'm)',
+    '井の頭線は線路から ' + REF.INO_CLEAR + 'm(ホーム ' + REF.INO_PLAT_CLEAR.toFixed(2) + 'm)・世田谷線は中心から ' + REF.XRAIL_HALF['世田谷線'] + 'm(終端 ' + REF.SETA_TERM.hw + 'm)',
     bad ? bad.join(' ') : '余裕' + worst.toFixed(1) + 'm');
 }
 
-/* ---- 3b. 世田谷線の脇の建物を消しすぎない(2026-10-27 利用者指示:線路の脇の建物が無くなっていた) -------------------
-   plateau_bldg.js を検証側で読み、足跡(頂点と辺の 1m ごとの点)が世田谷線の中心線から REF.SETA_KEEP_MAX〜20m に掛かる建物
-   (終端のホームの外・線路の範囲の中)のうち、街(CITY.buildings)に残っている割合が 90% 以上 */
+/* ---- 3b. 交差鉄道の脇の建物を消しすぎない(2026-10-27 利用者指示:線路の脇の建物が無くなっていた) -------------------
+   plateau_bldg.js を検証側で読み、足跡(頂点と辺の 1m ごとの点)の線路からの距離で:
+   ・世田谷線:中心線から REF.SETA_KEEP_MAX〜20m に掛かる建物(終端のホームの外・線路の範囲の中)
+   ・井の頭線:その側の実際の線路の中心から REF.INO_KEEP_MAX〜20m に掛かる建物(ホームの範囲の外)
+   のうち、街(CITY.buildings)に残っている割合が 90% 以上 */
 {
   const fs = require('fs'), pth = require('path'), f = pth.join(pth.dirname(path), 'plateau_bldg.js');
   if (fs.readFileSync(path, 'utf8').includes('<script src="plateau_bldg.js">') && fs.existsSync(f)) {
     const gB = {}; new Function('globalThis', fs.readFileSync(f, 'utf8'))(gB);
-    const pb = Buffer.from(gB.PLATEAU_BLDG.b64, 'base64'), N = pb.readUInt32LE(4), A = XC.SETA;
+    const pb = Buffer.from(gB.PLATEAU_BLDG.b64, 'base64'), N = pb.readUInt32LE(4);
     const kept = new Set(B.filter((e) => e.plateau && e.poly).map((e) => e.poly[0][0].toFixed(1) + ',' + e.poly[0][1].toFixed(1) + ',' + e.h.toFixed(1)));
-    let nNear = 0, nKept = 0, miss = null;
+    const R = { 世田谷線: { n: 0, k: 0, miss: null }, 井の頭線: { n: 0, k: 0, miss: null } };
     for (let n = 0, o = 8; n < N; n++) {
       const nv = pb.readUInt8(o), h = pb.readUInt16LE(o + 1) / 10; o += 4;
       let x = pb.readInt32LE(o), z = pb.readInt32LE(o + 4); o += 8; const P = [[x / 10, z / 10]];
       for (let i = 1; i < nv; i++) { x += pb.readInt16LE(o); z += pb.readInt16LE(o + 2); o += 4; P.push([x / 10, z / 10]); }
       if (P.length < 3 || !(h > 0)) continue;
-      let dmin = 1e9, uIn = false;
-      for (let i = 0; i < P.length && dmin > 0; i++) { const a = P[i], c = P[(i + 1) % P.length], m = Math.max(1, Math.ceil(Math.hypot(c[0] - a[0], c[1] - a[1])));
-        for (let k = 0; k < m; k++) { const q = A.uv(a[0] + (c[0] - a[0]) * k / m, a[1] + (c[1] - a[1]) * k / m);
-          if (q.u > X.XR.SETA_U0 + 10 && q.u < REF.SETA_TERM.u - 5) { uIn = true; dmin = Math.min(dmin, Math.abs(q.n)); } } }
-      if (!uIn || dmin < REF.SETA_KEEP_MAX || dmin > 20) continue;
-      nNear++; if (kept.has(P[0][0].toFixed(1) + ',' + P[0][1].toFixed(1) + ',' + h.toFixed(1))) nKept++; else if (!miss) miss = '(' + P[0][0].toFixed(0) + ',' + P[0][1].toFixed(0) + ') 線路から ' + dmin.toFixed(1) + 'm';
+      const kp = kept.has(P[0][0].toFixed(1) + ',' + P[0][1].toFixed(1) + ',' + h.toFixed(1));
+      for (const nm of ['世田谷線', '井の頭線']) {
+        const A = nm === '世田谷線' ? XC.SETA : XC.INO, lo = nm === '世田谷線' ? X.XR.SETA_U0 + 10 : X.XR.U0 + 10, hi = nm === '世田谷線' ? REF.SETA_TERM.u - 5 : X.XR.U1 - 10;
+        let dmin = 1e9, uIn = false, plat = false;
+        for (let i = 0; i < P.length && dmin > 0; i++) { const a = P[i], c = P[(i + 1) % P.length], m = Math.max(1, Math.ceil(Math.hypot(c[0] - a[0], c[1] - a[1])));
+          for (let k = 0; k < m; k++) { const q = A.uv(a[0] + (c[0] - a[0]) * k / m, a[1] + (c[1] - a[1]) * k / m); if (Math.abs(q.n) > 30 || q.u <= lo || q.u >= hi) continue;
+            uIn = true; let d = Math.abs(q.n);
+            if (nm === '井の頭線') { const sd = q.n < 0 ? 0 : 1; d -= Math.abs(A.trackV(sd, q.u)); if (inoPlat(sd, q.u, 5)) plat = true; }
+            dmin = Math.min(dmin, d); } }
+        const lim = nm === '世田谷線' ? REF.SETA_KEEP_MAX : REF.INO_KEEP_MAX;
+        if (!uIn || plat || dmin < lim || dmin > 20) continue;
+        const r = R[nm]; r.n++; if (kp) r.k++; else if (!r.miss) r.miss = '(' + P[0][0].toFixed(0) + ',' + P[0][1].toFixed(0) + ') 線路から ' + dmin.toFixed(1) + 'm';
+      }
     }
-    ok('世田谷線の脇の建物が残る', nNear >= 50 && nKept >= 0.9 * nNear, '線路の中心から ' + REF.SETA_KEEP_MAX + '〜20m に掛かる実際の建物の 90% 以上',
-      nKept + '/' + nNear + '棟' + (miss ? '(外した例 ' + miss + ')' : ''));
+    for (const [nm, r] of Object.entries(R))
+      ok(nm + 'の脇の建物が残る', r.n >= 50 && r.k >= 0.9 * r.n, (nm === '世田谷線' ? '中心線から ' + REF.SETA_KEEP_MAX : '線路の中心から ' + REF.INO_KEEP_MAX + '(ホームの外)') + '〜20m に掛かる実際の建物の 90% 以上',
+        r.k + '/' + r.n + '棟' + (r.miss ? '(外した例 ' + r.miss + ')' : ''));
   }
 }
 
@@ -1205,9 +1221,12 @@ else {
       for (const s of [X.DOM.x0 - REF_OR.END_OUT, X.DOM.x0 - 20, X.DOM.x1 + REF_OR.END_OUT, X.DOM.x1 + 20]) for (const o of [-8, 0, 8]) {
         const f = X.frame(s, o); if (nearRM(f.x, f.z, REF_OR.HOLE_OUT)) continue; const m = mwt(f.x, f.z); nOut++;
         if (m < 0.95 && !bad) bad = '事業区間の外 s=' + s + ' off=' + o + ' の写真の割合 ' + m.toFixed(2); }
-      for (const [A, u0, u1, hw] of xr) for (let u = u0; u <= u1 && !bad; u += 5) for (const v of [-(hw - REF_OR.XR_IN), 0, hw - REF_OR.XR_IN]) {
-        const m = mwt(A.x + A.ax * u + A.nx * v, A.z + A.az * u + A.nz * v); nIn++;
-        if (m > 0.05 && !bad) bad = '交差鉄道の帯 u=' + u + ' v=' + v.toFixed(1) + ' の写真の割合 ' + m.toFixed(2); }
+      // 井の頭線は実際の線路から REF.INO_CLEAR−1m、世田谷線は中心線から XRAIL_HALF−1m の内(2026-10-27 から曲線の上で。以前の直線の式は
+      // 曲線の物に .x/.ax が無く NaN になって素通りしていた。NaN も NG にする)
+      for (const [A, u0, u1, hw] of xr) for (let u = u0; u <= u1 && !bad; u += 5) {
+        const c = A.pos(u), vs = A === XC.INO ? [-(Math.abs(A.trackV(0, u)) + REF.INO_CLEAR - REF_OR.XR_IN), 0, Math.abs(A.trackV(1, u)) + REF.INO_CLEAR - REF_OR.XR_IN] : [-(REF.XRAIL_HALF['世田谷線'] - REF_OR.XR_IN), 0, REF.XRAIL_HALF['世田谷線'] - REF_OR.XR_IN];
+        for (const v of vs) { const m = mwt(c.x + c.nx * v, c.z + c.nz * v); nIn++;
+          if (!(m <= 0.05) && !bad) bad = '交差鉄道の帯 u=' + u + ' v=' + v.toFixed(1) + ' の写真の割合 ' + m; } }
     }
     ok('航空写真:線路の帯は今の色', bad === null && nIn > 5000 && nOut > 2000, '構造物の半幅(掘割は側ごと)+3.6m の内・井の頭線と世田谷線の建築限界−1m の内は写真 0.05 以下/+6.7m の外・事業区間の端の 3m 外は 0.95 以上(外した建物の足跡の近くは除く)',
       bad || '内 ' + nIn + '点・外 ' + nOut + '点(外した足跡の近くで除いた ' + nSkip + '点)');

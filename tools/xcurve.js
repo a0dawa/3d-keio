@@ -34,5 +34,13 @@ module.exports = function xCurve(X, rl, origin) {
     return Math.sqrt(best);
   }
   const uAtZ = (z) => { for (let i = 0; i < n - 1; i++) if ((P[i].z - z) * (P[i + 1].z - z) <= 0) return U[i] + (U[i + 1] - U[i]) * (P[i].z - z) / (P[i].z - P[i + 1].z); return NaN; };
-  return { T: T, P: P, U: U, U0: U[0], U1: U[n - 1], uv: uv, dTrack: dTrack, uAtZ: uAtZ, W: W };
+  // 中心線の上の u の点(端の先は端の線分の向きに延ばす)と、線路 k の u での横の位置(中心線の点に最も近い線路の点の n)
+  function pos(u) { let i = 0; while (i < n - 2 && U[i + 1] < u) i++; const t = (u - U[i]) / (U[i + 1] - U[i]);
+    const dx = P[i + 1].x - P[i].x, dz = P[i + 1].z - P[i].z, l = Math.hypot(dx, dz);
+    return { x: P[i].x + dx * t, z: P[i].z + dz * t, nx: -dz / l, nz: dx / l }; }   // n=uv の n の向き(北へ向かって右=東が+)
+  function trackV(k, u) { const c = pos(u), Q = T[k]; let best = 1e18, bx = 0, bz = 0;
+    for (let i = 0; i < Q.length - 1; i++) { const a = Q[i], b = Q[i + 1], dx = b.x - a.x, dz = b.z - a.z, t = Math.max(0, Math.min(1, ((c.x - a.x) * dx + (c.z - a.z) * dz) / (dx * dx + dz * dz))),
+      px = a.x + dx * t, pz = a.z + dz * t, d = (px - c.x) ** 2 + (pz - c.z) ** 2; if (d < best) { best = d; bx = px; bz = pz; } }
+    return uv(bx, bz).n; }
+  return { T: T, P: P, U: U, U0: U[0], U1: U[n - 1], uv: uv, dTrack: dTrack, uAtZ: uAtZ, W: W, pos: pos, trackV: trackV };
 };

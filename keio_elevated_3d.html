@@ -2793,9 +2793,13 @@ const INO_UOF=la=>INO.uAtZ(toXY(la,LON0).z);
 const INO_PLAT={up:[INO_UOF(35.6674073382136),INO_UOF(35.6674073382136)+110], dn:[INO_UOF(35.66801642659758),INO_UOF(35.66801642659758)+110],
   edge:1.55, w:8.4, top:XR.RAILTOP+1.0};
 INO_PLAT.at=(k,u)=>{ const sg=k?1:-1, e=Math.abs(INO.trk(k,u))+INO_PLAT.edge; return {sg:sg, edge:sg*e, back:sg*(e+INO_PLAT.w)}; };   // 線路 k の側のホームの縁と背面の v
-/* 擁壁は線路の中心から 6.4m(ホームの範囲は背面の 0.5m 外。境は横の壁でつなぐ)。架線柱(門型)は線路の中心から 3.7m
-   (ホームの上では縁から 2.15m) */
-const INO_WALL=[6.4,0.5], INO_POLE=3.7;
+/* 擁壁は線路の中心から 2.9m(ホームの範囲は背面の 0.5m 外。境は横の壁でつなぐ)。架線柱(門型)は線路の中心から 2.3m
+   (ホームの上は 3.7m=縁から 2.15m)。2026-10-27 利用者指示(線路の脇の建物を消さない):実際の線路の脇には中心から 3.3m ほどまで
+   建物が建つ所があるので、擁壁と柱を線路へ寄せた(以前は 6.4m・3.7m で、占有域 15m が脇の建物を消していた) */
+const INO_WALL=[2.9,0.5], INO_POLE=[2.3,3.7];
+const inoInPlat=(k,u,m)=>{ const pl=k?INO_PLAT.up:INO_PLAT.dn; return u>pl[0]-m&&u<pl[1]+m; };   // 線路 k の側のホームの範囲(端から m の余裕)
+// 占有域の半幅(中心線から。側ごと):線路+擁壁の外(+3.4m)、ホームの範囲は背面の擁壁の外(+11.0m)
+const inoKeepHalf=(u,n)=>{ const k=n<0?0:1; return Math.abs(INO.trk(k,u))+(inoInPlat(k,u,1.8)?INO_PLAT.edge+INO_PLAT.w+INO_WALL[1]+0.55:INO_WALL[0]+0.5); };
 { // 京王井の頭線(複線・擁壁・渋谷寄り=南へ移設したホーム)。u+=北
   const g=xGroup(), k=xKit(g,INO);
   const oI=(GAUGE_INO+RAIL_W)/2;                                        // 井の頭線は1067mm軌間
@@ -2810,7 +2814,7 @@ const INO_WALL=[6.4,0.5], INO_POLE=3.7;
   const us=[XR.U0]; for(let u=-430;u<430;u+=45) us.push(u+0.2); us.push(XR.U1);
   for(const c of [0,1]) k.wire(us,u=>INO.trk(c,u),5.85,4.85,0.25);     // 架線(ちょう架線・トロリ線・ハンガ)
   for(let u=-430;u<430;u+=45){                                          // 架線柱(門型)
-    const p=INO.trk(0,u+.2)-INO_POLE, q=INO.trk(1,u+.2)+INO_POLE;
+    const p=INO.trk(0,u+.2)-INO_POLE[inoInPlat(0,u+.2,1)?1:0], q=INO.trk(1,u+.2)+INO_POLE[inoInPlat(1,u+.2,1)?1:0];
     k.piece(u+.2,p,.4,.34,MAT.pole,3.0,6.0).piece(u+.2,q,.4,.34,MAT.pole,3.0,6.0).piece(u+.2,(p+q)/2,.35,q-p,MAT.pole,6.05,.26); }
   // ホームは上下で段違い(緯度の実測・各110m):上り=東が南寄り/下り=西が北寄り。上屋は縁の 0.3m 内から背面の 0.4m 外まで
   for(const [c,pl] of [[1,INO_PLAT.up],[0,INO_PLAT.dn]]){
@@ -4366,7 +4370,8 @@ const keepBand =(c,hw,oh)=>KEEP.push({k:'b',c:c,hw:hw,oh:oh===undefined?1e9:oh})
 const keepStrip=(o,hw,s0,s1)=>KEEP.push({k:'s',o:o,hw:hw,s0:s0,s1:s1});           // 並行道路(off一定の帯)
 const keepRect =(c,hs,o,ho)=>KEEP.push({k:'r',c:c,hs:hs,o:o,ho:ho});              // 施設
 const keepDisc =(c,o,r)=>KEEP.push({k:'d',c:c,o:o,r:r});                          // 池・広場
-const keepLine =(A,hw,u0,u1)=>KEEP.push({k:'l',A:A,hw:hw,u0:u0,u1:u1});           // 交差鉄道(世界座標)
+const keepLine =(A,hw,u0,u1)=>KEEP.push({k:'l',A:A,hw:hw,u0:u0,u1:u1});           // 交差鉄道(世界座標)。hw は数か (u,n)→半幅(側ごと)
+const keepHw=(q,u,n)=>typeof q.hw==='function'?q.hw(clamp(u,q.u0,q.u1),n):q.hw;
 // 交差道路(4章 box(w,...) の w/2 に路肩ぶんを足す)
 // 実データの道路(plateau_land.js)があるときは、模式の道路の帯ではなく道路の面そのもの(roadHit)で見る
 keepBand(HOSHA23_X,11);                         // 放射23号線(計画。実データに無い)
@@ -4390,7 +4395,7 @@ keepRect(SUBK.s,16,SUBK.off,12);keepRect(SUBC.s,17,SUBC.off,13);   // 変電所
 }
 keepDisc(PLAZA_S,PLAZA_OFF,26);                 // 千歳烏山駅前広場
 // 交差鉄道:掘割・擁壁・ホームまで含めた幅で確保する(9章の車両もここを走る)
-keepLine(INO,15,XR.U0-10,XR.U1+10);
+keepLine(INO,inoKeepHalf,XR.U0-10,XR.U1+10);   // 2026-10-27 から線路と擁壁・ホームの外まで(以前は中心から 15m で脇の建物を消していた)
 // 世田谷線は線路の脇まで建物が建つ(2026-10-27 利用者指示:脇の建物を消さない)。架線柱の外(線路の中心から 3.8m)だけ空け、
 // 終端のホームと上屋の所(u が ホームの南端−4m より北)は 6.8m
 keepLine(SETA,3.8,XR.SETA_U0-10,SETA_PLAT.u[0]-4);
@@ -4406,7 +4411,7 @@ function cityFree(s,off,rad,px,pz,roadIn){       // roadIn:道路の面への食
     else if(q.k==='d'){ if(Math.hypot(s-q.c,off-q.o)<q.r+rad) return false; }
     else {                                                     // 交差鉄道の中心線(世界座標の曲線)
       const p=q.A.uv(px,pz);
-      if(Math.abs(p.n)<q.hw+rad && p.u>q.u0-rad && p.u<q.u1+rad) return false;
+      if(Math.abs(p.n)<keepHw(q,p.u,p.n)+rad && p.u>q.u0-rad && p.u<q.u1+rad) return false;
     }
   }
   // 実データの面の判定は重いので最後に(占有域で落ちる候補には要らない)
@@ -9413,7 +9418,7 @@ ORTHO_MGR=(function(){
     const q=prjXY(x,z), sc=clamp(q.s,DOM.x0,DOM.x1);
     let d=Math.max(Math.abs(q.off)-half(sc,q.off<0?-1:1),DOM.x0-q.s,q.s-DOM.x1);
     for(const L of XL){ const p=L.A.uv(x,z);
-      const a=Math.max(L.u0-p.u,p.u-L.u1), b=Math.abs(p.n)-L.hw; d=Math.min(d,(a>0&&b>0)?Math.hypot(a,b):Math.max(a,b)); }
+      const a=Math.max(L.u0-p.u,p.u-L.u1), b=Math.abs(p.n)-keepHw(L,p.u,p.n); d=Math.min(d,(a>0&&b>0)?Math.hypot(a,b):Math.max(a,b)); }
     return d;
   }
   {
@@ -9422,7 +9427,7 @@ ORTHO_MGR=(function(){
       const k=j*MW+i; if(seen[k]) return; seen[k]=1;
       MD[k]=Math.max(0,Math.min(255,Math.round(128+10*bandDist(TER.X0+(i+0.5)*MC,TER.Z0+(j+0.5)*MC)))); };
     for(let s=DOM.x0-20;s<=DOM.x1+20;s+=2) for(let o=-46;o<=46;o+=2){ const f=frame(s,o); put(f.x,f.z); }
-    for(const L of XL) for(let u=L.u0-20;u<=L.u1+20;u+=2) for(let v=-(L.hw+20);v<=L.hw+20;v+=2){ const w=L.A.pos(u,v); put(w.x,w.z); }
+    for(const L of XL) for(let u=L.u0-20;u<=L.u1+20;u+=2) for(let v=-(keepHw(L,u,-1)+20);v<=keepHw(L,u,1)+20;v+=2){ const w=L.A.pos(u,v); put(w.x,w.z); }
     // 線路の帯に掛かって外した実際の建物の足跡+ORTHO_HOLE_M(帯との和=距離の小さい方)。値が飽和する 12.7m の外までは測らない
     const nearBand=P=>{ for(let i=0;i<P.length;i++){ const a=P[i], c=P[(i+1)%P.length], m=Math.max(1,Math.ceil(Math.hypot(c[0]-a[0],c[1]-a[1])/2));
       for(let k=0;k<m;k++) if(bandDist(a[0]+(c[0]-a[0])*k/m,a[1]+(c[1]-a[1])*k/m)<ORTHO_HOLE_NEAR) return true; } return false; };
