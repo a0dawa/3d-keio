@@ -19,7 +19,7 @@ const X = require('./stub_three')(path,
   'PSD:PSD,K8:K8,DECK_END:DECK_END,LODS:LODS,POLE_S:POLE_S,WIRE_CAT:WIRE_CAT,' +
   'GUIDES:GUIDES,depList:depList,pidsSetTime:pidsSetTime,' +
   'PEOPLE:(typeof PEOPLE!=="undefined"?PEOPLE:[]),scene:scene,STD:STD,POLES:(typeof POLES!=="undefined"?POLES:[]),' +
-  'TURNOUTS:TURNOUTS,prjXY:prjXY,INO:INO,INO_PLAT:INO_PLAT,XR:XR,VIA_COLS:VIA_COLS,lodStruct:lodStruct,camera:camera,' +
+  'TURNOUTS:TURNOUTS,prjXY:prjXY,INO:INO,INO_PLAT:INO_PLAT,XR:XR,RAW:RAW,LAT0:LAT0,LON0:LON0,MLAT:MLAT,MLON:MLON,VIA_COLS:VIA_COLS,lodStruct:lodStruct,camera:camera,' +
   'trains:trains,stepWorld:stepWorld,FLOW:FLOW,stopPosOf:stopPosOf,CAR_HALF:CAR_HALF,placeTrain:placeTrain,trainPSD:trainPSD');
 
 /* ---- 検証側が独立に持つ寸法 -------------------------------------------- */
@@ -513,7 +513,7 @@ ok('乗務員モニターを置かない', !X.STRUCT.some((q) => q.tag === '乗�
    芦花公園の相対式ホームを2m ずつ広く(4.5→6.5m) */
 {
   const RW = { QUAD: ['明大前', '桜上水', '千歳烏山'], QUAD_W: 5.0 + 1.5 + 1.4, TIP: 226.5 - 30 - 50, TIP_TOL: 3, ROKA_W: 4.5 + 2, EDGE: [1.40, 1.60], PSD_IN: 0.12,
-    SENGAWA_N: 3.4 + 5, INO_W: 3.4 + 5, INO_EDGE_IN: 5.5, INO_CLEAR: 0.5 };
+    SENGAWA_N: 3.4 + 5, INO_W: 3.4 + 5, INO_EDGE: 1.40 + 0.15, INO_CLEAR: 0.5, INO_FLOOR: 1.05 };   // 井の頭線:縁=車体の半幅 1.40+0.15・床はレール面+1.05
   // ホームの幅
   let bW = null;
   for (const n of RW.QUAD) {
@@ -564,16 +564,24 @@ ok('乗務員モニターを置かない', !X.STRUCT.some((q) => q.tag === '乗�
     }
   }
   ok('ホームドアの戸が線路に沿う', bD === null && nD > 0, '面する線路から ' + (1.55 + RW.PSD_IN).toFixed(2) + '±0.05m', bD || nD + '枚');
-  // 井の頭線のホーム:幅・線路側の縁はそのまま(背面へ広げる)。高架の柱が井の頭線のホームと擁壁(ホームの背面+0.5m)の内に無い
-  const IP = X.INO_PLAT;
-  let bI = (Math.abs(2 * IP.hw - RW.INO_W) > 0.01 || Math.abs(IP.off - IP.hw - RW.INO_EDGE_IN) > 0.01) ? '幅' + (2 * IP.hw).toFixed(2) + '・縁' + (IP.off - IP.hw).toFixed(2) : null;
+  /* 井の頭線のホーム(2026-10-27 実際の線路の位置に):縁は面する線路(RAW.rail の tr の実際の線路。検証側の曲線 tools/xcurve.js)から
+     車体の半幅+0.15m、幅 8.4m、上面は車両の床の 0.1m 以内。高架の柱は線路からホームの背面+擁壁(0.5m)より外 */
+  const XI = require('./xcurve')(X, X.RAW.rail.ino, 'cross'), IP = X.INO_PLAT, railTop = X.XR.RAILY + X.XR.RAILH / 2;
+  let bI = Math.abs(IP.top - (railTop + RW.INO_FLOOR)) > 0.1 ? '上面 ' + IP.top.toFixed(2) + 'm' : null, nI = 0, wE = 0;
+  for (const [k, pl] of [[1, IP.up], [0, IP.dn]]) for (let u = pl[0]; u <= pl[1] + 1e-6; u += 2) {
+    const P = IP.at(k, u), e = X.INO.pos(u, P.edge), b = X.INO.pos(u, P.back), d = XI.dTrack(k, e.x, e.z), w = Math.hypot(b.x - e.x, b.z - e.z), o = XI.dTrack(1 - k, e.x, e.z);
+    nI++; wE = Math.max(wE, Math.abs(d - RW.INO_EDGE));
+    if (!bI && (Math.abs(d - RW.INO_EDGE) > 0.03 || Math.abs(w - RW.INO_W) > 0.02 || o < d)) bI = (k ? '上り' : '下り') + ' u=' + u.toFixed(0) + ' 縁は線路から ' + d.toFixed(3) + 'm・幅 ' + w.toFixed(2) + (o < d ? '・反対の線路の側' : '');
+  }
   let minN = 1e9;
   for (const c of X.VIA_COLS) for (const o of c.offs) {
-    const f = X.frame(c.s, o), dx = f.x - X.INO.x, dz = f.z - X.INO.z, u = dx * X.INO.ax + dz * X.INO.az, nn = Math.abs(dx * X.INO.nx + dz * X.INO.nz);
-    if (u < X.XR.U0 || u > X.XR.U1) continue; minN = Math.min(minN, nn);
+    const f = X.frame(c.s, o), p = XI.uv(f.x, f.z);
+    if (p.u < X.XR.U0 || p.u > X.XR.U1 || Math.abs(p.n) > 60) continue; minN = Math.min(minN, XI.dTrack(0, f.x, f.z), XI.dTrack(1, f.x, f.z));
   }
-  if (!bI && minN < RW.INO_EDGE_IN + RW.INO_W + RW.INO_CLEAR) bI = '柱が井の頭線の中心から ' + minN.toFixed(1) + 'm';
-  ok('井の頭線のホーム(拡幅)と高架の柱', bI === null, '幅' + RW.INO_W + 'm・柱は中心から ' + (RW.INO_EDGE_IN + RW.INO_W + RW.INO_CLEAR) + 'm 以遠', bI || '幅一致・柱は ' + minN.toFixed(1) + 'm');
+  const lim = RW.INO_EDGE + RW.INO_W + RW.INO_CLEAR;
+  if (!bI && minN < lim) bI = '柱が井の頭線の線路から ' + minN.toFixed(1) + 'm';
+  ok('井の頭線のホームと高架の柱', bI === null && nI > 100, '縁=線路+' + RW.INO_EDGE.toFixed(2) + '・幅' + RW.INO_W + 'm・上面=床・柱は線路から ' + lim.toFixed(2) + 'm 以遠',
+    bI || '縁の差 ' + wE.toFixed(3) + 'm(' + nI + '点)・柱は ' + minN.toFixed(1) + 'm');
 }
 /* ---- 出力 ---- */
 const w = (s, n) => String(s) + ' '.repeat(Math.max(0, n -
