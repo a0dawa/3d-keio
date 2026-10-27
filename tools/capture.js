@@ -215,7 +215,7 @@ async function runWorker(id, pw, exe, shots, log) {
     for (let k = 0; k < sh.n; k++) {
       if (sh.skip && sh.skip.has(k)) continue;
       const u = sh.n > 1 ? k / (sh.n - 1) : 0;
-      const data = await page.evaluate(([sh, u, k, far], ) => {
+      const data = await page.evaluate(async ([sh, u, k, far], ) => {
         window.__cine.tTo(k);
         if (sh.kind === 'station') { CINE.setFar(0); CINE.shotStation(sh.sta, u); }
         else {
@@ -223,6 +223,8 @@ async function runWorker(id, pw, exe, shots, log) {
           if (far) CINE.setFar(far, far * 0.08, far * 0.83); else CINE.setFar(0);
           if (sh.kind === 'front') CINE.shotFront(s); else CINE.shotAerial(s, u);
         }
+        // 航空写真:このカメラの窓のタイルが揃うまで待つ(読み込みの速さで絵が変わらない=どのワーカでも同じ絵)
+        if (typeof ORTHO_MGR !== 'undefined' && ORTHO_MGR) await ORTHO_MGR.settle(60000);
         const sub = sh.sub2 || '';
         return window.__cine.grab(sh.main, sub);
       }, [sh, u, sh.f0 + k, sh.kind === 'front' ? OPT.far : 0]);

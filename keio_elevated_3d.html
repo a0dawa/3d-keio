@@ -159,6 +159,7 @@
   <button id="btnTrain" class="on">列車走行 ON</button>
   <button id="btnLabel" class="on">駅ラベル ON</button>
   <button id="btnXing">踏切名 OFF</button>
+  <button id="btnPhoto" class="on">航空写真 ON</button>
   <div class="seg" id="segTime" role="group" aria-label="時刻"><b>時刻</b><button data-k="morning">朝</button><button data-k="noon">昼</button><button data-k="evening">夕</button><button data-k="night">夜</button></div>
   <div class="seg" id="segSeason" role="group" aria-label="季節"><b>季節</b><button data-k="spring">春</button><button data-k="summer">夏</button><button data-k="autumn">秋</button><button data-k="winter">冬</button></div>
   <div class="seg" id="segWeather" role="group" aria-label="天候"><b>天候</b><button data-k="clear">晴れ</button><button data-k="cloudy">曇り</button><button data-k="rain">雨</button><button data-k="heavy">大雨</button><button data-k="thunder">雷</button><button data-k="snow">雪</button></div>
@@ -706,9 +707,81 @@ const scene=new THREE.Scene();
 scene.background=srgb(SKY.HOR);
 scene.fog=new THREE.Fog(srgb(SKY.HOR),2600,11500);
 const camera=new THREE.PerspectiveCamera(46,2,2,30000);
+// スマートフォン。3章で決める(航空写真の画像の数・4章の写真テクスチャ・最後の負荷の軽減が使う)
+const IS_MOBILE=/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)||
+                (navigator.maxTouchPoints>1&&Math.min(screen.width,screen.height)<900);
 // 撮影モード(13章)が時刻ごとに色と強さを差し替えるので、変数で持つ
 const hemi=new THREE.HemisphereLight(srgb(0xe4ecf4),srgb(0x8a8d90),.82);scene.add(hemi);
 const sun=new THREE.DirectionalLight(srgb(0xfff4e0),.72);sun.position.set(2400,3200,1600);scene.add(sun);
+/* ---- 航空写真(2026-10-26 利用者指示:候補1「国土地理院の航空写真を、閲覧時に読み込んで地表と屋根に貼る」) ----------
+   国土地理院の地理院タイル「全国最新写真(シームレス)」を閲覧時に cyberjapandata.gsi.go.jp から読む(CORS 可。画像は同梱しない=
+   写真を同梱しない方針のまま。繋がらなければ今の色で描く)。出典は画面の右下と CREDITS.txt。
+   ・貼る所:地表の網・地表に敷いた面(道路・緑地・駐車場。水面と計画の放射23号線は除く)・歩道の上面・玉川上水の緑道・建物の
+     屋根(上向きの面。近くの形・切妻・中遠の箱。PLATEAU の写真がある LOD2 の面はそちらのまま)。真上から投影する
+   ・線路の構造物の帯(高架下と側道=建物を置かない帯と同じ幅:桁の半幅〔掘割は側ごとの幅〕+5.2m)と、井の頭線・世田谷線の帯は
+     今の色のまま(写真は工事中の今の姿で、踏切や今の線路が写っている)。帯の印は帯の縁からの距離の場(4m/画素。双線形で縁がぼけない)
+   ・3段:近 z18(1画素 約0.49m・8×8枚=約1.0km 四方)・中 z16(約1.9m・8×8枚=約4.0km)・遠 z14(約7.8m・地表全体を1枚に)。
+     近・中の窓はカメラの前に置き、タイルを画像の決まった枠(番号の n の剰余)へ書く(トーラス状。窓が動いても書き直すのは新しく
+     入るタイルだけ)。α=1 が「その枠に正しいタイルがある」印(枠を空けるときは α=0 で塗る)。色は α を掛けた値として重ねる
+     (双線形・縮小の段でも、空いた枠との境が黒くならない)。スマホは近を使わず、中は 4×4 枚
+   ・ワールド(x,z)→経緯度(toXY の逆)→Web メルカトルのタイル座標。窓の原点のまわりで z の2次まで展開してシェーダへ渡す
+     (単精度でも 0.01画素。3次の残りは 5km 先で 0.2画素)
+   ・明るさ:写真は撮影したときの光(陰を含む)。晴れた昼の平らな地表の照明(半球光+太陽=1.17)と ACES を通して、写真の輝度の
+     中央値が元の写真とほぼ同じに見える係数 ORTHO_GAIN(沿線の z18 の36枚で、中央値が同じ=0.60・平均が同じ=0.67 の間)。
+     夜・雨・雪は地表と同じ係数を掛ける(applyLook) */
+const ORTHO_GAIN=0.65;
+const ORTHO_BAND_HEX=0x8f8d88;                // 写真のとき、線路の帯の中の地表(高架下・側道の舗装の灰。写真の道路の明るさに近く)
+const ORTHO_LV=[{z:18,n:IS_MOBILE?0:8,ahead:350},{z:16,n:IS_MOBILE?4:8,ahead:1400},{z:14,n:0,whole:true}];   // n=窓の一辺のタイルの数
+const ORTHO_U={
+  uOrtho0:{value:null}, uOrtho1:{value:null}, uOrtho2:{value:null}, uOrthoMask:{value:null},
+  uOr0:{value:new THREE.Vector4(0,0,0,0)}, uOr1:{value:new THREE.Vector4(0,0,0,0)}, uOr2:{value:new THREE.Vector4(0,0,0,0)},   // (x0,z0,sx,sz)
+  uOw0:{value:new THREE.Vector4(0,0,1,1)}, uOw1:{value:new THREE.Vector4(0,0,1,1)}, uOw2:{value:new THREE.Vector4(0,0,1,1)},   // (枠の原点,枚数)
+  uOq:{value:new THREE.Vector3(0,0,0)}, uOm:{value:new THREE.Vector4(0,0,0,0)},
+  uOf:{value:new THREE.Vector3(2,2,1000)},                                   // 窓の縁でぼかす速さ(近・中=0.5枚・遠=ぼかさない)
+  uOrthoOn:{value:0}, uOrthoGain:{value:new THREE.Vector3(ORTHO_GAIN,ORTHO_GAIN,ORTHO_GAIN)}, uOrthoSnow:{value:new THREE.Vector4(0,0,0,0)},
+  uOrthoBand:{value:new THREE.Vector4(0,0,0,0)},                             // 写真のとき帯の中の地表の色(舗装の灰)と割合
+};
+let ORTHO_MGR=null;                         // タイルの読み込みと窓(14章の前で作る)。無ければ写真は使わない
+// 街から外した実際の建物(PLATEAU の足跡が占有域・道路などに掛かる物。8章)。そのうち線路の帯(高架下・側道・交差鉄道)に掛かって
+// 外した物(足跡が帯の縁から ORTHO_HOLE_NEAR 以内)は、写真ではその屋根が帯の脇の地面に平らに写るので、足跡+ORTHO_HOLE_M を今の色に
+// する。道路の面に掛かるなどで外した離れた建物は写真の屋根のまま(上から見れば屋根に見える。今の色にすると無地の穴になる)
+const ORTHO_HOLES=[], ORTHO_HOLE_M=1.0, ORTHO_HOLE_NEAR=2.0;
+// シェーダ:窓ごとの写真(α を掛けた色)を遠→中→近の順に重ね、帯の印で今の色と混ぜる。top=上向きの面だけ(歩道・屋根)
+const ORTHO_FS='uniform sampler2D uOrtho0; uniform sampler2D uOrtho1; uniform sampler2D uOrtho2; uniform sampler2D uOrthoMask;\n'+
+  'uniform vec4 uOr0; uniform vec4 uOr1; uniform vec4 uOr2; uniform vec4 uOw0; uniform vec4 uOw1; uniform vec4 uOw2;\n'+
+  'uniform vec3 uOq; uniform vec4 uOm; uniform vec3 uOf; uniform float uOrthoOn; uniform vec3 uOrthoGain; uniform vec4 uOrthoSnow; uniform vec4 uOrthoBand;\n'+
+  'vec4 orthoLv(sampler2D t,vec4 o,float q,vec4 w,float fk,vec2 p){ vec2 d=p-o.xy; vec2 tc=vec2(d.x*o.z,d.y*o.w+d.y*d.y*q);\n'+
+  '  vec2 e=min(tc,w.zw-tc); float f=clamp(min(e.x,e.y)*fk,0.,1.); return texture2D(t,(w.xy+tc)/w.zw)*f; }\n'+
+  'vec4 orthoAt(vec2 p){ vec4 c=orthoLv(uOrtho2,uOr2,uOq.z,uOw2,uOf.z,p); vec4 c1=orthoLv(uOrtho1,uOr1,uOq.y,uOw1,uOf.y,p); c=c*(1.-c1.a)+c1;\n'+
+  '  vec4 c0=orthoLv(uOrtho0,uOr0,uOq.x,uOw0,uOf.x,p); return c*(1.-c0.a)+c0; }\n'+
+  'float orthoMaskAt(vec2 p){ vec2 m=(p-uOm.xy)*uOm.zw; if(m.x<0.||m.y<0.||m.x>1.||m.y>1.) return 1.;\n'+
+  '  return clamp((texture2D(uOrthoMask,m).r*255.-128.)*.1+.5,0.,1.); }\n'+
+  'vec3 orthoMix(vec3 base,vec3 pw,float top,float band){ if(uOrthoOn<=0.||top<=0.) return base;\n'+
+  '  vec4 c=orthoAt(pw.xz); float a=c.a*uOrthoOn*top; if(a<=0.) return base; float m=orthoMaskAt(pw.xz);\n'+
+  '  base=mix(base,uOrthoBand.rgb,band*uOrthoBand.a*a*(1.-m));\n'+                 // 地表:帯の中は舗装の灰(高架下・側道)。写真の読めた所だけ
+  '  float w=a*m; if(w<=0.) return base;\n'+
+  '  vec3 s=clamp(c.rgb/max(c.a,1e-3),0.,1.); vec3 lin=mix(s/12.92,pow((s+.055)/1.055,vec3(2.4)),step(.04045,s))*uOrthoGain;\n'+
+  '  return mix(base,mix(lin,uOrthoSnow.rgb,uOrthoSnow.a),w); }\n';
+const ORTHO_VS='{ vec4 ow=vec4(transformed,1.); vec3 on=objectNormal;\n#ifdef USE_INSTANCING\n ow=instanceMatrix*ow; on=mat3(instanceMatrix)*on;\n#endif\n'+
+  ' ow=modelMatrix*ow; vOrW=ow.xyz; vOrN=normalize(mat3(modelMatrix)*on); }';
+/* 材質に航空写真を足す(前の onBeforeCompile があれば先に)。top=上向きの面だけ(縁石の側面などは今の色)。
+   band=地表の網:写真を使うとき、線路の帯の中の地表を舗装の灰にする(季節の地表の色のままだと写真の中に緑の帯が浮く) */
+function orthoPatch(mat,top,band){
+  mat.userData.ortho=top?'top':'all'; if(band) mat.userData.orthoBand=true;
+  const prev=mat.onBeforeCompile, pk=mat.customProgramCacheKey;
+  mat.onBeforeCompile=function(sh,r){
+    if(prev&&prev!==THREE.Material.prototype.onBeforeCompile) prev.call(this,sh,r);
+    Object.assign(sh.uniforms,ORTHO_U);
+    sh.vertexShader='varying vec3 vOrW; varying vec3 vOrN;\n'+sh.vertexShader.replace('#include <begin_vertex>','#include <begin_vertex>\n'+ORTHO_VS);
+    sh.fragmentShader=ORTHO_FS+'varying vec3 vOrW; varying vec3 vOrN;\n'+sh.fragmentShader.replace('#include <color_fragment>',
+      '#include <color_fragment>\n diffuseColor.rgb=orthoMix(diffuseColor.rgb,vOrW,'+(top?'smoothstep(.5,.7,vOrN.y)':'1.')+','+(band?'1.':'0.')+');');
+  };
+  // シェーダの作り置きの鍵:前の手当ての鍵(無ければ前の関数の文字列)+写真の種類。同じ関数の文字列で別の材質の形を使い回さない
+  mat.customProgramCacheKey=function(){
+    const base=(pk&&pk!==THREE.Material.prototype.customProgramCacheKey)?pk.call(this):((prev&&prev!==THREE.Material.prototype.onBeforeCompile)?String(prev):'');
+    return base+'|ortho'+(top?'T':'A')+(band?'B':''); };
+  return mat;
+}
 /* ---- 影 ---------------------------------------------------------------------
    事業区間は約8.6km×幅±470m。1枚の影マップで全域を覆うとテクセルが数m角になり
    使い物にならないので、**太陽の向きは固定したまま影の写す範囲だけをカメラに
@@ -898,6 +971,7 @@ const MAT={
   vdVC:M(0xffffff,{vertexColors:true}),
   tie:M(0xb4b1a8),
 };
+orthoPatch(MAT.ground,false,true);           // 航空写真(3章)。線路の帯の中は舗装の灰
 const wireMat=mkMat('LineBasicMaterial',{color:0x3d434a});
 // レール・ガラス・水面は Standard なので scene.environment から空を映す
 // (envMapIntensity は材質側で指定済み)。
@@ -1192,6 +1266,7 @@ function lodStruct(){
   if(typeof pedsDraw==='function') pedsDraw();    // 歩く人(近い人だけ)
   if(typeof carsDraw==='function') carsDraw();    // 自動車(近い車だけ)
   if(typeof flowDraw==='function') flowDraw();    // 乗り降りの人(近い人だけ)
+  if(ORTHO_MGR) ORTHO_MGR.update();               // 航空写真の窓とタイル(3章・14章の前)
 }
 
 /* ============ 4. 地表・道路・水緑・施設(平面図準拠) ============ */
@@ -1635,7 +1710,7 @@ function plrDecode(b64,magic){             // 2進 → [{k,sec,P}](plateau_land.
 if(PLL){
   const CH=new Map(), CHS=600;
   // 一般と幹線の色は頂点カラーで塗り分け、1つの材質にする(まとまりごとに描画1回)
-  const MAT_RD=mkMat('MeshLambertMaterial',{color:0xffffff,vertexColors:true}), RD_COL=[0x8f949a,0x7c8187,0x7c8187].map(h=>setSrgb(new THREE.Color(),h));
+  const MAT_RD=orthoPatch(mkMat('MeshLambertMaterial',{color:0xffffff,vertexColors:true})), RD_COL=[0x8f949a,0x7c8187,0x7c8187].map(h=>setSrgb(new THREE.Color(),h));   // 航空写真(3章)
   const elev=R=>R.k===2&&R.sec===2;
   for(const R of plrDecode(PLL.road64)){
     const P=R.P; let inDom=false;
@@ -1731,7 +1806,7 @@ if(PLL){
         if(up>=0) c.I.push(o+t[0],o+t[1],o+t[2]); else c.I.push(o+t[0],o+t[2],o+t[1]);
       }
     }
-    if(W.I.length){const m=new THREE.Mesh(facesGeo(W.P,W.N,W.I),MAT.water); m.userData.flat=true; scene.add(m);}
+    if(W.I.length){const m=new THREE.Mesh(facesGeo(W.P,W.N,W.I),MAT.water); m.userData.flat=true; m.name='水面'; scene.add(m); LU.waterMesh=m;}   // 航空写真が出ている間は隠す(14章の前の ORTHO_MGR)
     LU.col=new THREE.Color(1,1,1);
     LU.tint=function(col){                 // 緑の頂点の色 = 種別の係数 × col(リニア)
       LU.col.copy(col);
@@ -1870,8 +1945,9 @@ const NSx=[];{let x=DOM.x0+70;while(x<DOM.x1-40){NSx.push(x);x+=92+Math.random()
 // 整備側道の歩道の帯(高架の両側に沿う緑がかった帯)は描かない(利用者指示:高架に沿う緑の道のようなものは削除)。
 // 高架下と側道の範囲(桁半幅+5.2m)は引き続き建物・樹木の占有域
 // 水緑・施設
-if(TER.H) terStrip(15,460,MAT.green,JOSUI_X,.08,0,.2); else   // 地形があれば地表の 0.08m 上(緑地 0.05 と道路 0.10 の間)
-box(15,.3,460,MAT.green,JOSUI_X,.15,0,.2);        // 玉川上水(暗渠緑道)
+const MAT_JOSUI=orthoPatch(M(0x9cb98a),true);     // 玉川上水の緑道は実在するので上面に航空写真(3章)。駅前広場の植え込みは MAT.green のまま
+if(TER.H) terStrip(15,460,MAT_JOSUI,JOSUI_X,.08,0,.2); else   // 地形があれば地表の 0.08m 上(緑地 0.05 と道路 0.10 の間)
+box(15,.3,460,MAT_JOSUI,JOSUI_X,.15,0,.2);        // 玉川上水(暗渠緑道)
 /* 和田堀給水所・変電所の模式の箱と池は、実データ(PLATEAU の建物)があるときは描かない。
    実際の施設と周りの家・道路・緑地がデータにあり、模式の箱(430m×230m)がそれらを隠していた(占有域でも203棟を消していた) */
 if(!HAS_PLB){
@@ -4266,8 +4342,6 @@ function occAdd(px,pz,r){
    ・樹木と街灯は足跡の中・縁に置かない(occFree が足跡の格子 PLB_GRID も見る) */
 const PLB=(typeof globalThis!=='undefined'&&globalThis.PLATEAU_BLDG&&globalThis.PLATEAU_BLDG.b64)?globalThis.PLATEAU_BLDG:null;
 const PLB_GRID=new Map(), PLB_CELL=26, PLB_PAD=6;
-const IS_MOBILE=/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)||
-                (navigator.maxTouchPoints>1&&Math.min(screen.width,screen.height)<900);
 /* 写真テクスチャ(別ファイル plateau_tex.js があるとき。2026-10-25 利用者指示:駅の周りの LOD2 の建物に PLATEAU の写真を貼る)。
    tools/plateau_tex.py が LOD2 の面ごとの写真の座標と、s の並びの近い建物の写真を詰め合わせた画像(2048 画素四方の JPEG・
    0.2m/画素まで)を作る。PLATEAU の写真(航空写真から作った壁・屋根の画像)も CC BY 4.0。
@@ -4462,16 +4536,18 @@ function bldWinAt(t,u,y,top,nx,nz){
 }
 function bldWinPatch(mat,photo){                     // photo=写真の面(昼の暗いガラスは塗らない。夜の明かりは同じ)
   mat.userData.bldWin=true; mat.userData.bldWinPhoto=!!photo;
+  if(!photo) mat.userData.ortho='roof';               // 屋根(上向きの面)に航空写真(3章)。PLATEAU の写真の面はそちらのまま
   const par=BLD_WIN.map((r,i)=>(i?'else ':'')+(i<BLD_WIN.length-1?'if(t<'+(i+0.5)+')':'')+'{P='+r[0].toFixed(3)+';ww='+r[1].toFixed(3)+';fh='+r[2].toFixed(3)+';y0='+r[3].toFixed(3)+';y1='+r[4].toFixed(3)+';d0='+r[5].toFixed(3)+';d1='+r[6].toFixed(3)+';}').join(' ');
   mat.onBeforeCompile=function(sh){
-    Object.assign(sh.uniforms,BLD_WIN_U);
+    Object.assign(sh.uniforms,BLD_WIN_U); if(!photo) Object.assign(sh.uniforms,ORTHO_U);
     sh.vertexShader='attribute vec4 aBld; attribute vec2 iBld; varying vec4 vBld; varying vec3 vBW; varying vec3 vBN;\n'+
       sh.vertexShader.replace('#include <begin_vertex>','#include <begin_vertex>\n { vec4 w=vec4(transformed,1.); vec3 n=objectNormal;\n'+
       '#ifdef USE_INSTANCING\n w=instanceMatrix*w; n=mat3(instanceMatrix)*n; vBld=vec4(iBld.x,(modelMatrix*instanceMatrix*vec4(0.,.5,0.,1.)).y,iBld.y,(modelMatrix*instanceMatrix*vec4(0.,-.5,0.,1.)).y);\n'+
       '#else\n vBld=aBld;\n#endif\n w=modelMatrix*w; vBW=w.xyz; vBN=normalize(mat3(modelMatrix)*n); }');
-    sh.fragmentShader='uniform float uWinNight; varying vec4 vBld; varying vec3 vBW; varying vec3 vBN;\n'+
+    sh.fragmentShader=(photo?'':ORTHO_FS)+'uniform float uWinNight; varying vec4 vBld; varying vec3 vBW; varying vec3 vBN;\n'+
       'void bwPar(float t,out float P,out float ww,out float fh,out float y0,out float y1,out float d0,out float d1){ '+par+' }\n'+
       sh.fragmentShader.replace('#include <color_fragment>','#include <color_fragment>\n float bwWin=0.; vec2 bwCell=vec2(0.);\n'+
+      (photo?'':' diffuseColor.rgb=orthoMix(diffuseColor.rgb,vBW,smoothstep(.5,.7,vBN.y),0.);\n')+   // 屋根(上向きの面)に航空写真
       ' if(abs(vBN.y)<.5){ float P,ww,fh,y0,y1,d0,d1; bwPar(vBld.x,P,ww,fh,y0,y1,d0,d1); vec2 tw=normalize(vec2(-vBN.z,vBN.x)); float u=dot(vBW.xz,tw);\n'+
       '   float yr=vBW.y-vBld.w, cu=fract(u/P), fl=floor(yr/fh), cy=yr-fl*fh, cid=floor(u/P)+floor(tw.x*3.+.5)*7.+floor(tw.y*3.+.5)*13.;\n'+
       '   float pd=mix(d0,d1,clamp(-normalize(vBN.xz).y,0.,1.)), hc=fract(sin(cid*12.9898+4.1)*43758.5453);\n'+   // 列を間引く(北向きほど多く)
@@ -4542,7 +4618,7 @@ if(PLB){
         if(!cityFree(s+(x-cx)*tx+(z-cz)*tz, off+(x-cx)*nx+(z-cz)*nz, 0.3, x, z, 0.6)) ok=false;   // 道路の縁に接して建つ実際の建物は残す(食い込み0.3mまで)
       }
     }
-    if(!ok) continue;
+    if(!ok){ ORTHO_HOLES.push(P); continue; }        // 外した建物の足跡は航空写真を使わない(3章 ORTHO_HOLES)
     // 向きを合わせた外接矩形(辺の向きのうち面積が最小のもの)
     let best=null;
     for(let i=0;i<P.length;i++){
@@ -8055,7 +8131,7 @@ const PED_NEAR=70, PED_FAR=250;
         quad(tp(e0[0],ROAD_Y[1],e0[2]),tp(e1[0],ROAD_Y[1],e1[2]),tp(e1[0],yT,e1[2]),tp(e0[0],yT,e0[2]),[sd*n0[0],0,sd*n0[1]],0xa8a6a0); }
     }
   }
-  const MS=mkMat('MeshLambertMaterial',{vertexColors:true,side:THREE.DoubleSide});
+  const MS=orthoPatch(mkMat('MeshLambertMaterial',{vertexColors:true,side:THREE.DoubleSide}),true);   // 上面だけ航空写真(3章)。縁石の側面は今の色
   for(const q of CH.values()){
     const g=facesGeo(q.P,q.N,q.I,q.C), m=new THREE.Mesh(g,MS); g.computeBoundingSphere&&g.computeBoundingSphere();
     m.name='歩道'; m.receiveShadow=true; m.userData.flat=true; scene.add(m);
@@ -8538,7 +8614,7 @@ function resize(){
 }
 addEventListener('resize',resize);resize();
 
-// ---- スマートフォン最適化(横画面前提)。IS_MOBILE は4章の街並みの前で決める(写真テクスチャをスマホで使わない判定に要る) ----
+// ---- スマートフォン最適化(横画面前提)。IS_MOBILE は3章で決める(航空写真・写真テクスチャをスマホで減らす判定に要る) ----
 if(IS_MOBILE){
   renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));   // 解像度上限で描画負荷を抑える
   LOD_NEAR=260;                                             // 高精細モデルの適用範囲を短縮
@@ -8951,6 +9027,9 @@ const CINE=(function(){
       MAT.ground.color.lerp(srgb(URBAN_GROUND).multiplyScalar(dark*wet),URBAN_MIX);
     }
     if(cov) MAT.ground.color.lerp(SNOWC,cov);
+    // 航空写真(3章)も地表と同じ係数:夜は暗く・雨は濡れて暗く・雪は白へ寄せる
+    { const g=ORTHO_GAIN*dark*wet; ORTHO_U.uOrthoGain.value.set(g,g,g); ORTHO_U.uOrthoSnow.value.set(SNOWC.r,SNOWC.g,SNOWC.b,cov);
+      const bc=srgb(ORTHO_BAND_HEX).multiplyScalar(dark*wet).lerp(SNOWC,cov); ORTHO_U.uOrthoBand.value.set(bc.r,bc.g,bc.b,1); }
     // 樹木は登録簿の順=インスタンスの順。種別(桜/一般)で色を選ぶ
     const col=new THREE.Color();
     for(let i=0;i<CITY.trees.length;i++){
@@ -9136,6 +9215,194 @@ window.CINE=CINE;
 // 検証用(tools/verify_k8render.js):車両だけを白い一様な光の正射影で描き、
 // v4 の照合ツール(側面45項目・前面14項目)で測るための入口
 window.K8API={makeCar:makeCar, setCarDoors:setCarDoors, renderer:renderer, K8:K8, scene:scene};
+
+/* ---- 航空写真の読み込み(3章の ORTHO_U の画像を作り、毎コマ lodStruct から update()) ----
+   ・窓の置き場:カメラの前の地表(視線が地表に当たる所。当たらなければ ahead[m] 先。近は 350m・中は 1400m まで先へ寄せる)。
+     窓の中心から 0.75 枚ずれたら、1枚単位で置き直す(行ったり来たりで置き直しを繰り返さない)
+   ・読み込み:同時に 8枚まで。遠→中→近の順に、窓の中心に近いタイルから。読めたタイルは1コマに 6枚まで画像へ書く(撮影中と
+     settle() は全部)。失敗したタイル(写真の無い所)はその段を使わない(下の段が見える)。初めの 12枚が全部失敗したら読むのをやめる
+     (オフライン。今の色のまま)
+   ・読んだ画像は最近使った 300枚(スマホ 100枚)を手元に置く。窓が戻れば読み直さずに書く
+   ・settle():今のカメラの窓のタイルが揃う(か失敗する)まで待つ。撮影(capture.js)と検証が毎コマの前に呼ぶ=いつ撮っても同じ絵 */
+ORTHO_MGR=(function(){
+  if(typeof Image==='undefined') return null;
+  const URL0='https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/', R2D=180/Math.PI, P2=z=>Math.pow(2,z);
+  const lonOf=x=>LON0+x/MLON, latOf=z=>LAT0-z/MLAT;                     // toXY の逆
+  const tX=(x,zm)=>(lonOf(x)+180)/360*P2(zm);
+  const tY=(z,zm)=>{const r=latOf(z)/R2D; return (1-Math.log(Math.tan(r)+1/Math.cos(r))/Math.PI)/2*P2(zm);};
+  const xOf=(tx,zm)=>(tx/P2(zm)*360-180-LON0)*MLON;
+  const zOf=(ty,zm)=>-(Math.atan(Math.sinh(Math.PI*(1-2*ty/P2(zm))))*R2D-LAT0)*MLAT;
+  // 窓の原点(タイル ox,oy の北西の隅)のまわりの展開:tc.x=(x−x0)·sx, tc.y=(z−z0)·sz+(z−z0)²·q
+  function frameOf(ox,oy,zm){
+    const x0=xOf(ox,zm), z0=zOf(oy,zm), r=latOf(z0)/R2D, k=P2(zm)/(360*MLAT);
+    return {x0:x0,z0:z0,sx:P2(zm)/(360*MLON),sz:k/Math.cos(r),q:-k*Math.tan(r)/Math.cos(r)*Math.PI/(360*MLAT)};
+  }
+  const setQ=(i,q)=>{const v=ORTHO_U.uOq.value; if(i===0)v.x=q; else if(i===1)v.y=q; else v.z=q;};
+  const pot=n=>{let p=1; while(p<n) p*=2; return p;};
+  const mkTex=(nx,ny,rep)=>{ const t=new THREE.DataTexture(null,nx*256,ny*256,THREE.RGBAFormat,THREE.UnsignedByteType);
+    t.wrapS=t.wrapT=rep?THREE.RepeatWrapping:THREE.ClampToEdgeWrapping; t.magFilter=THREE.LinearFilter; t.minFilter=THREE.LinearMipmapLinearFilter;
+    t.generateMipmaps=true; t.flipY=false; t.anisotropy=8; t.needsUpdate=true; return t; };
+  const CLR=new THREE.DataTexture(new Uint8Array(256*256*4),256,256,THREE.RGBAFormat,THREE.UnsignedByteType), SRC=new THREE.Texture(), POS=new THREE.Vector2();
+  const LV=ORTHO_LV.map((L,i)=>({i:i,z:L.z,n:L.n,ahead:L.ahead,whole:!!L.whole,ox:null,oy:null,nx:0,ny:0,slots:null,order:null,tex:null,
+    u:ORTHO_U['uOr'+i].value,w:ORTHO_U['uOw'+i].value}));
+  for(const L of LV){
+    if(L.whole){ const x0=Math.floor(tX(TER.X0,L.z)), x1=Math.floor(tX(TER.X1,L.z)), y0=Math.floor(tY(TER.Z0,L.z)), y1=Math.floor(tY(TER.Z1,L.z));
+      L.ox=x0; L.oy=y0; L.nx=pot(x1-x0+1); L.ny=pot(y1-y0+1); }   // 遠:地表全体を覆うタイル(一辺を2の冪に)
+    else if(L.n){ L.nx=L.ny=L.n; }
+    else continue;                                                // スマホの近
+    L.tex=mkTex(L.nx,L.ny,!L.whole); ORTHO_U['uOrtho'+L.i].value=L.tex;
+    L.slots=[]; for(let j=0;j<L.ny;j++) for(let i=0;i<L.nx;i++) L.slots.push({sx:i,sy:j,tx:null,ty:null,ok:false,has:false});
+    if(L.whole){ for(const S of L.slots){S.tx=L.ox+S.sx; S.ty=L.oy+S.sy;}
+      const f=frameOf(L.ox,L.oy,L.z); L.u.set(f.x0,f.z0,f.sx,f.sz); setQ(L.i,f.q); L.w.set(0,0,L.nx,L.ny); }
+  }
+  for(const L of LV) if(!L.tex){ const t=new THREE.DataTexture(new Uint8Array(4),1,1,THREE.RGBAFormat,THREE.UnsignedByteType);
+    t.needsUpdate=true; ORTHO_U['uOrtho'+L.i].value=t; }            // 使わない段(スマホの近)は透明な1画素(画像の無い枠を読ませない)
+  const ORDER=[LV[2],LV[1],LV[0]].filter(L=>L.slots);              // 遠→中→近
+  const sortSlots=L=>{ const cx=L.ox+L.nx/2, cy=L.oy+L.ny/2; L.order=L.slots.slice().sort((a,b)=>Math.hypot(a.tx+0.5-cx,a.ty+0.5-cy)-Math.hypot(b.tx+0.5-cx,b.ty+0.5-cy)); };
+  for(const L of ORDER) if(L.whole) sortSlots(L);
+  /* 線路の帯の印:帯の縁からの距離[m](帯の外が正)を 128+10×距離 の 8bit で(±12.7m)。4m/画素の格子で地表の範囲を覆う。
+     帯=事業区間の中の |off| ≤ 桁の半幅(掘割は側ごとの幅)+5.2m(建物を置かない帯 cityFree と同じ)と、交差鉄道(KEEP の直線)と、
+     その帯に掛かって街から外した実際の建物の足跡+1m(ORTHO_HOLES のうち帯の縁から ORTHO_HOLE_NEAR 以内の物) */
+  const MC=4, MW=Math.ceil((TER.X1-TER.X0)/MC), MH=Math.ceil((TER.Z1-TER.Z0)/MC), MD=new Uint8Array(MW*MH).fill(255);
+  const XL=KEEP.filter(q=>q.k==='l');
+  const half=(s,sg)=>(s>DECK_END?cutHalf(s,sg):deckHalf(s))+5.2;
+  function bandDist(x,z){
+    const q=prjXY(x,z), sc=clamp(q.s,DOM.x0,DOM.x1);
+    let d=Math.max(Math.abs(q.off)-half(sc,q.off<0?-1:1),DOM.x0-q.s,q.s-DOM.x1);
+    for(const L of XL){ const dx=x-L.A.x, dz=z-L.A.z, du=dx*L.A.ax+dz*L.A.az, dn=dx*L.A.nx+dz*L.A.nz;
+      const a=Math.max(L.u0-du,du-L.u1), b=Math.abs(dn)-L.hw; d=Math.min(d,(a>0&&b>0)?Math.hypot(a,b):Math.max(a,b)); }
+    return d;
+  }
+  {
+    const seen=new Uint8Array(MW*MH);
+    const put=(x,z)=>{ const i=Math.floor((x-TER.X0)/MC), j=Math.floor((z-TER.Z0)/MC); if(i<0||j<0||i>=MW||j>=MH) return;
+      const k=j*MW+i; if(seen[k]) return; seen[k]=1;
+      MD[k]=Math.max(0,Math.min(255,Math.round(128+10*bandDist(TER.X0+(i+0.5)*MC,TER.Z0+(j+0.5)*MC)))); };
+    for(let s=DOM.x0-20;s<=DOM.x1+20;s+=2) for(let o=-46;o<=46;o+=2){ const f=frame(s,o); put(f.x,f.z); }
+    for(const L of XL) for(let u=L.u0-20;u<=L.u1+20;u+=2) for(let v=-(L.hw+20);v<=L.hw+20;v+=2) put(L.A.x+L.A.ax*u+L.A.nx*v,L.A.z+L.A.az*u+L.A.nz*v);
+    // 線路の帯に掛かって外した実際の建物の足跡+ORTHO_HOLE_M(帯との和=距離の小さい方)。値が飽和する 12.7m の外までは測らない
+    const nearBand=P=>{ for(let i=0;i<P.length;i++){ const a=P[i], c=P[(i+1)%P.length], m=Math.max(1,Math.ceil(Math.hypot(c[0]-a[0],c[1]-a[1])/2));
+      for(let k=0;k<m;k++) if(bandDist(a[0]+(c[0]-a[0])*k/m,a[1]+(c[1]-a[1])*k/m)<ORTHO_HOLE_NEAR) return true; } return false; };
+    for(const P of ORTHO_HOLES){
+      if(!nearBand(P)) continue;
+      let x0=1e9,x1=-1e9,z0=1e9,z1=-1e9; for(const p of P){ x0=Math.min(x0,p[0]); x1=Math.max(x1,p[0]); z0=Math.min(z0,p[1]); z1=Math.max(z1,p[1]); }
+      const i0=Math.max(0,Math.floor((x0-14-TER.X0)/MC)), i1=Math.min(MW-1,Math.floor((x1+14-TER.X0)/MC));
+      const j0=Math.max(0,Math.floor((z0-14-TER.Z0)/MC)), j1=Math.min(MH-1,Math.floor((z1+14-TER.Z0)/MC));
+      for(let j=j0;j<=j1;j++) for(let i=i0;i<=i1;i++){ const k=j*MW+i, d=polyDist(P,TER.X0+(i+0.5)*MC,TER.Z0+(j+0.5)*MC)-ORTHO_HOLE_M;
+        MD[k]=Math.min(MD[k],Math.max(0,Math.min(255,Math.round(128+10*d)))); }
+    }
+  }
+  const MT=new THREE.DataTexture(MD,MW,MH,THREE.LuminanceFormat,THREE.UnsignedByteType);
+  MT.magFilter=THREE.LinearFilter; MT.minFilter=THREE.LinearFilter; MT.generateMipmaps=false; MT.flipY=false; MT.unpackAlignment=1; MT.needsUpdate=true;
+  ORTHO_U.uOrthoMask.value=MT; ORTHO_U.uOm.value.set(TER.X0,TER.Z0,1/(MW*MC),1/(MH*MC));
+  // シェーダと同じ式(検証用):帯の印の双線形と、写真を使う割合(0=今の色・1=写真)
+  function maskAt(x,z){
+    const u=(x-TER.X0)/MC-0.5, v=(z-TER.Z0)/MC-0.5; if(u<-0.5||v<-0.5||u>MW-0.5||v>MH-0.5) return 1;
+    const i=clamp(Math.floor(u),0,MW-2), j=clamp(Math.floor(v),0,MH-2), a=clamp(u-i,0,1), b=clamp(v-j,0,1), g=(ii,jj)=>MD[jj*MW+ii];
+    const m=((g(i,j)*(1-a)+g(i+1,j)*a)*(1-b)+(g(i,j+1)*(1-a)+g(i+1,j+1)*a)*b);
+    return clamp((m-128)*0.1+0.5,0,1);
+  }
+  /* 窓の置き場:視線が地表に当たる所(当たらなければ ahead 先)。カメラの前の地表 */
+  const _d=new THREE.Vector3();
+  function center(ahead){
+    const p=camera.position; camera.getWorldDirection(_d);
+    const fh=Math.hypot(_d.x,_d.z); if(!(fh>1e-4)) return {x:p.x,z:p.z};
+    const h=Math.max(1,p.y-terH(p.x,p.z)), pitch=Math.atan2(-_d.y,fh), D=pitch>0.01?h/Math.tan(pitch):1e9, d=Math.min(D,ahead);
+    return {x:p.x+_d.x/fh*d, z:p.z+_d.z/fh*d};
+  }
+  /* 画像の枠へ書く。縮小の段(mipmap)の作り直しは重い(2048 四方。ソフトウェアの描画では 1回 数十ms)ので、書くときは作り直さず、
+     コマの終わりに画像ごとに1回だけ(その画像へ最後に書いたものを、作り直しを付けてもう一度書く) */
+  const LAST=new Map();
+  function blit(L,S,src){ POS.set(S.sx*256,S.sy*256);
+    L.tex.generateMipmaps=!L.up; L.up=true;                       // 初めての書き込みは画像を GPU に作るので段も作る
+    renderer.copyTextureToTexture(POS,src,L.tex); L.tex.generateMipmaps=true;
+    LAST.set(L,{x:S.sx*256,y:S.sy*256,src:src===CLR?CLR:src.image}); }
+  function mips(){ for(const [L,o] of LAST){ POS.set(o.x,o.y); if(o.src===CLR) renderer.copyTextureToTexture(POS,CLR,L.tex); else { SRC.image=o.src; renderer.copyTextureToTexture(POS,SRC,L.tex); } } LAST.clear(); }
+  function clearSlot(L,S){ blit(L,S,CLR); S.has=false; }   // α=0 で塗る
+  function place(L){
+    const c=center(L.ahead), cx=tX(c.x,L.z), cy=tY(c.z,L.z), n=L.n;
+    if(L.ox!==null&&Math.abs(cx-(L.ox+n/2))<0.75&&Math.abs(cy-(L.oy+n/2))<0.75) return;
+    const ox=Math.round(cx-n/2), oy=Math.round(cy-n/2);
+    if(ox===L.ox&&oy===L.oy) return;
+    L.ox=ox; L.oy=oy;
+    for(const S of L.slots){                                    // 枠 sx に入るのは窓の中で番号が sx と n の剰余で等しいタイル
+      const tx=ox+(((S.sx-ox)%n)+n)%n, ty=oy+(((S.sy-oy)%n)+n)%n;
+      if(tx!==S.tx||ty!==S.ty){ if(S.has) clearSlot(L,S); S.tx=tx; S.ty=ty; S.ok=false; }
+    }
+    const f=frameOf(ox,oy,L.z); L.u.set(f.x0,f.z0,f.sx,f.sz); setQ(L.i,f.q); L.w.set(((ox%n)+n)%n,((oy%n)+n)%n,n,n);
+    sortSlots(L);
+  }
+  // 読み込み
+  let on=true, active=0, tries=0, fails=0, dead=false, frameNo=0, nOk=0, cred=null;
+  try{ on=localStorage.getItem('keio3d.photo')!=='0'; }catch(e){}
+  const cache=new Map(), MAXA=8, CACHE_MAX=IS_MOBILE?100:300;
+  const keyOf=(L,S)=>L.z+'/'+S.tx+'/'+S.ty;
+  function want(L,S){
+    const k=keyOf(L,S); let e=cache.get(k);
+    if(e){ e.t=frameNo; return e; }
+    if(active>=MAXA||dead) return null;
+    e={k:k,st:0,img:null,t:frameNo}; cache.set(k,e); active++; tries++;
+    const img=new Image(); img.crossOrigin='anonymous';
+    img.onload=()=>{ e.st=1; e.img=img; active--; };
+    img.onerror=()=>{ e.st=2; active--; fails++; if(tries>=12&&fails===tries) dead=true; };
+    img.src=URL0+k+'.jpg';
+    return e;
+  }
+  function putSlot(L,S,img){
+    SRC.image=img; blit(L,S,SRC);
+    S.ok=true; S.has=true; nOk++; if(!cred) credit(); if(nOk===1) showWater();
+  }
+  // 水面(4章の LU.waterMesh):写真が出ている間は隠す(写真に本物の川面が写っている。空を映す水面だけが白く浮く)
+  function showWater(){ if(LU.waterMesh) LU.waterMesh.visible=!(on&&nOk>0); }
+  function pump(limit){
+    let n=0;
+    for(const L of ORDER) for(const S of L.order||[]){
+      if(S.ok||S.tx===null) continue;
+      const e=want(L,S); if(!e||e.st!==1) continue;
+      if(n<limit){ putSlot(L,S,e.img); n++; }
+    }
+    return n;
+  }
+  function evict(){
+    if(cache.size<=CACHE_MAX) return;
+    const inWin=new Set(); for(const L of ORDER) for(const S of L.slots) if(S.tx!==null) inWin.add(keyOf(L,S));
+    const old=[...cache.values()].filter(e=>e.st!==0&&!inWin.has(e.k)).sort((a,b)=>a.t-b.t);
+    for(let i=0;i<old.length&&cache.size>CACHE_MAX;i++) cache.delete(old[i].k);
+  }
+  function credit(){
+    try{
+      if(!cred){ cred=document.createElement('div');
+        cred.textContent='航空写真:地理院タイル(全国最新写真(シームレス))を加工';   // CREDITS.txt と同じ表記
+        cred.style.cssText='position:fixed;right:6px;bottom:22px;font:11px sans-serif;color:#334;background:rgba(255,255,255,.7);padding:1px 6px;border-radius:4px;z-index:5;pointer-events:none';
+        document.body.appendChild(cred); }
+      cred.style.display=on?'':'none';
+    }catch(e){}
+  }
+  function update(all){
+    if(!on) return;
+    frameNo++;
+    for(const L of ORDER) if(!L.whole) place(L);
+    pump(all||cineOn?1e9:6);
+    mips();                                                      // 書いた画像の縮小の段を1回ずつ作り直す
+    if(frameNo%60===0) evict();
+  }
+  // 今のカメラの窓のタイルが揃う(か失敗する)まで待つ。戻り値は stat()
+  function pending(){ if(dead) return 0; let n=0; for(const L of ORDER) for(const S of L.slots){ if(S.ok||S.tx===null) continue; const e=cache.get(keyOf(L,S)); if(!e||e.st===0) n++; } return n; }
+  function settle(ms){
+    return new Promise(res=>{ const t0=Date.now();
+      const chk=()=>{ update(true); if(!on||dead||pending()===0||Date.now()-t0>(ms||60000)) res(stat()); else setTimeout(chk,30); };
+      chk(); });
+  }
+  function stat(){ return {on:on,dead:dead,tries:tries,fails:fails,cache:cache.size,put:nOk,pending:pending(),
+    levels:LV.map(L=>({z:L.z,ox:L.ox,oy:L.oy,nx:L.nx,ny:L.ny,ok:L.slots?L.slots.filter(S=>S.ok).length:0,slots:L.slots?L.slots.length:0}))}; }
+  function setOn(v){ on=!!v; ORTHO_U.uOrthoOn.value=on?1:0; try{localStorage.setItem('keio3d.photo',on?'1':'0');}catch(e){} if(cred) credit(); showWater(); }
+  setOn(on);
+  return {update:update,settle:settle,setOn:setOn,stat:stat,maskAt:maskAt,bandDist:bandDist,frameOf:frameOf,tX:tX,tY:tY,LV:LV,
+    URL0:URL0,MC:MC,MW:MW,MH:MH,get on(){return on;},get dead(){return dead;}};
+})();
+$('btnPhoto').onclick=e=>{ if(!ORTHO_MGR) return; const v=!ORTHO_MGR.on; ORTHO_MGR.setOn(v);
+  e.target.classList.toggle('on',v); e.target.textContent='航空写真 '+(v?'ON':'OFF'); };
+{ const b=$('btnPhoto'), v=!!(ORTHO_MGR&&ORTHO_MGR.on); b.classList.toggle('on',v); b.textContent='航空写真 '+(v?'ON':'OFF'); if(!ORTHO_MGR) b.disabled=true; }
 
 /* ---- 時刻・季節(画面のメニュー) ----
    撮影モードと同じ CINE.setTime / setSeason を使う(太陽の向き・光の色・露出・空・フォグ・

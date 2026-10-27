@@ -25,7 +25,9 @@ const X = require('./stub_three')(path,
   'PEDS:(typeof PEDS!=="undefined"?PEDS:[]),SIDEWALKS:(typeof SIDEWALKS!=="undefined"?SIDEWALKS:[]),pedPos:(typeof pedPos!=="undefined"?pedPos:null),' +
   'stepPeds:(typeof stepPeds!=="undefined"?stepPeds:()=>{}),KANPACHI_X:KANPACHI_X,' +
   'STRUCT:STRUCT,groundMesh:groundMesh,scene:scene,ROAD_LAMPS:(typeof ROAD_LAMPS!=="undefined"?ROAD_LAMPS:[]),' +
-  'TER:(typeof TER!=="undefined"?TER:null),terH:(typeof terH!=="undefined"?terH:()=>0),DP:DP,S_OFS:S_OFS,MAT:MAT,MAT_FENCE:MAT_FENCE,NIGHT:NIGHT');
+  'TER:(typeof TER!=="undefined"?TER:null),terH:(typeof terH!=="undefined"?terH:()=>0),DP:DP,S_OFS:S_OFS,MAT:MAT,MAT_FENCE:MAT_FENCE,NIGHT:NIGHT,' +
+  'ORTHO_MGR:(typeof ORTHO_MGR!=="undefined"?ORTHO_MGR:null),ORTHO_U:(typeof ORTHO_U!=="undefined"?ORTHO_U:null),LON0:LON0,MLON:MLON,' +
+  'lodStruct:lodStruct,renderer:renderer,LU:LU,CINE:CINE,MAT_JOSUI:(typeof MAT_JOSUI!=="undefined"?MAT_JOSUI:null),IS_MOBILE:IS_MOBILE');
 
 /* ---- 期待値(検証側が独立して持つ) ----------------------------------------
    道路の幅は4章の描画寸法(box の第1引数)。ここでは"路面の半幅"だけを持ち、
@@ -1000,6 +1002,224 @@ if (TER_ON) {
     const mu = V.reduce((a, v) => a + v, 0) / Math.max(1, V.length), sd = Math.sqrt(V.reduce((a, v) => a + (v - mu) ** 2, 0) / Math.max(1, V.length));
     const lo = Math.min(...V), hi = Math.max(...V);
     ok('起伏がある', V.length > 5000 && sd >= 1.0 && hi - lo >= 8, '起伏のそのままの所の節点:標準偏差 1m 以上・高低差 8m 以上', V.length + '点・標準偏差 ' + sd.toFixed(2) + 'm・' + lo.toFixed(1) + '〜' + hi.toFixed(1) + 'm'); }
+}
+
+/* ---- 4g. 航空写真(2026-10-26 利用者指示:国土地理院の航空写真を閲覧時に読み込み、地表と屋根に真上から貼る)-------------------
+   検証側の決まり(値はモデルから読まない。使うのは世界座標の定義 LAT0・LON0・MLAT・MLON と構造物の幅 deckHalf・cutHalf だけ):
+   (a) 座標:タイルの番号は Web メルカトル(検証側の式)。シェーダの展開 tc=((x−x0)·sx, (z−z0)·sz+(z−z0)²·q)(ORTHO_U の値で計算)が、
+       段ごとの窓の中の点で式と 0.25画素以内(遠=地表の全体を1枚にした段は 0.6画素)。枠の原点 uOw は窓の原点の n の剰余
+   (b) 枠と書き込み:近・中の枠 (sx,sy) には窓の中で番号が n の剰余で等しいタイル、遠は窓の原点からの番号。その枠への最後の書き込み
+       (renderer.copies)がそのタイルの URL(書式は検証側)。画像ごとの最後の書き込みは縮小の段も作り直す(コマの終わりに1回)。
+       画像は一辺 256×枚数・近と中は繰り返し・遠は端で止める・上下を反転しない
+   (c) 窓の置き場(lodStruct の後):視線が地表に当たる所(当たらなければ近 350m・中 1400m 先)の番号が窓の中心から 1枚以内。
+       運転台のカメラ自身も近の窓の中。遠は地表の網の全体を覆う。段は z18・16・14、近と中の窓は 8×8 枚
+   (d) 帯の印(画像の値を検証側で GL の双線形に読む。値=128+10×距離・写真の割合=clamp(距離+0.5)):構造物の半幅(掘割は側ごと)
+       +3.6m の内は 0.05 以下(高架下と側道は今の色)、+6.7m の外は 0.95 以上、事業区間の端の 3m 外も 0.95 以上、
+       井の頭線・世田谷線の建築限界の半幅−1m の内は 0.05 以下。街から外した実際の建物(plateau_bldg.js を検証側で読み、帯の中の
+       建物から街にある物を引く)のうち、足跡が構造物の半幅+4.6m に掛かる物の重心は 0.05 以下(写真では屋根が地面に平らに写る)、
+       30m 以上離れて外した物は写真のまま、街にある建物の重心は 99.5% 以上で 0.95 以上
+   (e) 材質(onBeforeCompile を通した結果):地表の網=全面+帯の灰・地表に敷いた面(道路・緑地)=全面・水面と計画の放射23号線=無し・
+       歩道と玉川上水=上面・建物=屋根(PLATEAU の写真の面は無し)。uniform は ORTHO_U そのもの
+   (f) 明るさ:昼・夏・晴れで係数 0.65、夜は地表と同じ 0.55 倍、雨は地表の色と同じ比、雪は白へ 0.5 以上寄せる。帯の灰は #8f8d88
+   (g) 切替:OFF で uOrthoOn=0・水面を出す/ON で 1・写真が読めていれば水面を隠す
+   (h) 読めないタイル:書かない(近の枠は α=0 で塗ったまま=前の窓のタイルが残らない)・待ちに数えない */
+const REF_OR = { URL: 'https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/', Z: [18, 16, 14], N: X.IS_MOBILE ? [0, 4] : [8, 8], AHEAD: [350, 1400],
+  TOL_PX: [0.25, 0.25, 0.6], GAIN: 0.65, NIGHT: 0.55, BAND_IN: 3.6, BAND_OUT: 6.7, END_OUT: 3, XR_IN: 1.0, BAND_HEX: 0x8f8d88, SNOW_MIN: 0.5,
+  HOLE_OUT: 4.0, HOLE_MISS: 0.03, KEEP_PHOTO: 0.995, FAR_RM: 30 };   // 外した建物の足跡:この距離[m]の内は帯の外の検査から除く(帯の印は 4m/画素で、足跡どうしの狭い隙間では
+                                                          // 双線形が距離を小さく読むので1画素)・重心で写真が出てよい割合・街の建物で写真が出る割合
+const OM = X.ORTHO_MGR, OU = X.ORTHO_U;
+if (!OM || !OU) ok('航空写真', false, '航空写真の読み込み(ORTHO_MGR)と uniform(ORTHO_U)がある', '無い');
+else {
+  const P2 = (z) => Math.pow(2, z), md = (a, n) => ((a % n) + n) % n;
+  const tileOf = (x, z, zm) => { const lon = X.LON0 + x / X.MLON, la = (X.LAT0 - z / X.MLAT) * Math.PI / 180;
+    return [(lon + 180) / 360 * P2(zm), (1 - Math.asinh(Math.tan(la)) / Math.PI) / 2 * P2(zm)]; };
+  const worldOf = (tx, ty, zm) => { const lon = tx / P2(zm) * 360 - 180, la = Math.atan(Math.sinh(Math.PI * (1 - 2 * ty / P2(zm)))) * 180 / Math.PI;
+    return [(lon - X.LON0) * X.MLON, -(la - X.LAT0) * X.MLAT]; };
+  const LVS = OM.LV.filter((L) => L.slots), cam = X.camera;
+  const aim = (p, y, t, ty) => { cam.position.set(p.x, y, p.z); cam.lookAt(t.x, ty, t.z); };
+  // (c) 窓の置き場
+  { let bad = null, n = 0;
+    const cases = [];
+    { const T = X.frame(2000, 0), C = X.frame(2200, 0); cases.push({ n: '俯瞰', C: C, cy: 400, T: T, ty: 0 }); }   // 高架の帯(地表 0)の上 400m から 200m 先
+    { const C = X.frame(6000, 0), T = X.frame(6200, 0), y = X.railY(6000) + 3.2; cases.push({ n: '運転台', C: C, cy: y, T: T, ty: y, cab: true }); }   // 水平に線路の先
+    { const C = X.frame(3000, 0), T = X.frame(4500, 0); cases.push({ n: '遠望', C: C, cy: 1500, T: T, ty: 0 }); }   // 1500m の高さから 1.5km 先
+    for (const K of cases) {
+      aim(K.C, K.cy, K.T, K.ty); for (let k = 0; k < 3; k++) X.lodStruct();
+      const dx = K.T.x - K.C.x, dy = K.ty - K.cy, dz = K.T.z - K.C.z, fh = Math.hypot(dx, dz), D = dy < 0 ? K.cy * fh / -dy : 1e9;
+      for (const L of LVS) { if (L.whole) continue;
+        const dist = Math.min(D, REF_OR.AHEAD[L.i]), t = tileOf(K.C.x + dx / fh * dist, K.C.z + dz / fh * dist, L.z); n++;
+        if (!(Math.abs(t[0] - (L.ox + L.nx / 2)) <= 1 && Math.abs(t[1] - (L.oy + L.ny / 2)) <= 1) && !bad)
+          bad = K.n + ' z' + L.z + ' の窓の中心 (' + (L.ox + L.nx / 2) + ',' + (L.oy + L.ny / 2) + ') ≠ 見る所 (' + t[0].toFixed(2) + ',' + t[1].toFixed(2) + ')';
+        if (K.cab && L === LVS[0]) { const c = tileOf(K.C.x, K.C.z, L.z);
+          if (!(c[0] >= L.ox + 0.5 && c[0] <= L.ox + L.nx - 0.5 && c[1] >= L.oy + 0.5 && c[1] <= L.oy + L.ny - 0.5) && !bad) bad = '運転台のカメラが近の窓の外'; } }
+    }
+    const W = LVS.find((L) => L.whole);
+    if (!W) bad = bad || '遠の段(地表の全体)が無い';
+    else { const ga = X.groundMesh.geometry.attributes.position.array; let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9;
+      for (let k = 0; k < ga.length; k += 3) { x0 = Math.min(x0, ga[k]); x1 = Math.max(x1, ga[k]); z0 = Math.min(z0, ga[k + 2]); z1 = Math.max(z1, ga[k + 2]); }
+      for (const [x, z] of [[x0, z0], [x1, z0], [x0, z1], [x1, z1]]) { const t = tileOf(x, z, W.z);
+        if (!(t[0] >= W.ox && t[0] <= W.ox + W.nx && t[1] >= W.oy && t[1] <= W.oy + W.ny) && !bad) bad = '遠の段が地表の隅 (' + x.toFixed(0) + ',' + z.toFixed(0) + ') を覆わない'; } }
+    const lvOK = LVS.map((L) => L.z).join(',') === REF_OR.Z.filter((z, i) => i === 2 || REF_OR.N[i] > 0).join(',') && LVS.every((L) => L.whole || L.n === REF_OR.N[L.i]);
+    ok('航空写真:窓の置き場', bad === null && lvOK, '視線が地表に当たる所(無ければ近 350m・中 1400m 先)が窓の中心から 1枚以内(lodStruct の後)・運転台は近の窓の中・遠は地表の全体・段 z18/16/14・窓 8×8',
+      bad || (lvOK ? n + '件・' + LVS.map((L) => 'z' + L.z + '(' + L.nx + '×' + L.ny + ')').join(' ') : '段の構成が違う ' + LVS.map((L) => 'z' + L.z + ':' + L.n).join(' '))); }
+  // (a)(b) 座標・枠と書き込み(今の窓のタイルを全部書かせる)
+  OM.update(true);
+  { const eMax = [0, 0, 0]; let bad = null, nS = 0, nOk = 0;
+    const lastCopy = new Map();
+    for (const c of X.renderer.copies) lastCopy.set(c.dst, (lastCopy.get(c.dst) || new Map()).set(c.x + ',' + c.y, c.src));
+    for (const L of LVS) { const i = L.i, o = OU['uOr' + i].value, w = OU['uOw' + i].value, q = [OU.uOq.value.x, OU.uOq.value.y, OU.uOq.value.z][i];
+      if (L.z !== REF_OR.Z[i] && !bad) bad = '段 ' + i + ' が z' + L.z;
+      for (const a of [0.02, 0.25, 0.5, 0.75, 0.98]) for (const b of [0.02, 0.25, 0.5, 0.75, 0.98]) {
+        const tx = L.ox + a * L.nx, ty = L.oy + b * L.ny, p = worldOf(tx, ty, L.z), dx = p[0] - o.x, dz = p[1] - o.y;
+        eMax[i] = Math.max(eMax[i], Math.max(Math.abs(dx * o.z - (tx - L.ox)), Math.abs(dz * o.w + dz * dz * q - (ty - L.oy))) * 256); }
+      const wx = L.whole ? 0 : md(L.ox, L.nx), wy = L.whole ? 0 : md(L.oy, L.ny);
+      if (!(w.x === wx && w.y === wy && w.z === L.nx && w.w === L.ny) && !bad) bad = 'z' + L.z + ' の枠の原点 uOw (' + [w.x, w.y, w.z, w.w].join(',') + ') ≠ (' + [wx, wy, L.nx, L.ny].join(',') + ')';
+      const T = L.tex;
+      if (T !== OU['uOrtho' + i].value && !bad) bad = 'z' + L.z + ' の画像がシェーダの uniform と違う';
+      if (!(T.image.width === L.nx * 256 && T.image.height === L.ny * 256 && T.flipY === false && T.wrapS === (L.whole ? 1001 : 1000) && T.wrapT === T.wrapS) && !bad)
+        bad = 'z' + L.z + ' の画像 ' + T.image.width + '×' + T.image.height + '・繰り返し ' + T.wrapS + '/' + T.wrapT + '・上下の反転 ' + T.flipY;
+      const LC = lastCopy.get(T) || new Map(), lastAny = X.renderer.copies.filter((c) => c.dst === T).pop();
+      if (lastAny && !lastAny.mip && !bad) bad = 'z' + L.z + ' の画像の最後の書き込みで縮小の段を作り直していない(遠くの写真が古い段のまま)';
+      for (const S of L.slots) { nS++;
+        const t = L.whole ? [L.ox + S.sx, L.oy + S.sy] : [L.ox + md(S.sx - L.ox, L.nx), L.oy + md(S.sy - L.oy, L.ny)];
+        const url = REF_OR.URL + L.z + '/' + t[0] + '/' + t[1] + '.jpg', got = LC.get(S.sx * 256 + ',' + S.sy * 256);
+        if (got === url) nOk++; else if (!bad) bad = 'z' + L.z + ' の枠 (' + S.sx + ',' + S.sy + ') の最後の書き込み ' + got + ' ≠ ' + url; }
+    }
+    ok('航空写真:座標(Web メルカトル)', eMax.every((e, i) => e <= REF_OR.TOL_PX[i]), 'シェーダの展開が式と 近・中 0.25画素・遠 0.6画素以内', LVS.map((L) => 'z' + L.z + ' ' + eMax[L.i].toFixed(3)).join('・') + '画素');
+    ok('航空写真:枠と書き込み', bad === null && nS > 0 && nOk === nS, '枠に入るのは番号が n の剰余で等しいタイル(遠は原点から)・最後の書き込みがその URL で縮小の段も作り直す・画像の大きさと繰り返し', bad || nOk + '/' + nS + '枠'); }
+  // (d) 帯の印
+  { const MT = OU.uOrthoMask.value, im = MT && MT.image, dat = im && im.data, mw = im && im.width, mh = im && im.height, om = OU.uOm.value;
+    const mwt = (x, z) => { const u = (x - om.x) * om.z, v = (z - om.y) * om.w; if (u < 0 || v < 0 || u > 1 || v > 1) return 1;
+      const fx = u * mw - 0.5, fy = v * mh - 0.5, i = Math.floor(fx), j = Math.floor(fy), a = fx - i, b = fy - j;
+      const g = (ii, jj) => dat[Math.max(0, Math.min(mh - 1, jj)) * mw + Math.max(0, Math.min(mw - 1, ii))];
+      return Math.max(0, Math.min(1, ((g(i, j) * (1 - a) + g(i + 1, j) * a) * (1 - b) + (g(i, j + 1) * (1 - a) + g(i + 1, j + 1) * a) * b - 128) * 0.1 + 0.5)); };
+    const xr = [[X.INO, X.XR.U0, X.XR.U1, REF.XRAIL_HALF['井の頭線']], [X.SETA, X.XR.SETA_U0, X.XR.SETA_U1, REF.XRAIL_HALF['世田谷線']]];
+    const nearXR = (x, z) => xr.some(([A, u0, u1, hw]) => { const dx = x - A.x, dz = z - A.z, u = dx * A.ax + dz * A.az; return u > u0 - 25 && u < u1 + 25 && Math.abs(dx * A.nx + dz * A.nz) < hw + 25; });
+    /* 街から外した実際の建物:plateau_bldg.js を検証側で読み、帯の中(重心の s が事業区間・|off|≤DOM.z)の建物のうち街(CITY.buildings)に
+       無い物。そのうち足跡(頂点と辺の 2m ごとの点)が構造物の半幅+DECK_CLEAR(4.6m)の内に掛かる物=線路の帯で外した物は、写真では
+       屋根が帯の脇の地面に平らに写るので、重心が今の色(写真 0.05 以下)であること。線路から 30m 以上離れて(井の頭線・世田谷線の帯の
+       近くも除く)外した物は写真の屋根のまま(0.95 以上が 95% 以上。今の色にすると無地の穴になる)。街にある建物の重心は 99.5% 以上で
+       写真(0.95 以上)=外した足跡の印が広がりすぎない(足跡+8m にすると 98.1% になる) */
+    const inP = (P, x, z) => { let c = false; for (let i = 0, j = P.length - 1; i < P.length; j = i++) { const a = P[i], b = P[j]; if ((a[1] > z) !== (b[1] > z) && x < (b[0] - a[0]) * (z - a[1]) / (b[1] - a[1]) + a[0]) c = !c; } return c; };
+    const segD = (P, x, z) => { let d = 1e9; for (let i = 0, j = P.length - 1; i < P.length; j = i++) { const a = P[j], b = P[i], dx = b[0] - a[0], dz = b[1] - a[1], L2 = dx * dx + dz * dz;
+      const u = L2 ? Math.max(0, Math.min(1, ((x - a[0]) * dx + (z - a[1]) * dz) / L2)) : 0; d = Math.min(d, Math.hypot(x - a[0] - dx * u, z - a[1] - dz * u)); } return d; };
+    const RM = [], KP = [];
+    { const fs = require('fs'), pth = require('path'), f = pth.join(pth.dirname(path), 'plateau_bldg.js');
+      if (fs.readFileSync(path, 'utf8').includes('<script src="plateau_bldg.js">') && fs.existsSync(f)) {
+        const gB = {}; new Function('globalThis', fs.readFileSync(f, 'utf8'))(gB);
+        const pb = Buffer.from(gB.PLATEAU_BLDG.b64, 'base64'), N = pb.readUInt32LE(4);
+        const kept = new Set(B.filter((e) => e.plateau && e.poly).map((e) => e.poly[0][0].toFixed(1) + ',' + e.poly[0][1].toFixed(1) + ',' + e.h.toFixed(1)));
+        for (let n = 0, o = 8; n < N; n++) {
+          const nv = pb.readUInt8(o), h = pb.readUInt16LE(o + 1) / 10; o += 4;
+          let x = pb.readInt32LE(o), z = pb.readInt32LE(o + 4); o += 8; const P = [[x / 10, z / 10]];
+          for (let i = 1; i < nv; i++) { x += pb.readInt16LE(o); z += pb.readInt16LE(o + 2); o += 4; P.push([x / 10, z / 10]); }
+          if (P.length < 3 || !(h > 0)) continue;
+          let A2 = 0, cx = 0, cz = 0;
+          for (let i = 0; i < P.length; i++) { const a = P[i], c = P[(i + 1) % P.length], w = a[0] * c[1] - c[0] * a[1]; A2 += w; cx += (a[0] + c[0]) * w; cz += (a[1] + c[1]) * w; }
+          if (Math.abs(A2) < 2) continue; cx /= 3 * A2; cz /= 3 * A2;
+          const q = X.prjXY(cx, cz); if (q.s < X.DOM.x0 || q.s > X.DOM.x1 || Math.abs(q.off) > X.DOM.z) continue;
+          if (kept.has(P[0][0].toFixed(1) + ',' + P[0][1].toFixed(1) + ',' + h.toFixed(1))) { KP.push({ P: P, cx: cx, cz: cz }); continue; }
+          let dmin = 1e9;   // 足跡の点の (|off| − 構造物の半幅) の最小
+          for (let i = 0; i < P.length; i++) { const a = P[i], c = P[(i + 1) % P.length], m = Math.max(1, Math.ceil(Math.hypot(c[0] - a[0], c[1] - a[1]) / 2));
+            for (let k = 0; k < m; k++) { const pq = X.prjXY(a[0] + (c[0] - a[0]) * k / m, a[1] + (c[1] - a[1]) * k / m), sg = pq.off < 0 ? -1 : 1;
+              dmin = Math.min(dmin, Math.abs(pq.off) - (pq.s > X.DECK_END ? X.cutHalf(pq.s, sg) : X.deckHalf(pq.s))); } }
+          RM.push({ P: P, cx: cx, cz: cz, d: dmin });
+        }
+      } }
+    // 外した足跡の近く(帯の外の検査から除く):格子で引く
+    const RG = new Map(), RC = 20; for (const r of RM) { let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9; for (const p of r.P) { x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); z0 = Math.min(z0, p[1]); z1 = Math.max(z1, p[1]); }
+      for (let i = Math.floor((x0 - 5) / RC); i <= Math.floor((x1 + 5) / RC); i++) for (let j = Math.floor((z0 - 5) / RC); j <= Math.floor((z1 + 5) / RC); j++) { const k = i + ',' + j; if (!RG.has(k)) RG.set(k, []); RG.get(k).push(r); } }
+    const nearRM = (x, z, d) => (RG.get(Math.floor(x / RC) + ',' + Math.floor(z / RC)) || []).some((r) => inP(r.P, x, z) || segD(r.P, x, z) < d);
+    let bad = null, nIn = 0, nOut = 0, nSkip = 0;
+    if (!dat || dat.length !== mw * mh || MT.magFilter !== 1006 || MT.minFilter !== 1006) bad = '帯の印の画像が無いか、双線形でない';
+    else {
+      for (let s = X.DOM.x0 + 1.5; s <= X.DOM.x1 - 1.5 && !bad; s += 5) for (const sg of [-1, 1]) {   // 事業区間の端ちょうどは帯の縁(0.5)
+        const hw = s > X.DECK_END ? X.cutHalf(s, sg) : X.deckHalf(s);
+        for (const o of [0, sg * hw * 0.5, sg * hw, sg * (hw + REF_OR.BAND_IN)]) { const f = X.frame(s, o), m = mwt(f.x, f.z); nIn++;
+          if (m > 0.05 && !bad) bad = '帯の中 s=' + s + ' off=' + o.toFixed(1) + ' の写真の割合 ' + m.toFixed(2); }
+        const f = X.frame(s, sg * (hw + REF_OR.BAND_OUT)); if (nearXR(f.x, f.z)) continue;
+        if (nearRM(f.x, f.z, REF_OR.HOLE_OUT)) { nSkip++; continue; }
+        const m = mwt(f.x, f.z); nOut++;
+        if (m < 0.95 && !bad) bad = '帯の外 s=' + s + ' off=' + (sg * (hw + REF_OR.BAND_OUT)).toFixed(1) + ' の写真の割合 ' + m.toFixed(2);
+      }
+      for (const s of [X.DOM.x0 - REF_OR.END_OUT, X.DOM.x0 - 20, X.DOM.x1 + REF_OR.END_OUT, X.DOM.x1 + 20]) for (const o of [-8, 0, 8]) {
+        const f = X.frame(s, o); if (nearRM(f.x, f.z, REF_OR.HOLE_OUT)) continue; const m = mwt(f.x, f.z); nOut++;
+        if (m < 0.95 && !bad) bad = '事業区間の外 s=' + s + ' off=' + o + ' の写真の割合 ' + m.toFixed(2); }
+      for (const [A, u0, u1, hw] of xr) for (let u = u0; u <= u1 && !bad; u += 5) for (const v of [-(hw - REF_OR.XR_IN), 0, hw - REF_OR.XR_IN]) {
+        const m = mwt(A.x + A.ax * u + A.nx * v, A.z + A.az * u + A.nz * v); nIn++;
+        if (m > 0.05 && !bad) bad = '交差鉄道の帯 u=' + u + ' v=' + v.toFixed(1) + ' の写真の割合 ' + m.toFixed(2); }
+    }
+    ok('航空写真:線路の帯は今の色', bad === null && nIn > 5000 && nOut > 2000, '構造物の半幅(掘割は側ごと)+3.6m の内・井の頭線と世田谷線の建築限界−1m の内は写真 0.05 以下/+6.7m の外・事業区間の端の 3m 外は 0.95 以上(外した建物の足跡の近くは除く)',
+      bad || '内 ' + nIn + '点・外 ' + nOut + '点(外した足跡の近くで除いた ' + nSkip + '点)');
+    let rmBad = 0, rmN = 0, rmEx = null, fN = 0, fOK = 0, kOK = 0, kN = 0;
+    if (dat) { for (const r of RM) { if (!inP(r.P, r.cx, r.cz)) continue; const m = mwt(r.cx, r.cz);
+        if (r.d <= REF.DECK_CLEAR) { rmN++; if (m > 0.05) { rmBad++; if (!rmEx) rmEx = '(' + r.cx.toFixed(0) + ',' + r.cz.toFixed(0) + ') の写真の割合 ' + m.toFixed(2); } }
+        else if (r.d >= REF_OR.FAR_RM && !nearXR(r.cx, r.cz)) { fN++; if (m >= 0.95) fOK++; } }
+      for (const r of KP) { if (!inP(r.P, r.cx, r.cz)) continue; kN++; if (mwt(r.cx, r.cz) >= 0.95) kOK++; } }
+    ok('航空写真:外した建物の足跡は今の色', rmN >= 100 && rmBad <= rmN * REF_OR.HOLE_MISS && fN >= 50 && fOK >= fN * 0.95 && kN > 9000 && kOK >= kN * REF_OR.KEEP_PHOTO,
+      '線路の帯で外した実際の建物(plateau_bldg.js を検証側で読み、足跡が構造物の半幅+4.6m に掛かる物)の重心で写真 0.05 以下(' + (REF_OR.HOLE_MISS * 100) + '% まで)・' +
+      REF_OR.FAR_RM + 'm 以上離れて外した建物は写真のまま(95%)・街にある建物の重心は ' + (REF_OR.KEEP_PHOTO * 100) + '% 以上で 0.95 以上',
+      '帯で外した ' + rmN + '棟のうち写真が出る ' + rmBad + (rmEx ? '(' + rmEx + ')' : '') + '・離れて外した ' + fN + '棟のうち写真 ' + fOK +
+      '・街の ' + kN + '棟のうち写真 ' + kOK + '(' + (kN ? (kOK / kN * 100).toFixed(1) : '-') + '%)'); }
+  // (e) 貼る面
+  { let bad = null; const cnt = { all: 0, top: 0, roof: 0, none: 0, photo: 0 }, seen = new Set();
+    const UN = ['uOrtho0', 'uOrtho1', 'uOrtho2', 'uOrthoMask', 'uOr0', 'uOr1', 'uOr2', 'uOw0', 'uOw1', 'uOw2', 'uOq', 'uOm', 'uOf', 'uOrthoOn', 'uOrthoGain', 'uOrthoSnow', 'uOrthoBand'];
+    const comp = (m) => { const sh = { uniforms: {}, vertexShader: 'void main(){\n#include <begin_vertex>\n}', fragmentShader: 'void main(){\n#include <color_fragment>\n#include <emissivemap_fragment>\n}' };
+      if (typeof m.onBeforeCompile === 'function') m.onBeforeCompile(sh, X.renderer); return sh; };
+    const kind = (o) => { const m = o.material, ud = (m && m.userData) || {};   // [名前, 種類, シェーダの呼び出し]
+      if (o === X.groundMesh) return ['地表の網', 'all', 'orthoMix(diffuseColor.rgb,vOrW,1.,1.)'];
+      if (ud.bldWin) return ud.bldWinPhoto ? ['PLATEAU の写真の面', 'photo', null] : ['建物', 'roof', 'orthoMix(diffuseColor.rgb,vBW,smoothstep(.5,.7,vBN.y),0.)'];
+      if (!o.userData || !o.userData.flat || m === X.MAT_FENCE) return null;
+      if (o.name === '水面' || m === X.MAT.roadPlan) return [o.name || '計画の放射23号線', 'none', null];
+      if (o.name === '歩道' || m === X.MAT_JOSUI) return [o.name || '玉川上水', 'top', 'orthoMix(diffuseColor.rgb,vOrW,smoothstep(.5,.7,vOrN.y),0.)'];
+      return ['地表に敷いた面', 'all', 'orthoMix(diffuseColor.rgb,vOrW,1.,0.)']; };
+    X.scene.traverse((o) => {
+      if (bad || !o.isMesh || !o.material || Array.isArray(o.material)) return;
+      const k = kind(o); if (!k) return;
+      cnt[k[1] === 'photo' ? 'none' : k[1]]++; if (k[1] === 'photo') cnt.photo++;
+      if (seen.has(o.material)) return; seen.add(o.material);
+      const sh = comp(o.material), ud = o.material.userData || {}, fs = sh.fragmentShader, at = fs.indexOf('#include <color_fragment>');
+      const tag = k[2] ? k[1] : undefined;
+      if (k[2] ? !(fs.indexOf(k[2]) > at && at >= 0 && UN.every((u) => sh.uniforms[u] === OU[u]) && sh.vertexShader.includes(o === X.groundMesh || k[1] !== 'roof' ? 'vOrW=' : 'vBW=')) : fs.includes('orthoMix('))
+        bad = k[0] + (o.name ? '(' + o.name + ')' : '') + ' のシェーダ:' + (k[2] || '航空写真なし') + ' でない';
+      else if (ud.ortho !== tag || !!ud.orthoBand !== (o === X.groundMesh)) bad = k[0] + ' の材質の印 ortho=' + ud.ortho + '・orthoBand=' + ud.orthoBand;
+    });
+    ok('航空写真:貼る面', bad === null && cnt.all >= 2 && cnt.top >= 2 && cnt.roof > 0 && cnt.none >= 2,
+      '地表の網=全面+帯の灰・道路と緑地=全面・歩道と玉川上水=上面・建物=屋根・水面と計画道路と PLATEAU の写真の面=無し(onBeforeCompile の結果と uniform)',
+      bad || '全面 ' + cnt.all + '・上面 ' + cnt.top + '・屋根 ' + cnt.roof + '・無し ' + cnt.none + '(うち写真の面 ' + cnt.photo + ')'); }
+  // (f) 明るさ
+  { const C = X.CINE, g = () => OU.uOrthoGain.value, gc = () => X.MAT.ground.color.g, s2l = (v) => (v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
+    C.setTime('noon'); C.setSeason('summer'); C.setWeather('clear');
+    const g0 = g().x, c0 = gc(), bv = OU.uOrthoBand.value, band = [bv.x, bv.y, bv.z, bv.w], sn0 = OU.uOrthoSnow.value.w;
+    const bw = [(REF_OR.BAND_HEX >> 16) & 255, (REF_OR.BAND_HEX >> 8) & 255, REF_OR.BAND_HEX & 255].map((v) => s2l(v / 255));
+    C.setTime('night'); const gN = g().x, cN = gc();
+    C.setTime('noon'); C.setWeather('rain'); const gR = g().x, cR = gc();
+    C.setWeather('snow'); const snW = OU.uOrthoSnow.value.w;
+    C.setWeather('clear'); const g1 = g().x;
+    const okB = band.slice(0, 3).every((v, i) => Math.abs(v - bw[i]) < 1e-4) && band[3] === 1;
+    ok('航空写真:明るさ', Math.abs(g0 - REF_OR.GAIN) < 1e-6 && Math.abs(gN / g0 - REF_OR.NIGHT) < 1e-6 && Math.abs(gN / g0 - cN / c0) < 1e-6 && Math.abs(gR / g0 - cR / c0) < 1e-6 && gR < g0 &&
+      sn0 === 0 && snW >= REF_OR.SNOW_MIN && Math.abs(g1 - g0) < 1e-9 && g().y === g().x && g().z === g().x && okB,
+      '昼・夏・晴れ 0.65・夜は 0.55 倍(地表と同じ比)・雨は地表と同じ比・雪は白へ 0.5 以上・帯の灰 #8f8d88',
+      '昼 ' + g0.toFixed(3) + '・夜 ' + (gN / g0).toFixed(3) + '倍(地表 ' + (cN / c0).toFixed(3) + ')・雨 ' + (gR / g0).toFixed(3) + '倍(地表 ' + (cR / c0).toFixed(3) + ')・雪 ' + snW.toFixed(2) +
+      '・帯 ' + band.slice(0, 3).map((v) => v.toFixed(4)).join(',') + (okB ? '' : '(期待 ' + bw.map((v) => v.toFixed(4)).join(',') + ')')); }
+  // (g) 切替
+  { const wm = X.LU.waterMesh, needW = !!(X.LU.water && X.LU.water.length);
+    OM.setOn(false); const f0 = [OU.uOrthoOn.value, wm ? wm.visible : null, OM.on];
+    OM.setOn(true); const f1 = [OU.uOrthoOn.value, wm ? wm.visible : null, OM.on];
+    ok('航空写真:切替', f0[0] === 0 && f0[2] === false && f1[0] === 1 && f1[2] === true && (needW ? !!wm && f0[1] === true && f1[1] === false : true),
+      'OFF:uOrthoOn=0・水面を出す/ON:1・写真が読めていれば水面を隠す', 'OFF ' + f0.join(',') + '/ON ' + f1.join(',') + (needW && !wm ? '(水面の Mesh が登録されていない)' : '')); }
+  // (h) 読めないタイル(画像の読み込みを全部失敗させて、これまでの窓から離れた所を見る)
+  { const RealImage = global.Image, failed = new Set();
+    global.Image = class { constructor() { this.onload = null; this.onerror = null; this._src = ''; } set src(v) { this._src = v; failed.add(v); if (this.onerror) this.onerror(); } get src() { return this._src; } };
+    const st0 = OM.stat(), nc0 = X.renderer.copies.length, sF = X.DOM.x1 - 200;
+    aim(X.frame(sF - 150, 0), 300, X.frame(sF, 0), 0); X.lodStruct(); OM.update(true);
+    const st1 = OM.stat(), L0 = LVS[0], stray = X.renderer.copies.slice(nc0).filter((c) => failed.has(c.src)).length;
+    const last = new Map(); for (const c of X.renderer.copies) if (c.dst === L0.tex) last.set(c.x + ',' + c.y, c.src);
+    const kept = L0.slots.filter((S) => S.ok || last.get(S.sx * 256 + ',' + S.sy * 256) !== 'data').length;
+    global.Image = RealImage;
+    ok('航空写真:読めないタイル', stray === 0 && kept === 0 && st1.pending === 0 && st1.fails - st0.fails >= L0.slots.length && !OM.dead,
+      '書かない(近の枠は α=0 で塗ったまま=前の窓のタイルが残らない)・待ちに数えない・前に読めていれば止めない',
+      '新たな失敗 ' + (st1.fails - st0.fails) + '枚・塗っていない近の枠 ' + kept + '・読めなかったタイルの書き込み ' + stray + '・待ち ' + st1.pending + (OM.dead ? '・止めた' : '')); }
 }
 
 /* ---- 出力 ---------------------------------------------------------------- */

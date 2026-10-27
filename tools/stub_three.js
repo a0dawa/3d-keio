@@ -80,6 +80,11 @@ class PerspCam extends Obj3D {
     return this;
   }
   updateProjectionMatrix() { return this; }
+  // 視線の向き(lookAt の注視点−位置。航空写真の窓をカメラの前に置く処理が使う)
+  getWorldDirection(v) {
+    const d = new V3(this.look.x - this.position.x, this.look.y - this.position.y, this.look.z - this.position.z).normalize();
+    return (v || new V3()).set(d.x, d.y, d.z);
+  }
 }
 /* 描画器。影の設定・色空間・露出を実値で持つ(ここを Proxy にすると、
    トーンマッピングの逆算のように露出を読む処理が検査できない)。 */
@@ -90,10 +95,26 @@ class Renderer {
     this.info = soft({ render: soft({ calls: 0, triangles: 0 }) });
     this.domElement = anything;
     this.frames = 0;
+    this.copies = [];       // copyTextureToTexture の記録
     return soft(this);
   }
   setPixelRatio() {} setSize() {} setClearColor() {} compile() {}
   render() { this.frames++; }
+  // 画像の一部への書き込み(航空写真のタイルを枠へ書く)。どの画像のどこへ何を書いたか・縮小の段を作り直したか(mip)を残す
+  copyTextureToTexture(pos, src, dst) {
+    this.copies.push({ x: pos.x, y: pos.y, src: src && src.image ? (src.image.src || (src.image.data ? 'data' : '?')) : '?', dst: dst, mip: !!(dst && dst.generateMipmaps) });
+  }
+}
+/* データの画像(航空写真の窓・線路の帯の印)。中身と大きさ・形式・繰り返し・縮小の段を実値で持つ */
+class DataTex {
+  constructor(data, width, height, format, type) {
+    this.image = { data: data || null, width: width || 1, height: height || 1 };
+    this.format = format; this.type = type;
+    this.wrapS = 1001; this.wrapT = 1001; this.magFilter = 1003; this.minFilter = 1003;
+    this.generateMipmaps = false; this.flipY = false; this.anisotropy = 1; this.unpackAlignment = 1;
+    this.encoding = 3000; this.needsUpdate = false; this.isDataTexture = true;
+    return soft(this);
+  }
 }
 /* テクスチャ。色空間(encoding)と写像(mapping)を実値で持つ。
    ここを実体にしないと「色テクスチャをsRGBとして読んでいるか」
@@ -279,7 +300,7 @@ class PMREM {
 }
 const REAL = {
   Vector3: V3, Vector2: V2, Vector4: V4, Object3D: Obj3D, Group, Scene, Mesh, BufferGeometry: BufGeo, DirectionalLight: DirLight,
-  PerspectiveCamera: PerspCam, CanvasTexture: Tex, Texture: Tex, WebGLRenderer: Renderer,
+  PerspectiveCamera: PerspCam, CanvasTexture: Tex, Texture: Tex, DataTexture: DataTex, WebGLRenderer: Renderer,
   Matrix4: M4, InstancedMesh: Inst, Color, Fog, Euler, Quaternion: Quat,
   Float32BufferAttribute: Attr, BufferAttribute: Attr, InstancedBufferAttribute: Attr, HemisphereLight: HemiLight,
   BoxGeometry: param('Box'), CylinderGeometry: param('Cyl'), PlaneGeometry: param('Plane'),
@@ -295,11 +316,14 @@ const REAL = {
   NoToneMapping: 0, ACESFilmicToneMapping: 4,
   BasicShadowMap: 0, PCFShadowMap: 1, PCFSoftShadowMap: 2,
   RepeatWrapping: 1000, ClampToEdgeWrapping: 1001,
+  NearestFilter: 1003, LinearFilter: 1006, LinearMipmapLinearFilter: 1008,
+  UnsignedByteType: 1009, RGBAFormat: 1023, LuminanceFormat: 1024,
 };
 
 function install() {
   global.THREE = new Proxy(REAL, { get: (t, k) => (k in t ? t[k] : anything) });
-  global.Image = class { constructor() { this.onload = null; } set src(v) { if (this.onload) this.onload(); } };
+  // 画像:src を入れるとすぐ読めたことにする(航空写真のタイルは URL を残す。検査は読み込みの順と枠を見る)
+  global.Image = class { constructor() { this.onload = null; this._src = ''; } set src(v) { this._src = v; if (this.onload) this.onload(); } get src() { return this._src; } };
   global.document = new Proxy({}, {
     get: (t, k) => {
       if (k === 'getElementById' || k === 'querySelector') return () => anything;
