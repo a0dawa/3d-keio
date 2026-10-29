@@ -35,8 +35,12 @@ NS = {
 BLDG = '{%s}Building' % NS['bldg']
 # 建物の用途(Building_usage)→ ビューアの区分。0=不明/1=戸建て住宅/2=店舗・作業所併用住宅/3=共同住宅(店舗併用を含む)/
 # 4=業務/5=商業・宿泊/6=官公庁・文教厚生/7=運輸倉庫/8=工場/9=供給処理/10=農林漁業ほか
+# (2026-10-29:461 は Building_usage の「不明」。以前は 9=供給処理と取り違え、452=供給処理を 10 にしていた)
 USAGE = {'411': 1, '413': 2, '415': 2, '412': 3, '414': 3, '401': 4, '402': 5, '403': 5, '404': 5,
-         '421': 6, '422': 6, '431': 7, '441': 8, '461': 9, '451': 10, '452': 10, '453': 10, '454': 10}
+         '421': 6, '422': 6, '431': 7, '441': 8, '452': 9, '451': 10, '453': 10, '454': 10, '461': 0}
+# 建物構造コード(uro:bldgKeyValuePairAttribute の key 100。東京都の独自の属性)→ ビューアの区分。
+# 0=不明/1=耐火構造(RC・SRC など)/2=準防火造(鉄骨・ALC など)/3=防火造(モルタル・サイディングの木造)/4=木造
+STRUCT = {'11': 1, '12': 2, '21': 3, '22': 4}
 
 
 def html_projection(path):
@@ -99,7 +103,22 @@ def simplify(p, tol):
     return q if len(q) >= 3 else p
 
 
-def read_buildings(path, proj, margin, min_area, tol, band=0, ids=False, zmin=False):
+def kv_attr(el, key):
+    """uro:bldgKeyValuePairAttribute の key の codeValue(無ければ None)"""
+    for p in el.iter():
+        if p.tag.endswith('}KeyValuePairAttribute'):
+            k = v = None
+            for c in p:
+                if c.tag.endswith('}key'):
+                    k = (c.text or '').strip()
+                elif c.tag.endswith('}codeValue'):
+                    v = (c.text or '').strip()
+            if k == key:
+                return v
+    return None
+
+
+def read_buildings(path, proj, margin, min_area, tol, band=0, ids=False, zmin=False, struct=False):
     raw = open(path, 'rb').read(4096)
     if b'<!DOCTYPE' in raw or b'<!ENTITY' in raw:
         raise SystemExit('DOCTYPE/ENTITY を含むファイルは読まない: ' + path)
@@ -151,6 +170,9 @@ def read_buildings(path, proj, margin, min_area, tol, band=0, ids=False, zmin=Fa
         usage = USAGE.get((us.text or '').strip(), 0) if us is not None else 0
         st = el.find('bldg:storeysAboveGround', NS)
         storeys = int(st.text) if st is not None and st.text and st.text.strip().isdigit() else 0
+        if storeys >= 9999:
+            storeys = 0                                   # 9999=不明
+        stc = STRUCT.get(kv_attr(el, '100') or '', 0) if struct else 0
         clat = sum(q[0] for q in foot) / len(foot)
         clon = sum(q[1] for q in foot) / len(foot)
         el.clear()
@@ -167,7 +189,8 @@ def read_buildings(path, proj, margin, min_area, tol, band=0, ids=False, zmin=Fa
         if lod2:
             lod2 = [(s[0], [((q[1] - lon0) * mlon, -(q[0] - lat0) * mlat, q[2]) for q in s[1]]) + tuple(s[2:]) for s in lod2]
         # zmin=True:LOD1 の立体の最も低い標高(地盤の高さ。無ければ nan)を最後に足す(tools/plateau_ground.py が地形の検証の基準に使う)
-        out.append((p, height, storeys, lod2, usage) + ((min(zs) if zs else float('nan')),) * bool(zmin))
+        # struct=True:建物構造の区分(上の STRUCT)を最後に足す(plateau_bldg.js の str64。ほかの道具の並びは変えない)
+        out.append((p, height, storeys, lod2, usage) + ((min(zs) if zs else float('nan')),) * bool(zmin) + (stc,) * bool(struct))
     return out
 
 
@@ -272,7 +295,7 @@ def main():
     proj = html_projection(a.html)
     blds = []
     for g in a.gml:
-        blds += read_buildings(g, proj, a.margin, a.min_area, a.tol, a.band)
+        blds += read_buildings(g, proj, a.margin, a.min_area, a.tol, a.band, struct=True)
     data = encode(blds)
     l2, n2 = encode_lod2(blds)
     if a.out.endswith('.js'):
@@ -281,7 +304,9 @@ def main():
                 'made': datetime.date.today().isoformat(), 'count': len(blds),
                 'lod2': n2, 'lod2b64': base64.b64encode(l2).decode('ascii'),
                 # 用途:PLT1 の並びと同じ順に1棟1バイト(上の USAGE の区分)
-                'use64': base64.b64encode(bytes(b[4] for b in blds)).decode('ascii')}
+                'use64': base64.b64encode(bytes(b[4] for b in blds)).decode('ascii'),
+                # 建物構造:同じ順に1棟1バイト(上の STRUCT の区分。2026-10-29)
+                'str64': base64.b64encode(bytes(b[-1] for b in blds)).decode('ascii')}
         with open(a.out, 'w', encoding='utf-8') as f:
             f.write('// 沿線の建物(足跡+高さ)。出典:%s(CC BY 4.0)。tools/plateau_import.py が作る。手で直さない\n' % a.source)
             f.write('globalThis.PLATEAU_BLDG=' + json.dumps(dict(meta, b64=base64.b64encode(data).decode('ascii')), ensure_ascii=False) + ';\n')

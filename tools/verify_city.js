@@ -10,7 +10,7 @@
 //   使い方: node tools/verify_city.js [keio_elevated_3d.html]
 const path = process.argv[2] || 'keio_elevated_3d.html';
 const X = require('./stub_three')(path,
-  'bldWinAt:(typeof bldWinAt!=="undefined"?bldWinAt:null),BLD_WIN_SRC:(typeof bldWinPatch!=="undefined"?bldWinPatch.toString():""),CITY:CITY,deckHalf:deckHalf,cutHalf:cutHalf,DOM:DOM,INO:INO,SETA:SETA,XR:XR,K8:K8,' +
+  'bldFacadeAt:(typeof bldFacadeAt!=="undefined"?bldFacadeAt:null),BLD_WIN_SRC:(typeof bldWinPatch!=="undefined"?bldWinPatch.toString():""),BLD_WIN:BLD_WIN,FS_G0:FS_G0,ATT_NEAR:ATT_NEAR,attBoxes:(typeof attBoxes!=="undefined"?attBoxes:null),cityLod:cityLod,LOD_STRUCT:LOD_STRUCT,CITY:CITY,deckHalf:deckHalf,cutHalf:cutHalf,DOM:DOM,INO:INO,SETA:SETA,XR:XR,K8:K8,' +
   'KAN7_X:KAN7_X,NAKANO_X:NAKANO_X,HOSHA23_X:HOSHA23_X,KYU_INOKA_X:KYU_INOKA_X,H154_X:H154_X,H128_X:H128_X,' +
   'H133_X:H133_X,H215_X:H215_X,KANPACHI_X:KANPACHI_X,H216_X:H216_X,H217_X:H217_X,' +
   'JOSUI_X:JOSUI_X,BRIDGE:BRIDGE,XINGS:XINGS,WADA_S:WADA_S,WADA_OFF:WADA_OFF,' +
@@ -564,7 +564,7 @@ let L2_ALL = null, P0_ALL = null;          // 4c で読んだ LOD2 の面(建物
           else VT.add(m.userData.ptx + '|' + Pa[3 * i].toFixed(1) + ',' + Pa[3 * i + 1].toFixed(1) + ',' + Pa[3 * i + 2].toFixed(1) + '|' + Ua[2 * i].toFixed(4) + ',' + Ua[2 * i + 1].toFixed(4));
       }
     }
-    const shOK = /photo\?'':' diffuseColor\.rgb=mix/.test(X.BLD_WIN_SRC);
+    const shOK = /\(photo\?'':\s*'  vec3 wc=diffuseColor\.rgb/.test(X.BLD_WIN_SRC);   // 写真の面は昼の外装(窓・壁の模様)を塗らない
     // 描かれている LOD2 の建物で照合(足跡の1点目が同じ別の建物があるので、高さも合わせて対応を取る)
     const key = (x, z, h) => x.toFixed(1) + ',' + z.toFixed(1) + ',' + h.toFixed(1);
     const drawn = new Set(B.filter((e) => e.poly).map((e) => key(e.poly[0][0], e.poly[0][1], e.h)));
@@ -640,18 +640,164 @@ let L2_ALL = null, P0_ALL = null;          // 4c で読んだ LOD2 の面(建物
   ok('建物の窓(壁の面に)', bM === null && nM > 0, '近く・中・遠の全ての形が窓の材質', bM ? bM + 'に窓が無い' : nM + '形');
   ok('窓は壁の上端より上に出ない', bT === null && nW > 0, '壁の面の最も高い点以下', bT || '壁の三角形 ' + nW + '・面 ' + WG.size);
   const nG = B.filter((e) => e.roof === '切妻').length;
-  /* 窓の数(2026-10-12 利用者指示:多すぎる・北向きの壁は少なく)。シェーダと同じ式 bldWinAt を壁の上で数える。
-     検証側の決まり:戸建ての南向きの壁で窓は 10% 以下、北向きは南向きの半分以下。共同住宅・業務も北は南より少ない。
+  /* 窓の数(2026-10-12 利用者指示:多すぎる・北向きの壁は少なく)。シェーダと同じ式 bldFacadeAt(2026-10-29 から。壁ごとの柱間・階)を
+     検証側で作った壁(長さ 4〜16m・3階分・種 0〜96)の上で数える。
+     検証側の決まり:戸建ての南向きの壁で窓(ガラスと枠)は 10% 以下、北向きは南向きの半分以下。共同住宅・業務も北は南より少ない。
      シェーダが向きで間引いていること(文字列に北の成分の式)も見る */
-  if (X.bldWinAt) {
-    const dens = (t, nx, nz, top) => { let a = 0, n = 0; for (let u = 0; u < 400; u += 0.1) for (let y = 0.05; y < top; y += 0.1) { n++; if (X.bldWinAt(t, u, y, top, nx, nz)) a++; } return a / n; };
-    const D = [0, 1, 2].map((t) => ({ s: dens(t, 0, 1, 9), n: dens(t, 0, -1, 9), e: dens(t, 1, 0, 9) }));
-    const shOK = /clamp\(-normalize\(vBN\.xz\)\.y/.test(X.BLD_WIN_SRC) && /hc>=pd/.test(X.BLD_WIN_SRC);
+  if (X.bldFacadeAt) {
+    const dens = (wt, fs, nx, nz) => { let a = 0, n = 0; const l = Math.hypot(nx, nz), tx = -nz / l, tz = nx / l;
+      for (let L = 4; L <= 16; L += 0.5) for (let sd = 0; sd < 97; sd += 7) for (let u = 0.05; u < L; u += 0.1) for (let y = 0.05; y < 9; y += 0.1) {
+        n++; const k = X.bldFacadeAt({ wt: wt, fs: fs, u: u, L: L, yr: y, H: 9, fh: X.BLD_WIN[wt][2], fl: 0, seed: sd, tx: tx, tz: tz, nz: nz / l, far: false }).k; if (k === 1 || k === 2) a++; }
+      return a / n; };
+    const D = [[0, 0], [1, 3], [2, 3]].map(([t, f]) => ({ s: dens(t, f, 0, 1), n: dens(t, f, 0, -1), e: dens(t, f, 1, 0) }));
+    const shOK = /clamp\(-nz,0\.,1\.\)/.test(X.BLD_WIN_SRC) && /hc<pd\) return/.test(X.BLD_WIN_SRC);
     ok('窓は少なめ・北向きはさらに少ない', D[0].s <= 0.10 && D[0].n <= 0.5 * D[0].s && D[1].n < D[1].s && D[2].n < D[2].s && D[0].s > 0.03 && shOK,
       '戸建ての南 ≤10%・北 ≤ 南の半分・共同住宅と業務も 北<南・シェーダが向きで間引く',
       D.map((d, i) => ['戸建て', '共同住宅', '業務'][i] + ' 南' + (d.s * 100).toFixed(1) + '% 北' + (d.n * 100).toFixed(1) + '% 東' + (d.e * 100).toFixed(1) + '%').join(' / ') + (shOK ? '' : ' シェーダに向きの式が無い'));
   }
   ok('三角屋根は灰色', bR === null && nR > 0 && (B.some((e) => e.plateau) ? nG >= 1000 : true), '傾いた屋根面は暗い灰・切妻屋根 1000棟以上', bR || '屋根面 ' + nR + '・切妻 ' + nG + '棟');
+}
+
+/* ---- 4c4. 建物の外装(2026-10-29 利用者指示:建物の側面が黒い四角い窓だけ) --------------------------------------------
+   検証側の決まり(値はモデルから読まない。データは plateau_bldg.js を検証側で読む):
+   (a) 建物構造(str64)と地上階数(PLT1 の階数。9999=不明は 0)が登録簿の建物と一致し、外装は構造に合う
+       (耐火=RC・タイル・カーテンウォール/準防火=ALC・サイディング・RC/防火造=サイディング・モルタル/木造=板張り・モルタル/倉庫・工場=金属)。
+       外装は5種類以上が 2% 以上ずつ使われる
+   (b) 窓の段の数=階数:階数の分かる戸建て・共同住宅で、壁(長さ 10・14・18m・南向き。壁の属性に階数を入れる=印の 128 倍)の窓の段の数が
+       階数以下、85% 以上で階数と同じ
+   (c) 窓は壁の両端から 0.3m 以上離れる(角で窓が切れない)。1.7m より短い壁に窓は無い
+   (d) 1階:戸建て(店舗併用でない)は玄関の扉の壁がちょうど1つ、扉は幅 0.7〜1.0m。道路に面した壁がある家の扉は道路に面した壁(95% 以上。
+       道路に面するかは検証側が ROADS_PL の面で、壁の中ほどから外へ 2.5m か 5m)。店の壁は1階の 90% 以上がガラスかシャッターで上に看板
+   (e) 付属物:バルコニー・室外機・雨どいは自分の足跡の外 1.3m 以内で、ほかの建物の足跡・道路の面に入らない(0.05m の余裕)。
+       バルコニーの印のある壁にはバルコニーの床がある。屋上の室外機は足跡の 0.9m 内。付属物の形は近く(ATT_NEAR)だけ描く
+   (f) シェーダ:外装8種の模様・番号の丸め・ガラスの映り込み・店と看板の夜の灯り・パラペットの内側(番号が負)が外装を描かない */
+{
+  const REF_F = { DOOR_W: [0.7, 1.0], ROWS_OK: 0.85, END: 0.3, WALL_MIN: 1.7, ATT_OUT: 1.3, ATT_GAP: 0.05, ROOF_IN: 0.9, ROAD_DOOR: 0.95, SHOP_FRAC: 0.9,
+    STYLE: { 1: [3, 4, 7], 2: [2, 0, 3], 3: [0, 1], 4: [5, 1] }, STYLE_MIN: 5 };
+  const fs = require('fs'), pth = require('path'), f = pth.join(pth.dirname(path), 'plateau_bldg.js');
+  const FA = X.bldFacadeAt;
+  const twAt = (nx, nz) => { const l = Math.hypot(nx, nz) || 1; return { tx: -nz / l, tz: nx / l, nz: nz / l }; };
+  // (a)
+  if (fs.readFileSync(path, 'utf8').includes('<script src="plateau_bldg.js">') && fs.existsSync(f)) {
+    const g = {}; new Function('globalThis', fs.readFileSync(f, 'utf8'))(g); const D = g.PLATEAU_BLDG;
+    const b = Buffer.from(D.b64, 'base64'), st = D.str64 ? Buffer.from(D.str64, 'base64') : null, N = b.readUInt32LE(4); let o = 8; const M = new Map();
+    for (let n = 0; n < N; n++) { const nv = b.readUInt8(o), h = b.readUInt16LE(o + 1) / 10, sto = b.readUInt8(o + 3); o += 4;
+      const kk = (b.readInt32LE(o) / 10).toFixed(1) + ',' + (b.readInt32LE(o + 4) / 10).toFixed(1) + ',' + h.toFixed(1); if (!M.has(kk)) M.set(kk, []); M.get(kk).push([st ? st[n] : -1, sto]); o += 8 + 4 * (nv - 1); }
+    let n = 0, bad = null, bs = null; const cnt = new Map();
+    for (const e of B) {
+      if (!e.plateau || !e.poly) continue; const w = M.get(e.poly[0][0].toFixed(1) + ',' + e.poly[0][1].toFixed(1) + ',' + e.h.toFixed(1)); if (!w) continue; n++;
+      if (!w.some((q) => q[0] === e.stc && q[1] === e.st) && !bad) bad = '(' + e.x.toFixed(0) + ',' + e.z.toFixed(0) + ') 構造' + e.stc + '・階数' + e.st + ' ≠ データ ' + w.map((q) => q.join('/')).join(' ');
+      const want = e.wt === 3 ? [6] : REF_F.STYLE[e.stc];
+      if (want && !e.lod2 && !want.includes(e.fs) && !bs) bs = '(' + e.x.toFixed(0) + ',' + e.z.toFixed(0) + ') 構造' + e.stc + 'に外装' + e.fs;
+      cnt.set(e.fs, (cnt.get(e.fs) || 0) + 1);
+    }
+    const used = [...cnt.entries()].filter(([, c]) => c >= 0.02 * n).length;
+    ok('建物の構造・階数・外装', !!st && bad === null && bs === null && n > 10000 && used >= REF_F.STYLE_MIN, 'データと一致・外装は構造に合う・' + REF_F.STYLE_MIN + '種以上が 2% 以上',
+      (!st ? 'str64 が無い' : bad || bs || n + '棟・外装 ' + [...cnt.entries()].sort((p, q) => p[0] - q[0]).map(([k, c]) => k + ':' + c).join(' ')));
+  }
+  if (FA) {
+    // (b) 窓の段の数
+    let nB = 0, nEq = 0, over = null;
+    for (const e of B) {
+      if (!e.plateau || !(e.st > 0) || e.wt > 1 || e.lod2) continue;
+      const H = e.eave; let rows = new Set();
+      for (const L of [10, 14, 18]) for (let u = 0.05; u < L; u += 0.1) for (let y = 0.05; y < H; y += 0.1) {
+        const r = FA({ wt: e.wt, fs: e.fs, u: u, L: L, yr: y, H: H, fh: e.fh, fl: 128 * Math.min(e.st, 60), seed: e.seed !== undefined ? e.seed : 0, tx: -1, tz: 0, nz: 1, far: false });
+        if (r.k === 1 || r.k === 2) rows.add(r.f); }
+      nB++; if (rows.size === e.st) nEq++; if (rows.size > e.st && !over) over = '(' + e.x.toFixed(0) + ',' + e.z.toFixed(0) + ') 階数' + e.st + 'に窓が' + rows.size + '段';
+      if (nB >= 600) break;
+    }
+    ok('窓の段の数=階数', nB >= 300 && over === null && nEq >= REF_F.ROWS_OK * nB, '階数以下・' + (REF_F.ROWS_OK * 100) + '% 以上で同じ', over || nEq + '/' + nB + '棟');
+    // (c) 壁の端
+    let bE = null, nE = 0;
+    for (let wt = 0; wt < 4; wt++) for (const fs2 of [0, 3, 7]) for (let L = 0.6; L <= 20; L += 0.35) for (let sd = 0; sd < 97; sd += 13) for (const [nx, nz] of [[0, 1], [1, 0], [0, -1]]) {
+      const T = twAt(nx, nz);
+      for (let y = 0.6; y < 12; y += 0.25) for (const u of [0.02, 0.15, 0.29, L - 0.29, L - 0.15, L - 0.02, L * 0.5]) {
+        if (u < 0 || u > L) continue; nE++;
+        const k = FA({ wt: wt, fs: fs2, u: u, L: L, yr: y, H: 12, fh: X.BLD_WIN[wt][2], fl: 0, seed: sd, tx: T.tx, tz: T.tz, nz: T.nz, far: false }).k;
+        if ((k === 1 || k === 2) && (u < REF_F.END || u > L - REF_F.END || L < REF_F.WALL_MIN) && !bE) bE = '種類' + wt + ' 長さ' + L.toFixed(2) + ' u=' + u.toFixed(2); } }
+    ok('窓は壁の端に掛からない', bE === null && nE > 1000, '両端から ' + REF_F.END + 'm・' + REF_F.WALL_MIN + 'm 未満の壁に窓なし', bE || nE + '点');
+    // (d) 1階:扉・店。道路に面するかは検証側で(ROADS_PL の地表の道路)
+    const ground = X.ROADS_PL.filter((R) => !(R.k === 2 && R.sec === 2));
+    const inPolyR = (P, x, z) => { let c = false; for (let i = 0, j = P.length - 1; i < P.length; j = i++) { const a = P[i], b2 = P[j]; if ((a[1] > z) !== (b2[1] > z) && x < (b2[0] - a[0]) * (z - a[1]) / (b2[1] - a[1]) + a[0]) c = !c; } return c; };
+    const RG = new Map(); for (const R of ground) for (let gx = Math.floor(R.bb[0] / 30); gx <= Math.floor(R.bb[1] / 30); gx++) for (let gz = Math.floor(R.bb[2] / 30); gz <= Math.floor(R.bb[3] / 30); gz++) { const k = gx + ',' + gz; if (!RG.has(k)) RG.set(k, []); RG.get(k).push(R); }
+    const onRoad = (x, z) => (RG.get(Math.floor(x / 30) + ',' + Math.floor(z / 30)) || []).some((R) => x >= R.bb[0] && x <= R.bb[1] && z >= R.bb[2] && z <= R.bb[3] && inPolyR(R.P, x, z));
+    const roadW = (w) => { const mx = (w.a[0] + w.d[0]) / 2, mz = (w.a[1] + w.d[1]) / 2; return w.L >= 2.2 && [2.5, 5].some((t) => onRoad(mx + w.nx * t, mz + w.nz * t)); };
+    let nH = 0, bD = null, nRoadH = 0, nRoadDoor = 0, nS = 0, bS = null, dW = [];
+    for (const C of X.CITY_LODS) {
+      if (!C.m[0]) C.m[0] = C.make(C);
+      for (const e of C.B) {
+        if (!e.walls) continue;
+        const shop = e.use === 2 || e.use === 5;
+        if (e.wt === 0 && !(shop && e.walls.some((w) => w.fl & 2))) {
+          if (!e.walls.some((w) => w.L >= 2.2)) continue;
+          nH++; const dws = e.walls.filter((w) => w.fl & 1);
+          if (dws.length !== 1) { if (!bD) bD = '(' + e.cx.toFixed(0) + ',' + e.cz.toFixed(0) + ') 扉の壁 ' + dws.length; continue; }
+          const w = dws[0], T = twAt(w.nx, w.nz), g0 = X.FS_G0[e.fs];
+          let run = 0, best = 0; for (let u = 0; u <= w.L; u += 0.01) { const k = FA({ wt: 0, fs: e.fs, u: u, L: w.L, yr: g0 + 1.0, H: e.eave, fh: e.fh, fl: w.fl, seed: e.seed, tx: T.tx, tz: T.tz, nz: T.nz, far: false }).k; if (k === 3) { run += 0.01; best = Math.max(best, run); } else run = 0; }
+          dW.push(best); if ((best < REF_F.DOOR_W[0] || best > REF_F.DOOR_W[1]) && !bD) bD = '(' + e.cx.toFixed(0) + ',' + e.cz.toFixed(0) + ') 扉の幅 ' + best.toFixed(2);
+          if (e.walls.some(roadW)) { nRoadH++; if (roadW(w)) nRoadDoor++; }
+        }
+        for (const w of e.walls) if (w.fl & 2) {
+          nS++; const T = twAt(w.nx, w.nz); let a = 0, n = 0, sg = 0;
+          for (let u = 0.35; u < w.L - 0.35; u += 0.05) { n++; const k = FA({ wt: e.wt, fs: e.fs, u: u, L: w.L, yr: 1.5, H: e.eave, fh: e.fh, fl: w.fl, seed: e.seed, tx: T.tx, tz: T.tz, nz: T.nz, far: false }).k; if (k === 4 || k === 6 || k === 2) a++;
+            const gs = Math.min(X.FS_G0[e.fs] + e.fh - 0.5, 2.8); if (FA({ wt: e.wt, fs: e.fs, u: u, L: w.L, yr: gs + 0.3, H: e.eave, fh: e.fh, fl: w.fl, seed: e.seed, tx: T.tx, tz: T.tz, nz: T.nz, far: false }).k === 5) sg++; }
+          if ((a < REF_F.SHOP_FRAC * n || sg < 0.9 * n) && !bS) bS = '(' + e.cx.toFixed(0) + ',' + e.cz.toFixed(0) + ') 店の1階 ' + (a / n * 100).toFixed(0) + '%・看板 ' + (sg / n * 100).toFixed(0) + '%';
+        }
+      }
+    }
+    dW.sort((p, q) => p - q);
+    ok('玄関の扉(戸建て)', nH > 3000 && bD === null && nRoadDoor >= REF_F.ROAD_DOOR * nRoadH, '扉の壁が1つ・幅 ' + REF_F.DOOR_W.join('〜') + 'm・道路に面した壁(' + (REF_F.ROAD_DOOR * 100) + '%)',
+      bD || nH + '棟・扉の幅 ' + dW[0].toFixed(2) + '〜' + dW[dW.length - 1].toFixed(2) + 'm・道路側 ' + nRoadDoor + '/' + nRoadH);
+    ok('店の1階(ガラス・シャッター・看板)', nS > 100 && bS === null, '1階の ' + (REF_F.SHOP_FRAC * 100) + '% 以上がガラスかシャッター・上に看板', bS || nS + '壁');
+    // (e) 付属物
+    const BG = new Map(); B.forEach((e, i) => { if (!e.poly) return; let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9; for (const p of e.poly) { x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); z0 = Math.min(z0, p[1]); z1 = Math.max(z1, p[1]); }
+      e.__bb = [x0, x1, z0, z1]; for (let gx = Math.floor(x0 / 26); gx <= Math.floor(x1 / 26); gx++) for (let gz = Math.floor(z0 / 26); gz <= Math.floor(z1 / 26); gz++) { const k = gx + ',' + gz; if (!BG.has(k)) BG.set(k, []); BG.get(k).push(e); } });
+    const ownOf = (C, bi) => { const P = C.B[bi].P; return B.find((e) => e.poly === P); };
+    let nA = 0, bA = null, nBal = 0, bW = null; const kinds = new Map();
+    for (const C of X.CITY_LODS) {
+      const att = X.attBoxes ? X.attBoxes(C) : [];
+      const slab = new Set(att.filter((a) => a.kind === 'バルコニー').map((a) => a.bi));
+      C.B.forEach((e, bi) => { if (e.walls && e.walls.some((w) => w.fl & 24) && !slab.has(bi) && !bW) bW = '(' + e.cx.toFixed(0) + ',' + e.cz.toFixed(0) + ') バルコニーの印の壁に床が無い'; });
+      for (const a of att) {
+        nA++; kinds.set(a.kind, (kinds.get(a.kind) || 0) + 1); if (a.kind === 'バルコニー') nBal++;
+        const own = ownOf(C, a.bi); if (!own) { bA = bA || '付属物の建物が登録簿に無い'; continue; }
+        const pts = []; for (let i = 0; i < 4; i++) { const p = a.c[i], q = a.c[(i + 1) % 4]; for (let t = 0; t < 1; t += 0.25) pts.push([p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t]); }
+        for (const [x, z] of pts) {
+          const dOwn = polyDist(own.poly, x, z);
+          if (a.kind === '屋上の室外機') { if (dOwn > -REF_F.ROOF_IN + 0.01 && !bA) bA = a.kind + ' (' + x.toFixed(1) + ',' + z.toFixed(1) + ') 足跡の縁から ' + (-dOwn).toFixed(2) + 'm'; continue; }
+          if (dOwn > REF_F.ATT_OUT + 0.01 && !bA) bA = a.kind + ' (' + x.toFixed(1) + ',' + z.toFixed(1) + ') 足跡から ' + dOwn.toFixed(2) + 'm';
+          for (const o2 of (BG.get(Math.floor(x / 26) + ',' + Math.floor(z / 26)) || [])) if (o2 !== own && x > o2.__bb[0] - 1 && x < o2.__bb[1] + 1 && z > o2.__bb[2] - 1 && z < o2.__bb[3] + 1 && polyDist(o2.poly, x, z) < -REF_F.ATT_GAP && !bA)
+            bA = a.kind + ' (' + x.toFixed(1) + ',' + z.toFixed(1) + ') がほかの建物の足跡の中';
+          if (dOwn > REF_F.ATT_GAP && onRoad(x, z) && polyDist(own.poly, x, z) > 0 && !bA) {
+            // 道路の縁から 0.05m より中か(縁に接するのは許す)
+            const near = (RG.get(Math.floor(x / 30) + ',' + Math.floor(z / 30)) || []).some((R) => inPolyR(R.P, x, z) && -polyDist(R.P, x, z) > REF_F.ATT_GAP);
+            if (near) bA = a.kind + ' (' + x.toFixed(1) + ',' + z.toFixed(1) + ') が道路の上'; }
+        }
+      }
+    }
+    ok('付属物(バルコニー・室外機・雨どい)', nA > 2000 && nBal > 100 && bA === null && bW === null, '足跡の外 ' + REF_F.ATT_OUT + 'm 以内・ほかの建物と道路に入らない・印の壁に床',
+      bA || bW || nA + '個(' + [...kinds.entries()].map(([k, c]) => k + c).join('・') + ')');
+    // 付属物の形は近くだけ:まとまりの外接球の縁から ATT_NEAR の内で描き、遠くでは描かない
+    { let bL = null, nL = 0; const cp = X.camera.position.clone();
+      for (const C of X.CITY_LODS.slice(0, 40)) { if (!C.attS) continue; nL++;
+        X.camera.position.set(C.x, C.y + 10, C.z); X.cityLod(); if (!(C.ma && C.ma.visible) && !bL) bL = 'まとまりの中で描かない';
+        if (C.ma && !bL) { const n = C.ma.geometry.attributes.position.array.length / 3, ab = C.ma.geometry.attributes.aBld.array;
+          let ne = 0; for (let i = 0; i < C.attS.length; i += 19) ne += C.attS[i] === 1 ? 4 : (C.attS[i + 18] ? 24 : 20);
+          if (n !== ne) bL = '形の頂点 ' + n + ' が記録(' + ne + ')と違う'; for (let i = 0; i < ab.length; i += 4) if (ab[i] > -0.5) { bL = bL || '付属物に外装を描く'; break; } }
+        X.camera.position.set(C.x + C.r + X.ATT_NEAR * X.LOD_STRUCT + 40, C.y, C.z); X.cityLod(); if (C.ma && C.ma.visible && !bL) bL = '遠くでも描く';
+        X.camera.position.set(C.x + C.r + C.near * X.LOD_STRUCT + 40, C.y, C.z); X.cityLod(); if (C.ma && !bL) bL = '近くの形の段を離れても捨てない'; }
+      X.camera.position.copy(cp); X.cityLod();
+      ok('付属物は近くだけ描く', bL === null && nL > 10, '外接球の縁から ' + X.ATT_NEAR + 'm 以内', bL || nL + 'まとまり'); }
+    // (f) シェーダ
+    const SRC = X.BLD_WIN_SRC, need = [['外装8種', /fs<\.5\)\{ float l=fract\(yr\/\.455\)/], ['番号の丸め', /seed=floor\(vBld\.z\+\.5\)/], ['ガラスの映り込み', /reflect\(V,Nn\)/],
+      ['店と看板の夜の灯り', /bwK>4\.5&&bwK<5\.5\) totalEmissiveRadiance/], ['番号が負の面は描かない', /vBld\.x>-\.5&&abs\(vBN\.y\)<\.5/], ['箱のバルコニー', /wn\.z>\.35&&wl>=5\./]];
+    const miss = need.filter(([, r]) => !r.test(SRC)).map(([n]) => n);
+    for (const k of ['fs<1.5', 'fs<2.5', 'fs<3.5', 'fs<4.5', 'fs<5.5', 'fs<6.5']) if (!SRC.includes('else if(' + k + ')')) miss.push('外装 ' + k);
+    // パラペットの内側の面(番号が負)が近くの形にある
+    let nPar = 0; for (const C of X.CITY_LODS) { const m = C.m[0]; if (!m) continue; const A = m.geometry.attributes.aBld.array, Na = m.geometry.attributes.normal.array; for (let i = 0; i < A.length / 4; i++) if (A[4 * i] < -0.5 && Math.abs(Na[3 * i + 1]) < 0.5) nPar++; }
+    ok('外装のシェーダ・パラペット', miss.length === 0 && nPar > 1000, '模様・丸め・映り込み・夜の灯り・負の番号・箱のバルコニー・パラペットの内側', miss.length ? '無い:' + miss.join('・') : 'パラペットの頂点 ' + nPar);
+  }
 }
 
 /* ---- 4c3. 木の形(2026-10-12 利用者指示:単純すぎて浮いている) ------------------------------------

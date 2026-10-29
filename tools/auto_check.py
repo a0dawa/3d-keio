@@ -211,6 +211,30 @@ def main():
     print('%-18s %14s %14s %8s  %s' % ('旧写真転写方式の残存', 'なし',
                                        'なし' if ok else ','.join(dead), '-', 'OK' if ok else 'NG'))
 
+    # PLATEAU の用途・構造のコード(2026-10-29):取り込みの表(tools/plateau_import.py)を PLATEAU のコードリストの意味と照合する。
+    # 以前は 461(不明)を供給処理と取り違え、1,342棟を倉庫・工場の窓で描いていた
+    import os
+    imp = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'plateau_import.py')
+    isrc = open(imp, encoding='utf-8').read() if os.path.exists(imp) else ''
+
+    def pydict(name):
+        mm = re.search(r'^' + name + r'\s*=\s*\{([\s\S]*?)\}', isrc, re.M)
+        return dict(re.findall(r"'(\d+)'\s*:\s*(\d+)", mm.group(1))) if mm else None
+    # Building_usage.xml:401 業務 402 商業 403 宿泊 404 商業系複合 411 住宅 412 共同住宅 413 店舗等併用住宅 414 店舗等併用共同住宅
+    # 415 作業所併用住宅 421 官公庁 422 文教厚生 431 運輸倉庫 441 工場 451 農林漁業 452 供給処理 453 防衛 454 その他 461 不明
+    # → ビューアの区分(1 戸建て・2 併用住宅・3 共同住宅・4 業務・5 商業宿泊・6 官公庁文教・7 運輸倉庫・8 工場・9 供給処理・10 ほか・0 不明)
+    REF_USAGE = {'401': 4, '402': 5, '403': 5, '404': 5, '411': 1, '412': 3, '413': 2, '414': 3, '415': 2, '421': 6, '422': 6,
+                 '431': 7, '441': 8, '451': 10, '452': 9, '453': 10, '454': 10, '461': 0}
+    # 建物構造(KeyValuePair key100):11 耐火 12 準防火造 21 防火造 22 木造(0 調査時不明・99 不明 は表に入れず 0)
+    REF_STRUCT = {'11': 1, '12': 2, '21': 3, '22': 4}
+    for name, ref in (('USAGE', REF_USAGE), ('STRUCT', REF_STRUCT)):
+        got = pydict(name)
+        got = {k: int(v) for k, v in got.items()} if got is not None else None
+        bad = 'なし' if got is None else ','.join('%s→%s' % (k, got.get(k)) for k in sorted(set(ref) | set(got)) if got.get(k) != ref.get(k))
+        ok = got is not None and not bad
+        ng += 0 if ok else 1
+        print('%-18s %14s %14s %8s  %s' % ('PLATEAU の' + name, '%d件' % len(ref), ('%d件' % len(got)) if ok else bad, '-', 'OK' if ok else 'NG'))
+
     print('\nRESULT:', 'PASS' if ng == 0 else 'FAIL(%d項目NG)' % ng)
     sys.exit(1 if ng else 0)
 

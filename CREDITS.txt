@@ -26,7 +26,7 @@ Copyright (c) 2026 a0とnonkyuruの駅攻略
          渋谷区・杉並区・世田谷区・調布市(CityGML)
    ライセンス:クリエイティブ・コモンズ 表示 4.0 国際(CC BY 4.0)
          https://creativecommons.org/licenses/by/4.0/deed.ja
-   加工の内容:建築物の足跡と高さ・LOD2 の屋根と壁、道路区域(tran:Road)、土地利用(公園・緑地・農地・
+   加工の内容:建築物の足跡と高さ・用途・建物構造・地上階数(外装・窓の段の数を決める)・LOD2 の屋根と壁、道路区域(tran:Road)、土地利用(公園・緑地・農地・
          山林・平面駐車場)、水部(河川・池)を取り出し、ビューアの座標へ射影して単純化した
          (tools/plateau_import.py・tools/plateau_land.py)。
          LOD2 の建物の写真テクスチャ(CityGML の外観 app:ParameterizedTexture の画像。航空写真から作った壁と屋根の画像)は、
