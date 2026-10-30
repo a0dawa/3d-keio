@@ -778,17 +778,28 @@ let L2_ALL = null, P0_ALL = null;          // 4c で読んだ LOD2 の面(建物
     }
     ok('付属物(バルコニー・室外機・雨どい)', nA > 2000 && nBal > 100 && bA === null && bW === null, '足跡の外 ' + REF_F.ATT_OUT + 'm 以内・ほかの建物と道路に入らない・印の壁に床',
       bA || bW || nA + '個(' + [...kinds.entries()].map(([k, c]) => k + c).join('・') + ')');
-    // 付属物の形は近くだけ:まとまりの外接球の縁から ATT_NEAR の内で描き、遠くでは描かない
-    { let bL = null, nL = 0; const cp = X.camera.position.clone();
+    // 付属物の形は近くだけ:升(ATT_CELL)ごとに、升の外接球の縁から ATT_NEAR の内で描き、遠くでは描かない。升の外接球は記録を包む。
+    // 形の頂点は記録の数どおり(箱 16/20・屋上の室外機 20・四角形 4)・外装は描かない。近くの形の段を離れたら捨てる
+    { let bL = null, nL = 0, nC = 0; const cp = X.camera.position.clone(), AD = X.ATT_NEAR * X.LOD_STRUCT;
       for (const C of X.CITY_LODS.slice(0, 40)) { if (!C.attS) continue; nL++;
-        X.camera.position.set(C.x, C.y + 10, C.z); X.cityLod(); if (!(C.ma && C.ma.visible) && !bL) bL = 'まとまりの中で描かない';
-        if (C.ma && !bL) { const n = C.ma.geometry.attributes.position.array.length / 3, ab = C.ma.geometry.attributes.aBld.array;
-          let ne = 0; for (let i = 0; i < C.attS.length; i += 19) ne += C.attS[i] === 1 ? 4 : (C.attS[i + 18] ? 24 : 20);
-          if (n !== ne) bL = '形の頂点 ' + n + ' が記録(' + ne + ')と違う'; for (let i = 0; i < ab.length; i += 4) if (ab[i] > -0.5) { bL = bL || '付属物に外装を描く'; break; } }
-        X.camera.position.set(C.x + C.r + X.ATT_NEAR * X.LOD_STRUCT + 40, C.y, C.z); X.cityLod(); if (C.ma && C.ma.visible && !bL) bL = '遠くでも描く';
-        X.camera.position.set(C.x + C.r + C.near * X.LOD_STRUCT + 40, C.y, C.z); X.cityLod(); if (C.ma && !bL) bL = '近くの形の段を離れても捨てない'; }
+        if (!C.attC || !C.attC.length) { bL = bL || '升が無い'; continue; }
+        const seen = new Set(); for (const a of C.attC) for (const i of a.I) seen.add(i);
+        if (seen.size !== C.attS.length / 19) bL = bL || '升に入らない記録がある(' + seen.size + '/' + C.attS.length / 19 + ')';
+        for (const a of C.attC.slice(0, 6)) { nC++;
+          // 升の外接球が記録の箱の隅を包む
+          for (const i of a.I) { const S = C.attS; if (S[i] !== 0) continue; const W = (u, v) => [S[i + 3] + S[i + 5] * u + S[i + 7] * v, S[i + 4] + S[i + 6] * u + S[i + 8] * v];
+            for (const [x, z] of [W(S[i + 9], S[i + 11]), W(S[i + 10], S[i + 12])]) for (const y of [S[i + 13], S[i + 14]]) if (Math.hypot(x - a.x, y - a.y, z - a.z) > a.r + 1e-3) { bL = bL || '升の外接球が箱を包まない'; } }
+          X.camera.position.set(a.x, a.y + 2, a.z); X.cityLod();
+          if (!(a.ma && a.ma.visible) && !bL) bL = '升の中で描かない';
+          if (a.ma && !bL) { const n = a.ma.geometry.attributes.position.array.length / 3, ab = a.ma.geometry.attributes.aBld.array;
+            let ne = 0; for (const i of a.I) ne += C.attS[i] === 1 ? 4 : (C.attS[i + 18] ? 24 : 20) - (C.attS[i + 1] === 5 ? 0 : 4);   // 壁の側の面は描かない(屋上の室外機は描く)
+            if (n !== ne) bL = '形の頂点 ' + n + ' が記録(' + ne + ')と違う'; for (let i = 0; i < ab.length; i += 4) if (ab[i] > -0.5) { bL = bL || '付属物に外装を描く'; break; } }
+          X.camera.position.set(a.x + a.r + AD + 20, a.y, a.z); X.cityLod(); if (a.ma && a.ma.visible && !bL) bL = '升から遠くでも描く';
+          X.camera.position.set(a.x + a.r + 2 * AD + 20, a.y, a.z); X.cityLod(); if (a.ma && !bL) bL = '升から遠くても捨てない'; }
+        X.camera.position.set(C.x, C.y, C.z); X.cityLod();
+        X.camera.position.set(C.x + C.r + C.near * X.LOD_STRUCT + 40, C.y, C.z); X.cityLod(); if (C.attC.some((a) => a.ma) && !bL) bL = '近くの形の段を離れても捨てない'; }
       X.camera.position.copy(cp); X.cityLod();
-      ok('付属物は近くだけ描く', bL === null && nL > 10, '外接球の縁から ' + X.ATT_NEAR + 'm 以内', bL || nL + 'まとまり'); }
+      ok('付属物は近くだけ描く', bL === null && nL > 10 && nC > 50, '升の外接球の縁から ' + X.ATT_NEAR + 'm 以内・その2倍より遠いと捨てる', bL || nL + 'まとまり・' + nC + '升'); }
     // (f) シェーダ
     const SRC = X.BLD_WIN_SRC, need = [['外装8種', /fs<\.5\)\{ float l=fract\(yr\/\.455\)/], ['番号の丸め', /seed=floor\(vBld\.z\+\.5\)/], ['ガラスの映り込み', /reflect\(V,Nn\)/],
       ['店と看板の夜の灯り', /bwK>4\.5&&bwK<5\.5\) totalEmissiveRadiance/], ['番号が負の面は描かない', /vBld\.x>-\.5&&abs\(vBN\.y\)<\.5/], ['箱のバルコニー', /wn\.z>\.35&&wl>=5\./]];

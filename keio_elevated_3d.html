@@ -4639,7 +4639,7 @@ function cutTris(P){
    ・壁の外装(aBld の1つ目=窓の種類+4×外装):0=窯業系サイディング(横目地 0.455m)・1=モルタルの吹付け・2=ALC(縦目地 0.606m)・
      3=RC(階ごとの打継ぎ)・4=タイル・5=板張り・6=金属の波板・7=カーテンウォール。PLATEAU の建物構造(耐火・準防火・防火・木造)と用途から
    ・陰と汚れ:足元(基礎の帯と地面の近くの暗がり)・角・軒下の暗がり、窓の下の雨だれ、壁ごとの明るさのゆらぎ
-   ・付属物(バルコニーの床と手すり・室外機・雨どい・軒樋と鼻隠し・屋上の室外機)は近く(ATT_NEAR)だけ立体(detail の C.ma)。
+   ・付属物(バルコニーの床と手すり・室外機・雨どい・軒樋と鼻隠し・屋上の室外機)は近く(ATT_NEAR)だけ立体(detail の記録を 100m の升ごとに形にする)。
      aBld の1つ目が負の面は外装を描かない(付属物・パラペットの内側) */
 const BLD_WIN=[ // [窓の間隔, 窓の幅, 既定の階高, 窓の下端, 窓の上端(階の床から), 間引く割合(南), 間引く割合(北)] [m]
   [4.6,1.3,2.9,0.85,2.0,0.30,0.72],    // 0 戸建て・店舗併用住宅
@@ -4650,11 +4650,29 @@ const FS_G0=[0.45,0.45,0.45,0.15,0.15,0.45,0.10,0.15];   // 外装ごとの1階�
 const FH_RANGE=[[2.3,3.4],[2.3,3.4],[2.8,4.8],[3.0,6.0]];  // 窓の種類ごとの階高の範囲[m](階数から求めた値をこの中に収める)
 const FS_NAME=['サイディング','モルタル','ALC','RC','タイル','板張り','金属','カーテンウォール'];
 const BLD_WIN_U={uWinNight:{value:0}, uSkyH:{value:new THREE.Color(0.6,0.7,0.8)}, uSkyZ:{value:new THREE.Color(0.35,0.5,0.75)}, uAttD:{value:150}, uBwDbg:{value:0}};   // uBwDbg=検証用(⑰:外装の区分を色で出す)
-const ATT_NEAR=150;                         // 付属物を立体で描く距離[m](まとまりの外接球の縁から)。それより遠くはバルコニーの手すりを塗る
+const ATT_NEAR=150;                         // 付属物を立体で描く距離[m](升の外接球の縁から)。それより遠くはバルコニーの手すりを塗る
+const ATT_CELL=100;                         // 付属物の升[m]。まとまり(240m×幅940m・外接球の半径 約500m)の単位で近さを見ると、近くのまとまりの付属物を全部描いてしまう
 /* 付属物の記録(detail の C.attS)。形そのものは持たず、1つ 19個の数で残し、近づいたときだけ形にする(makeAtt。数十万個の箱の頂点を
    全部のまとまりで持つと数百MB になる)。箱=[0,種類,建物の番号,原点 x,z,沿う向き tx,tz,外向き nx,nz,u0,u1,v0,v1,y0,y1,色 r,g,b,下面]、
    四角形=[1,4点の x,y,z,法線,色]。種類は ATT_KINDS の番号(0=登録しない部品:仕切り・手すりの子・軒樋など) */
 const ATT_KINDS=['','バルコニー','手すり','室外機','雨どい','屋上の室外機'], ATT_STRIDE=19;
+/* 記録を升(ATT_CELL 四方。記録の足元の中心で振り分ける)に分け、升ごとに外接球(x,y,z,r)と記録の位置 I を持たせる。形は升ごとに
+   近づいたときだけ作る(cityLod)。升の外接球は記録の足元の4隅と上下の端を包む */
+function attCells(S){
+  const M=new Map();
+  for(let i=0;i<S.length;i+=ATT_STRIDE){
+    let xs,zs,y0,y1;
+    if(S[i]===1){ xs=[S[i+1],S[i+4],S[i+7],S[i+10]]; zs=[S[i+3],S[i+6],S[i+9],S[i+12]]; y0=Math.min(S[i+2],S[i+5],S[i+8],S[i+11]); y1=Math.max(S[i+2],S[i+5],S[i+8],S[i+11]); }
+    else{ const o0=S[i+3],o1=S[i+4],tx=S[i+5],tz=S[i+6],nx=S[i+7],nz=S[i+8]; xs=[];zs=[];
+      for(const u of [S[i+9],S[i+10]]) for(const v of [S[i+11],S[i+12]]){ xs.push(o0+tx*u+nx*v); zs.push(o1+tz*u+nz*v); }
+      y0=S[i+13]; y1=S[i+14]; }
+    const x0=Math.min(...xs),x1=Math.max(...xs),z0=Math.min(...zs),z1=Math.max(...zs), k=Math.floor((x0+x1)/2/ATT_CELL)+','+Math.floor((z0+z1)/2/ATT_CELL);
+    let c=M.get(k); if(!c){ c={I:[],b:[1e9,-1e9,1e9,-1e9,1e9,-1e9],ma:null}; M.set(k,c); }
+    c.I.push(i); const b=c.b; b[0]=Math.min(b[0],x0); b[1]=Math.max(b[1],x1); b[2]=Math.min(b[2],z0); b[3]=Math.max(b[3],z1); b[4]=Math.min(b[4],y0); b[5]=Math.max(b[5],y1);
+  }
+  const R=[];
+  for(const c of M.values()){ const b=c.b; c.x=(b[0]+b[1])/2; c.z=(b[2]+b[3])/2; c.y=(b[4]+b[5])/2; c.r=Math.hypot(b[1]-b[0],b[3]-b[2],b[5]-b[4])/2+0.01; c.I=Int32Array.from(c.I); R.push(c); }
+  return R; }
 function attBoxes(C){                       // 検証用:種類のある箱を {kind,bi,c(足元の4隅),y0,y1} に戻す
   const S=C.attS, R=[]; if(!S) return R;
   for(let i=0;i<S.length;i+=ATT_STRIDE){ if(S[i]!==0||!S[i+1]) continue;
@@ -4872,6 +4890,9 @@ const winTypeOf=(use,h)=>use===1||use===2?0:use===3?1:(use>=4&&use<=6)?2:(use>=7
 const ROOF_GRAY=[0x5d6166,0x6b6f73,0x50545a,0x787b7e,0x62656a];   // 三角屋根(スレート・瓦)は灰色(利用者指示)
 const CITY_LODS=[];                       // まとまりごとの [近・中・遠] の Mesh と外接球
 const TREE_NEAR=150;                       // 木を細かい形で描く距離[m](まとまりの外接球の縁から)
+function attDrop(C){                        // まとまり C の付属物の形を全部捨てる(記録は残す)
+  if(C.attC) for(const a of C.attC) if(a.ma){ scene.remove(a.ma); a.ma.geometry.dispose(); a.ma=null; }
+  C.attN=0; }
 function cityLod(){
   const p=camera.position;
   BLD_WIN_U.uAttD.value=ATT_NEAR*LOD_STRUCT;      // これより遠くの壁はバルコニーの手すりを塗る(近くは立体の付属物)
@@ -4884,10 +4905,13 @@ function cityLod(){
     }
     for(let j=0;j<3;j++){const v=(j===k); if(C.m[j]&&C.m[j].visible!==v) C.m[j].visible=v;}
     if(C.mt) for(const m of C.mt) if(m.visible!==(k===0)) m.visible=(k===0);
-    // 付属物は近くだけ(2026-10-29):近づけば記録から形を作り、近くの形の段を離れたら捨てる(記録は残る)
-    const va=k===0&&d<ATT_NEAR*LOD_STRUCT;
-    if(va&&!C.ma&&C.attS&&C.makeA) C.ma=C.makeA(C);
-    if(C.ma){ if(k>0){ scene.remove(C.ma); C.ma.geometry.dispose(); C.ma=null; } else if(C.ma.visible!==va) C.ma.visible=va; }
+    // 付属物は近くだけ(2026-10-29):升ごとに、外接球の縁から ATT_NEAR の内で記録から形を作って描き、その2倍より遠いか
+    // 近くの形の段を離れたら捨てる(記録は残る)
+    if(k>0){ if(C.attN) attDrop(C); }
+    else if(C.attC&&C.makeA){ const AD=ATT_NEAR*LOD_STRUCT;
+      for(const a of C.attC){ const da=Math.hypot(p.x-a.x,p.y-a.y,p.z-a.z)-a.r;
+        if(da<AD){ if(!a.ma){ a.ma=C.makeA(C,a); C.attN++; } if(!a.ma.visible) a.ma.visible=true; }
+        else if(a.ma){ if(da>2*AD){ scene.remove(a.ma); a.ma.geometry.dispose(); a.ma=null; C.attN--; } else if(a.ma.visible) a.ma.visible=false; } } }
   }
 }
 const CITY={buildings:[],trees:[]};    // 検証用の登録簿
@@ -5007,7 +5031,7 @@ if(PLB){
   /* 近くは足跡の押し出し。近づいたまとまりで初めて作る(全部を先に作ると頂点だけで数百MBになる)。
      2026-10-29:壁ごとに壁に沿う位置 u・長さ L・階高・1階の印(頂点の属性 aWal)を持たせる(外装のシェーダ bwFacade)。
      陸屋根はパラペット(屋根の面を pp 下げ、内側の面を立てる)。付属物(バルコニー・室外機・雨どい・軒樋・ケラバ・屋上の室外機)は
-     別の形 C.ma(近く ATT_NEAR だけ描く)。付属物の置き場は、ほかの建物の足跡・道路・線路の帯(cityFree)に掛からない所だけ */
+     別の形(記録 C.attS を 100m の升 C.attC ごとに、近く ATT_NEAR だけ形にして描く)。付属物の置き場は、ほかの建物の足跡・道路・線路の帯(cityFree)に掛からない所だけ */
   const plbHitOther=(px,pz,r,own)=>{ const l=PLB_GRID.get(Math.floor(px/PLB_CELL)+','+Math.floor(pz/PLB_CELL));
     if(l) for(const P of l) if(P!==own&&px>P.bb[0]-r&&px<P.bb[1]+r&&pz>P.bb[2]-r&&pz<P.bb[3]+r&&polyDist(P,px,pz)<r) return true;
     return false; };
@@ -5191,29 +5215,31 @@ if(PLB){
       const mt=new THREE.Mesh(gt,ptxMat(a)); mt.visible=false; mt.castShadow=true; mt.receiveShadow=true; mt.userData.ptx=a;
       scene.add(mt); C.mt.push(mt);
     }
-    if(C.ma){ scene.remove(C.ma); C.ma.geometry.dispose(); C.ma=null; }   // 作り直すときは付属物の形も記録から作り直す
-    C.attS=AS.length?new Float32Array(AS):null;       // 付属物の記録(近くだけ makeAtt が形にする。表示は cityLod)
+    attDrop(C);                                       // 作り直すときは付属物の形も記録から作り直す
+    C.attS=AS.length?new Float32Array(AS):null;       // 付属物の記録(升ごとに近くだけ makeAtt が形にする。表示は cityLod)
+    C.attC=C.attS?attCells(C.attS):null;
     return m;
   };
-  /* 付属物の形:記録(C.attS)から近づいたときだけ作る。外装は描かない(aBld の1つ目が負。aWal は読まれないので持たない) */
-  const makeAtt=(C)=>{
-    const S=C.attS; if(!S) return null;
+  /* 付属物の形:升 a の記録(C.attS の a.I の位置)から近づいたときだけ作る。外装は描かない(aBld の1つ目が負。aWal は読まれないので持たない) */
+  const makeAtt=(C,a)=>{
+    const S=C.attS; if(!S||!a) return null;
     const P=[],N=[],I=[],Cc=[];
     const q=(a,b,cc,d,n,r,g,bl)=>{ const o=P.length/3; for(const p of [a,b,cc,d]){P.push(p[0],p[1],p[2]);N.push(n[0],n[1],n[2]);Cc.push(r,g,bl);}
       const ux=b[0]-a[0],uy=b[1]-a[1],uz=b[2]-a[2],vx=cc[0]-a[0],vy=cc[1]-a[1],vz=cc[2]-a[2];   // 法線の向きに表を向ける
       if((uy*vz-uz*vy)*n[0]+(uz*vx-ux*vz)*n[1]+(ux*vy-uy*vx)*n[2]>=0) I.push(o,o+1,o+2,o,o+2,o+3); else I.push(o,o+2,o+1,o,o+3,o+2); };
-    for(let i=0;i<S.length;i+=ATT_STRIDE){
+    for(const i of a.I){
       if(S[i]===1){ q([S[i+1],S[i+2],S[i+3]],[S[i+4],S[i+5],S[i+6]],[S[i+7],S[i+8],S[i+9]],[S[i+10],S[i+11],S[i+12]],[S[i+13],S[i+14],S[i+15]],S[i+16],S[i+17],S[i+18]); continue; }
       const o0=S[i+3],o1=S[i+4],tx=S[i+5],tz=S[i+6],nx=S[i+7],nz=S[i+8],u0=S[i+9],u1=S[i+10],v0=S[i+11],v1=S[i+12],y0=S[i+13],y1=S[i+14],r=S[i+15],g=S[i+16],bl=S[i+17];
       const W=(u,v,y)=>[o0+tx*u+nx*v,y,o1+tz*u+nz*v];
       q(W(u0,v1,y0),W(u1,v1,y0),W(u1,v1,y1),W(u0,v1,y1),[nx,0,nz],r,g,bl);
-      q(W(u0,v0,y0),W(u1,v0,y0),W(u1,v0,y1),W(u0,v0,y1),[-nx,0,-nz],r,g,bl);
+      // 壁の側を向く面は描かない(壁と付属物の間に入らないと見えない。屋上の室外機=種類5 だけは向きが壁と関係ないので描く)
+      if(S[i+1]===5) q(W(u0,v0,y0),W(u1,v0,y0),W(u1,v0,y1),W(u0,v0,y1),[-nx,0,-nz],r,g,bl);
       q(W(u1,v0,y0),W(u1,v1,y0),W(u1,v1,y1),W(u1,v0,y1),[tx,0,tz],r,g,bl);
       q(W(u0,v0,y0),W(u0,v1,y0),W(u0,v1,y1),W(u0,v0,y1),[-tx,0,-tz],r,g,bl);
       q(W(u0,v0,y1),W(u1,v0,y1),W(u1,v1,y1),W(u0,v1,y1),[0,1,0],r,g,bl);
       if(S[i+18]) q(W(u0,v0,y0),W(u1,v0,y0),W(u1,v1,y0),W(u0,v1,y0),[0,-1,0],r*0.7,g*0.7,bl*0.7);
     }
-    const ga=facesGeo(P,N,I,Cc); ga.boundingSphere=sphere(C.bx);
+    const ga=facesGeo(P,N,I,Cc); ga.boundingSphere=new THREE.Sphere(new THREE.Vector3(a.x,a.y,a.z),a.r);
     const AB=new Float32Array(P.length/3*4); for(let j=0;j<AB.length;j+=4){AB[j]=-1;AB[j+1]=1e4;}
     ga.setAttribute('aBld',new THREE.Float32BufferAttribute(AB,4));
     const ma=new THREE.Mesh(ga,MAT_B); ma.visible=false; ma.castShadow=true; ma.receiveShadow=true; ma.userData.attach=true;
@@ -5222,7 +5248,7 @@ if(PLB){
   for(const c of CH.values()){
     const bx=c.bx;
     CITY_LODS.push({x:(bx[0]+bx[1])/2,y:(bx[4]+bx[5])/2,z:(bx[2]+bx[3])/2,r:Math.hypot(bx[1]-bx[0],bx[4]-bx[5],bx[3]-bx[2])/2,
-      near:400,mid:1400,B:c.B,bx:bx,make:detail,makeA:makeAtt,ma:null,attS:null,m:[null,inst(c.B,bx),inst(c.B.filter(b=>b.big),bx)]});
+      near:400,mid:1400,B:c.B,bx:bx,make:detail,makeA:makeAtt,attS:null,attC:null,attN:0,m:[null,inst(c.B,bx),inst(c.B.filter(b=>b.big),bx)]});
   }
   CITY.plateau={source:PLB.source,count:PLB.count,used:nIn,tex:N_TX?{buildings:N_TX.nb,surfaces:N_TX.ns,atlases:PTX.atlases.length}:null};
   // 出典の表示(CC BY 4.0)
