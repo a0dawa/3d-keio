@@ -1689,6 +1689,15 @@ if (KARA_DATA) {
         if (polyDist(KV.D, x, z) > 0.01 && !bad) bad = '頂点 (' + x.toFixed(1) + ',' + z.toFixed(1) + ') が区域の外';
         const y = [0, 0.12, 0.27, 0.29].find((v) => Math.abs(d - v) < 0.002); if (y === undefined && !bad) bad = '頂点 (' + x.toFixed(1) + ',' + z.toFixed(1) + ') 地表+' + d.toFixed(3); else ys.add(y); } }
     ok('計画の区域:駅前広場の面', bad === null && n > 300 && ys.size === 4, '頂点が区域の中・地表+0(縁石の下)/0.12(車道)/0.27(舗装)/0.29(芝)', bad || n + '頂点・高さ ' + [...ys].sort().join('/')); }
+  /* ロータリーの車の出入口(2026-11 利用者指摘「道路の繋がる方向が逆」):車道の高さ(地表+0.12)の頂点のうち区域の縁にある物(=口)は、
+     すべて補助216号線の帯に接する(区域の東の辺)。資料 p.20 の線路沿いの灰色の帯が東へ続いて 216 へ曲がり、p.23 の鳥瞰の入口も東。
+     西の駅前通り・南のバス通りへは開かない */
+  { let bad = null, nM = 0; let mesh = null; X.scene.traverse((o) => { if (o.isMesh && o.name === '駅前広場') mesh = o; });
+    if (mesh) { const a = mesh.geometry.attributes.position.array;
+      for (let k = 0; k < a.length; k += 3) { const x = a[k], z = a[k + 2]; if (Math.abs(a[k + 1] - X.terH(x, z) - 0.12) > 0.002 || polyDist(KV.D, x, z) < -0.05) continue;
+        nM++; if (KV.rowD(x, z) > 0.1 && !bad) bad = '車道が区域の縁 (' + x.toFixed(1) + ',' + z.toFixed(1) + ') で 216 の外へ開く(216 まで ' + KV.rowD(x, z).toFixed(2) + 'm)'; } }
+    ok('計画の区域:ロータリーの出入口は東の216へ', mesh !== null && bad === null && nM >= 2, '車道が区域の縁に出る所は補助216号線の帯に接する所だけ(西の駅前通り・南へは開かない)・口が有る',
+      bad || '口の頂点 ' + nM); }
 } else ok('計画の区域', !KARA_DATA, '実データが無いときは描かない', '-');
 console.log('=== 街並みと交差鉄道の検証 ===');
 console.log('(置かれた1件ずつの世界座標を測り、道路・河川・鉄道・高架下と突き合わせ)\n');
