@@ -122,7 +122,9 @@ function polyDist(P, x, z) {
   return inside ? -d : d;
 }
 /* 千歳烏山駅前広場南側地区(再開発の計画。2026-11):検証側の基準 tools/kara_ref.js(資料の図を読んだ値。HTML の KARA は読まない)。
-   区域 D(凸の5角形)・補助216号線の帯(中心線 C の区間ごとの四角形 ROW。継ぎ目は角の二等分線)・穴 H=[D, ROW…]。
+   区域 D(凸の5角形)・補助216号線の帯(中心線 C の区間ごとの四角形 ROW。継ぎ目は角の二等分線)・線路沿いの帯 S(区域の北の辺と
+   モデルの桁の南の縁の間。桁は構造物なのでモデルの deckHalf・frame から検証側で組む。s の 5m ごとの四角形を区域の東・西の辺の線で切る)・
+   穴 H=[D, ROW…, S…]。計画の範囲 A=(D ∪ S)−ROW。
    描くべきかは検証側がファイルから決める(HTML が plateau_land.js・plateau_bldg.js を読み、隣にある) */
 const KR = require('./kara_ref');
 const KARA_DATA = (() => { const fs = require('fs'), pth = require('path'), html = fs.readFileSync(path, 'utf8');
@@ -135,10 +137,22 @@ const KV = (() => {
   const ROW = []; for (let i = 0; i < C.length - 1; i++) { const a = C[i], b = C[i + 1], oa = of[i], ob = of[i + 1];
     ROW.push([[a[0] + oa[0], a[1] + oa[1]], [b[0] + ob[0], b[1] + ob[1]], [b[0] - ob[0], b[1] - ob[1]], [a[0] - oa[0], a[1] - oa[1]]]); }
   const ccw = (P) => { let A = 0; for (let i = 0; i < P.length; i++) { const a = P[i], b = P[(i + 1) % P.length]; A += a[0] * b[1] - b[0] * a[1]; } return A > 0 ? P : P.slice().reverse(); };
-  const H = [D].concat(ROW).map(ccw);
+  const S = []; {
+    const [D0, D1, D2, , D4] = D, edge = (s) => { const f = X.frame(s, -X.deckHalf(s)); return [f.x, f.z]; };
+    const onN = (s) => { const p = X.frame(s, 0), q = X.frame(s, 1), nx = q.x - p.x, nz = q.z - p.z, bx = D1[0] - D0[0], bz = D1[1] - D0[1], t = ((D0[0] - p.x) * bz - (D0[1] - p.z) * bx) / (nx * bz - nz * bx); return [p.x + nx * t, p.z + nz * t]; };
+    const clip = (Q, a, b) => { const o = [], f = (q) => (b[0] - a[0]) * (q[1] - a[1]) - (b[1] - a[1]) * (q[0] - a[0]);   // 線 a→b の左を残す
+      for (let i = 0; i < Q.length; i++) { const p = Q[i], q = Q[(i + 1) % Q.length], fp = f(p), fq = f(q); if (fp >= 0) o.push(p);
+        if ((fp >= 0) !== (fq >= 0)) { const t = fp / (fp - fq); o.push([p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t]); } } return o; };
+    const area = (P) => { let A = 0; for (let i = 0; i < P.length; i++) { const a = P[i], b = P[(i + 1) % P.length]; A += a[0] * b[1] - b[0] * a[1]; } return A / 2; };
+    const s0 = X.prjXY(D1[0], D1[1]).s, s1 = X.prjXY(D0[0], D0[1]).s;
+    for (let k = Math.floor(s0 / 5) - 2; k <= Math.ceil(s1 / 5) + 1; k++) { let Q = [edge(5 * k), edge(5 * k + 5), onN(5 * k + 5), onN(5 * k)];
+      if (area(Q) < 0) Q.reverse(); Q = clip(Q, D1, D2); if (Q.length >= 3) Q = clip(Q, D4, D0); if (Q.length >= 3 && Math.abs(area(Q)) > 1e-3) S.push(Q); } }
+  const H = [D].concat(ROW, S).map(ccw);
   const bb = [1e9, -1e9, 1e9, -1e9]; for (const P of H) for (const p of P) { bb[0] = Math.min(bb[0], p[0]); bb[1] = Math.max(bb[1], p[0]); bb[2] = Math.min(bb[2], p[1]); bb[3] = Math.max(bb[3], p[1]); }
   const rowD = (x, z) => Math.min(...ROW.map((Q) => polyDist(Q, x, z)));          // 216 の帯までの距離(中は負)
-  const planD = (x, z) => Math.min(polyDist(D, x, z), rowD(x, z));                 // 区域か帯までの距離(中は負)
+  const stripD = (x, z) => S.length ? Math.min(...S.map((Q) => polyDist(Q, x, z))) : 1e9;   // 線路沿いの帯
+  const planD = (x, z) => Math.min(polyDist(D, x, z), rowD(x, z), stripD(x, z));    // 区域か帯までの距離(中は負)
+  const aD = (x, z) => Math.max(Math.min(polyDist(D, x, z), stripD(x, z)), -rowD(x, z));   // 計画の範囲 A=(D∪S)−ROW までの距離(おおよそ。中は負)
   const near = (x, z, r) => x > bb[0] - r && x < bb[1] + r && z > bb[2] - r && z < bb[3] + r;
   // 線分 a→b のうち凸の多角形 Q(反時計回り)の外の部分
   const segOut = (a, b, Q) => { let t0 = 0, t1 = 1;
@@ -146,7 +160,7 @@ const KV = (() => {
       if (fa < 0 && fb < 0) return [[a, b]]; if (fa < 0) t0 = Math.max(t0, fa / (fa - fb)); else if (fb < 0) t1 = Math.min(t1, fa / (fa - fb)); }
     if (t0 >= t1) return [[a, b]]; const L = (u) => [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u], o = [];
     if (t0 > 1e-9) o.push([a, L(t0)]); if (t1 < 1 - 1e-9) o.push([L(t1), b]); return o; };
-  return { D: D, C: C, ROW: ROW, H: H, bb: bb, rowD: rowD, planD: planD, near: near, segOut: segOut,
+  return { D: D, C: C, ROW: ROW, S: S, H: H, bb: bb, rowD: rowD, stripD: stripD, planD: planD, aD: aD, near: near, segOut: segOut,
     P: W(KR.plaza), T: W(KR.tower), inPlan: (x, z, r) => near(x, z, r + 1) && planD(x, z) < r };
 })();
 /* 実データの道路(plateau_land.js)。検証側で独自に読む(モデルの登録簿ではなくファイルそのもの) */
@@ -1627,8 +1641,12 @@ if (X.ROADS_PL.length) {
    ・区域の地形は 0
    ・計画のビル(区域の中の PLATEAU でない建物)3棟:高層棟=屋上 140m・基部 21m(免震層の上)・31層・大きさ 41.7m×70.5m・資料の四隅の矩形に収まる、
      低層部=屋根 16m・3階・塔の足跡を含む、ピロティの棟=屋根 16m・基部 0 より上。屋上の機械室の上端=屋上+8.6m
-   ・駅前広場の面:頂点が区域の中・高さが地表+0/0.12(車道)/0.27(舗装)/0.29(芝)
-   ・区域の中の木 15本以上 */
+   ・駅前広場の面:頂点が計画の範囲(区域+線路沿いの帯−216 の帯)の中・高さが地表+0/0.12(車道)/0.27(舗装)/0.29(植え込み)
+   ・p.20 の再現(2026-11 利用者指示「p.20 の再現度が低い。やり直し」):kara_ref.js の基準点(p.20 の元の画素の色から取った車道 352点・
+     舗装 169点)で、描いた面の最も上の面が同じ分類(車道=+0.12/舗装=+0.27 か植え込み +0.29)・p.20 と p.21 の木の記号 66本の 0.5m 内に木
+   ・車の出入口:範囲の縁で車道が出るのは補助216号線の西の縁の口(z 560〜594・10m 以上)と桁の縁だけ。駅前通り・バス通りの側へは出ない。
+     216 の歩道が口をふさがない(今は 216 の西の歩道が口より北で終わるので起こらないが、歩道の作り方を変えたときの備え)
+   ・区域の中の木 55本以上 */
 if (KARA_DATA) {
   const inD = (x, z) => polyDist(KV.D, x, z) < 0;
   // 既存の建物・木
@@ -1642,15 +1660,15 @@ if (KARA_DATA) {
   { let bad = null, nD = 0, nR = 0;
     const RP = X.ROADS_PL.filter((R) => R.bb[1] > KV.bb[0] - 5 && R.bb[0] < KV.bb[1] + 5 && R.bb[3] > KV.bb[2] - 5 && R.bb[2] < KV.bb[3] + 5);
     for (let x = KV.bb[0]; x <= KV.bb[1]; x += 2.7) for (let z = KV.bb[2]; z <= KV.bb[3]; z += 2.7) {
-      if (polyDist(KV.D, x, z) < -0.5) { nD++; if (RP.some((R) => polyDist(R.P, x, z) < 0) && !bad) bad = '区域の中 (' + x.toFixed(0) + ',' + z.toFixed(0) + ') に道路の面(登録簿)'; }
+      if (KV.aD(x, z) < -0.5) { nD++; if (RP.some((R) => polyDist(R.P, x, z) < 0) && !bad) bad = '計画の範囲 (' + x.toFixed(0) + ',' + z.toFixed(0) + ') に道路の面(登録簿)'; }
       else if (KV.rowD(x, z) < -0.5) { nR++; const c = RP.filter((R) => polyDist(R.P, x, z) < 0); if ((c.length !== 1 || c[0].k !== 1) && !bad) bad = '216 の帯 (' + x.toFixed(0) + ',' + z.toFixed(0) + ') の道路の面 ' + c.length + '枚' + (c[0] ? '(種別 ' + c[0].k + ')' : ''); } }
     let nTri = 0;
     X.scene.traverse((o) => { if (bad || !o.isMesh || !o.userData || !o.userData.flat || o === X.groundMesh || o.name === '駅前広場' || !o.geometry || !o.geometry.index) return;
       const P = o.geometry.attributes.position.array, I = o.geometry.index.array;
       for (let k = 0; k < I.length && !bad; k += 3) { const a = 3 * I[k], b = 3 * I[k + 1], c = 3 * I[k + 2], x = (P[a] + P[b] + P[c]) / 3, z = (P[a + 2] + P[b + 2] + P[c + 2]) / 3;
         if (x < KV.bb[0] || x > KV.bb[1] || z < KV.bb[2] || z > KV.bb[3]) continue; nTri++;
-        if (polyDist(KV.D, x, z) < -0.3) bad = (o.name || '面') + ' の三角形 (' + x.toFixed(0) + ',' + z.toFixed(0) + ') が区域の中'; } });
-    ok('計画の区域:道路の面', bad === null && nD > 1500 && nR > 500, '区域の中に既存の道路の面(登録簿・描いた面)が無い・216 の帯は幹線の面で1重に覆われる', bad || '区域 ' + nD + '点・帯 ' + nR + '点・近くの三角形 ' + nTri); }
+        if (KV.aD(x, z) < -0.3) bad = (o.name || '面') + ' の三角形 (' + x.toFixed(0) + ',' + z.toFixed(0) + ') が計画の範囲の中'; } });
+    ok('計画の区域:道路の面', bad === null && nD > 1500 && nR > 500, '計画の範囲(区域+線路沿いの帯)に既存の道路の面(登録簿・描いた面)が無い・216 の帯は幹線の面で1重に覆われる', bad || '範囲 ' + nD + '点・帯 ' + nR + '点・近くの三角形 ' + nTri); }
   // 柱
   { let bad = null, n = 0, worst = 1e9;
     for (const c of X.VIA_COLS) for (const o of c.offs) { const f = X.frame(c.s, o); if (!KV.near(f.x, f.z, 60)) continue; n++; const d = KV.rowD(f.x, f.z); worst = Math.min(worst, d);
@@ -1686,18 +1704,52 @@ if (KARA_DATA) {
     if (!mesh) bad = '駅前広場の面が無い';
     else { const a = mesh.geometry.attributes.position.array;
       for (let k = 0; k < a.length; k += 3) { n++; const x = a[k], z = a[k + 2], d = a[k + 1] - X.terH(x, z);
-        if (polyDist(KV.D, x, z) > 0.01 && !bad) bad = '頂点 (' + x.toFixed(1) + ',' + z.toFixed(1) + ') が区域の外';
+        if (KV.aD(x, z) > 0.01 && !bad) bad = '頂点 (' + x.toFixed(1) + ',' + z.toFixed(1) + ') が計画の範囲の外';
         const y = [0, 0.12, 0.27, 0.29].find((v) => Math.abs(d - v) < 0.002); if (y === undefined && !bad) bad = '頂点 (' + x.toFixed(1) + ',' + z.toFixed(1) + ') 地表+' + d.toFixed(3); else ys.add(y); } }
-    ok('計画の区域:駅前広場の面', bad === null && n > 300 && ys.size === 4, '頂点が区域の中・地表+0(縁石の下)/0.12(車道)/0.27(舗装)/0.29(芝)', bad || n + '頂点・高さ ' + [...ys].sort().join('/')); }
-  /* ロータリーの車の出入口(2026-11 利用者指摘「道路の繋がる方向が逆」):車道の高さ(地表+0.12)の頂点のうち区域の縁にある物(=口)は、
-     すべて補助216号線の帯に接する(区域の東の辺)。資料 p.20 の線路沿いの灰色の帯が東へ続いて 216 へ曲がり、p.23 の鳥瞰の入口も東。
-     西の駅前通り・南のバス通りへは開かない */
-  { let bad = null, nM = 0; let mesh = null; X.scene.traverse((o) => { if (o.isMesh && o.name === '駅前広場') mesh = o; });
-    if (mesh) { const a = mesh.geometry.attributes.position.array;
-      for (let k = 0; k < a.length; k += 3) { const x = a[k], z = a[k + 2]; if (Math.abs(a[k + 1] - X.terH(x, z) - 0.12) > 0.002 || polyDist(KV.D, x, z) < -0.05) continue;
-        nM++; if (KV.rowD(x, z) > 0.1 && !bad) bad = '車道が区域の縁 (' + x.toFixed(1) + ',' + z.toFixed(1) + ') で 216 の外へ開く(216 まで ' + KV.rowD(x, z).toFixed(2) + 'm)'; } }
-    ok('計画の区域:ロータリーの出入口は東の216へ', mesh !== null && bad === null && nM >= 2, '車道が区域の縁に出る所は補助216号線の帯に接する所だけ(西の駅前通り・南へは開かない)・口が有る',
-      bad || '口の頂点 ' + nM); }
+    ok('計画の区域:駅前広場の面', bad === null && n > 300 && ys.size === 4, '頂点が計画の範囲の中・地表+0(縁石の下)/0.12(車道)/0.27(舗装)/0.29(芝)', bad || n + '頂点・高さ ' + [...ys].sort().join('/')); }
+  /* p.20 の再現と車の出入口。描いた '駅前広場' の上向きの面のうち、点の真上で最も高い面の高さ(地表から)を「その点の面」とする */
+  { let mesh = null; X.scene.traverse((o) => { if (o.isMesh && o.name === '駅前広場') mesh = o; });
+    const TG = new Map(), TC = 4;
+    if (mesh) { const a = mesh.geometry.attributes.position.array, nm = mesh.geometry.attributes.normal.array, I = mesh.geometry.index.array;
+      for (let k = 0; k < I.length; k += 3) { const v = [I[k], I[k + 1], I[k + 2]]; if (nm[3 * v[0] + 1] < 0.9) continue;
+        const T3 = v.map((i) => [a[3 * i], a[3 * i + 1], a[3 * i + 2]]);
+        for (let gx = Math.floor(Math.min(...T3.map((p) => p[0])) / TC); gx <= Math.floor(Math.max(...T3.map((p) => p[0])) / TC); gx++)
+          for (let gz = Math.floor(Math.min(...T3.map((p) => p[2])) / TC); gz <= Math.floor(Math.max(...T3.map((p) => p[2])) / TC); gz++) {
+            const kk = gx + ',' + gz; if (!TG.has(kk)) TG.set(kk, []); TG.get(kk).push(T3); } } }
+    const topAt = (x, z) => { let y = null;
+      for (const T3 of TG.get(Math.floor(x / TC) + ',' + Math.floor(z / TC)) || []) {
+        const [p, q, r] = T3, d = (q[0] - p[0]) * (r[2] - p[2]) - (q[2] - p[2]) * (r[0] - p[0]); if (Math.abs(d) < 1e-12) continue;
+        const u = ((x - p[0]) * (r[2] - p[2]) - (z - p[2]) * (r[0] - p[0])) / d, w = ((q[0] - p[0]) * (z - p[2]) - (q[2] - p[2]) * (x - p[0])) / d;
+        if (u < -1e-7 || w < -1e-7 || u + w > 1 + 1e-7) continue; const h = p[1] + u * (q[1] - p[1]) + w * (r[1] - p[1]) - X.terH(x, z); if (y === null || h > y) y = h; }
+      return y; };
+    const cls = (h) => h === null ? '無' : Math.abs(h - 0.12) < 0.01 ? '車' : (Math.abs(h - 0.27) < 0.01 || Math.abs(h - 0.29) < 0.01) ? '舗' : '?' + h.toFixed(2);
+    // 基準点
+    { let nR = 0, nP = 0; const bad = [], W = (p) => KR.toXY(X, p);
+      for (const p of KR.REF_ROAD) { const [x, z] = W(p), c = cls(topAt(x, z)); if (c === '車') nR++; else bad.push('車道の点 (' + x.toFixed(1) + ',' + z.toFixed(1) + ')=' + c); }
+      for (const p of KR.REF_PAVE) { const [x, z] = W(p), c = cls(topAt(x, z)); if (c === '舗') nP++; else bad.push('舗装の点 (' + x.toFixed(1) + ',' + z.toFixed(1) + ')=' + c); }
+      ok('計画の区域:p.20 の車道と舗装', mesh !== null && bad.length === 0 && KR.REF_ROAD.length > 300 && KR.REF_PAVE.length > 150,
+        'p.20 の元の画素から取った基準点(kara_ref.js)の真上の面が同じ分類(車道 +0.12/舗装 +0.27・植え込み +0.29)', bad.length ? bad.slice(0, 3).join(' ') + ' ほか 計' + bad.length + '点' : '車道 ' + nR + '点・舗装 ' + nP + '点'); }
+    // 木
+    { const T2 = T.filter((t) => t.kind === '広場'); let n = 0, worst = 0;
+      for (const p of KR.REF_TREES) { const [x, z] = KR.toXY(X, p); let d = 1e9; for (const t of T2) d = Math.min(d, Math.hypot(t.x - x, t.z - z)); worst = Math.max(worst, d); if (d <= 0.5) n++; }
+      ok('計画の区域:p.20・p.21 の木', n === KR.REF_TREES.length, 'p.20・p.21 の木の記号(kara_ref.js)' + KR.REF_TREES.length + '本の 0.5m 内に計画の木', n + '本(最も遠い ' + worst.toFixed(2) + 'm)'); }
+    /* 車の出入口(2026-11 利用者指摘「道路の繋がる方向が逆」):区域の縁の 0.3m 内を 0.5m ごとに見て、車道の所は補助216号線の西の縁
+       (z が MOUTH の範囲)か桁の縁(線路沿いの帯に接する所)だけ。西の駅前通り・南のバス通りの側には出ない。216 の歩道は口で切れる */
+    { let bad = null, mouth = 0; const M = KR.MOUTH;
+      const ccwD = ((P) => { let A = 0; for (let i = 0; i < P.length; i++) A += P[i][0] * P[(i + 1) % P.length][1] - P[(i + 1) % P.length][0] * P[i][1]; return A > 0 ? P : P.slice().reverse(); })(KV.D);
+      for (let i = 0; i < ccwD.length; i++) { const a = ccwD[i], b = ccwD[(i + 1) % ccwD.length], L = Math.hypot(b[0] - a[0], b[1] - a[1]), n = Math.ceil(L / 0.5);
+        const nx = (b[1] - a[1]) / L, nz = -(b[0] - a[0]) / L;            // 反時計回りの右=外
+        for (let k = 0; k <= n; k++) { const x = a[0] + (b[0] - a[0]) * k / n, z = a[1] + (b[1] - a[1]) * k / n, xi = x - nx * 0.3, zi = z - nz * 0.3;
+          if (KV.aD(xi, zi) > -0.2 || cls(topAt(xi, zi)) !== '車') continue;
+          if (KV.rowD(x, z) <= 0.3) { if (z >= M.within[0] && z <= M.within[1]) mouth += L / n; else if (!bad) bad = '216 の縁の口の外 (' + x.toFixed(1) + ',' + z.toFixed(1) + ') が車道'; }
+          else if (KV.stripD(x, z) > 0.3 && !bad) bad = '区域の縁 (' + x.toFixed(1) + ',' + z.toFixed(1) + ') で車道が外へ出る(216 でも桁の縁でもない)'; } }
+      let swBad = null;
+      for (const W of X.SIDEWALKS || []) for (const [u0, u1] of W.seg || []) for (const u of [u0, (u0 + u1) / 2, u1]) { const q = W.f(u);
+        if (!KV.near(q.x, q.z, 5)) continue;
+        for (const sd of [1, -1]) { const xx = q.x + sd * q.fz * (W.w / 2 + 0.6), zz = q.z - sd * q.fx * (W.w / 2 + 0.6);
+          if (KV.aD(xx, zz) < -0.2 && cls(topAt(xx, zz)) === '車' && !swBad) swBad = '216 の歩道 (' + q.x.toFixed(1) + ',' + q.z.toFixed(1) + ') が車道の口をふさぐ'; } }
+      ok('計画の区域:ロータリーの出入口は東の216へ', mesh !== null && bad === null && swBad === null && mouth >= M.minLen, '車道が区域の縁に出るのは補助216号線の西の縁の口(z ' + M.within.join('〜') + '・' + M.minLen + 'm 以上)と桁の縁だけ・216 の歩道は口で切れる',
+        bad || swBad || '口 ' + mouth.toFixed(1) + 'm'); } }
 } else ok('計画の区域', !KARA_DATA, '実データが無いときは描かない', '-');
 console.log('=== 街並みと交差鉄道の検証 ===');
 console.log('(置かれた1件ずつの世界座標を測り、道路・河川・鉄道・高架下と突き合わせ)\n');
