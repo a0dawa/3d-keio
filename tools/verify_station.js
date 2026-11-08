@@ -627,6 +627,22 @@ const w = (s, n) => String(s) + ' '.repeat(Math.max(0, n -
       res.push([!!(N && N.visible), !!(F && F.visible)]); }
     const want = [[true, false], [false, true], [false, false]];
     ok('ホームの人の遠近', N && F && JSON.stringify(res) === JSON.stringify(want), '駅の中=近く・横350m=遠く・横700m=無し', JSON.stringify(res));
+    /* 脚は左右に分かれ、歩くときは逆の向きに振る(2026-11 利用者指摘「たまに両足が一緒に動いている人間がいる」:遠くの形は脚が1つの箱で、
+       それを振っていた)。近く・遠くの形の両方で、部品 0(左脚)の頂点は z<0・部品 1(右脚)は z>0 で、どちらも頂点がある。
+       頂点シェーダ(材質の onBeforeCompile を検証側の空のシェーダに当てた結果)で、部品 0 と 1 の振りの角が逆の符号 */
+    let badL = null;
+    for (const o of [N, F]) { const g = o && o.geometry, A = g && g.attributes, pos = A && A.position && A.position.array, pk = A && A.aPK && A.aPK.array;
+      if (!pos || !pk) { badL = badL || (o ? o.name : '人') + ' の形が無い'; continue; }
+      let nl = 0, nr = 0;
+      for (let i = 0; i < pk.length / 2; i++) { const part = pk[i * 2], z = pos[i * 3 + 2];
+        if (part === 0) { nl++; if (!(z < -0.005) && !badL) badL = o.name + ' 左脚の頂点 z=' + z.toFixed(3); }
+        if (part === 1) { nr++; if (!(z > 0.005) && !badL) badL = o.name + ' 右脚の頂点 z=' + z.toFixed(3); } }
+      if ((nl === 0 || nr === 0) && !badL) badL = o.name + ' 脚の部品 左' + nl + '・右' + nr; }
+    { const m = N && N.material, sh = { uniforms: {}, vertexShader: '#include <begin_vertex>\n#include <color_vertex>\n', fragmentShader: '#include <emissivemap_fragment>\n' };
+      if (m && typeof m.onBeforeCompile === 'function') m.onBeforeCompile(sh);
+      const l = /aPart<\.5\)\{a=(-?)sw/.exec(sh.vertexShader), r = /aPart<1\.5\)\{a=(-?)sw/.exec(sh.vertexShader);
+      if (!(l && r && l[1] !== r[1]) && !badL) badL = '頂点シェーダで左右の脚の振りが逆でない'; }
+    ok('人の脚は左右に分かれ逆に振る', badL === null, '近く・遠くの形とも 左脚 z<0・右脚 z>0・振りの角が逆の符号', badL || '近く・遠く');
   }
   /* 人の種類(2026-10-12 利用者指示:老若男女・学生・会社員・主婦など。鞄もスマホも持たないのは不自然)。検証側の決まり:
      型が6種以上・鞄(リュック・肩掛け・書類鞄・買い物袋)を持つ人が85%以上・スマホを見る人が20%以上・

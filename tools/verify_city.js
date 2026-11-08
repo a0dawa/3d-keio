@@ -29,7 +29,7 @@ const X = require('./stub_three')(path,
   'ORTHO_MGR:(typeof ORTHO_MGR!=="undefined"?ORTHO_MGR:null),ORTHO_U:(typeof ORTHO_U!=="undefined"?ORTHO_U:null),LON0:LON0,MLON:MLON,' +
   'lodStruct:lodStruct,renderer:renderer,LU:LU,CINE:CINE,MAT_JOSUI:(typeof MAT_JOSUI!=="undefined"?MAT_JOSUI:null),IS_MOBILE:IS_MOBILE,' +
   'KPZ:(typeof KPZ!=="undefined"?KPZ:null),plazaStep:(typeof plazaStep!=="undefined"?plazaStep:()=>{}),KARA_LAMPS:(typeof KARA_LAMPS!=="undefined"?KARA_LAMPS:null),' +
-  'DENCHU:(typeof DENCHU!=="undefined"?DENCHU:null),DENSEN:(typeof DENSEN!=="undefined"?DENSEN:null),HIKIKOMI:(typeof HIKIKOMI!=="undefined"?HIKIKOMI:null),' +
+  'DENCHU:(typeof DENCHU!=="undefined"?DENCHU:null),STA:STA,STRUCT:STRUCT,' +
   'ROAD_MARKS:(typeof ROAD_MARKS!=="undefined"?ROAD_MARKS:null),SIGNAL:(typeof SIGNAL!=="undefined"?SIGNAL:null),signalLit:(typeof signalLit!=="undefined"?signalLit:null)');
 
 /* ---- 期待値(検証側が独立して持つ) ----------------------------------------
@@ -39,6 +39,10 @@ const REF = {
   MIN_BUILDINGS: 9000,      // 倍増後の下限(2026-10 利用者指示。前回は約5,000棟)
   MIN_TREES: 2000,          // 倍増後の下限(前回1,100本)
   DECK_CLEAR: 4.6,          // 高架下+側道の外縁(桁半幅からの距離[m])
+  // 高架の南は壁の 1m 付近まで建物を置いてよい(2026-11 利用者指示)。駅の所(ホーム・駅舎の範囲の外へ SOUTH_STA)は従来の DECK_CLEAR。
+  // ホームの範囲は 6章の表から写した値(笹塚は中心の 155m 東〜55m 西、ほかは ±105m。下高井戸の駅舎は西端部 +112m まで)
+  SOUTH_CLEAR: 0.6, SOUTH_STA: 18, SOUTH_WALL: 0.5, SOUTH_NEAR: [1.0, 4.6], SOUTH_MIN_N: 30,   // 以前(4.6m の外)は 0棟。2026-11 の実数は約40棟
+  PLAT_RANGE0: [-155, 55], PLAT_HALF: 105, BLDG_END: { 下高井戸: 112 },
   // 交差鉄道の建築限界の半幅[m]。井の頭線=複線+掘割擁壁(±9.4)、世田谷線=単線+ホーム
   XRAIL_HALF: { 井の頭線: 13.0, 世田谷線: 3.7 },   // 井の頭線は 2026-10-27 から下の INO_CLEAR(線路から測る)。13.0 は写真の検査で近くを除く幅だけに使う
   INO_CLEAR: 3.2,           // 井の頭線:建物は実際の線路の中心から 3.2m(擁壁の外面)より外。ホームの範囲は INO_PLAT_CLEAR
@@ -93,6 +97,10 @@ const XC = { INO: xCurve(X.RAW.rail.ino, 'cross'), SETA: xCurve(X.RAW.rail.seta,
 const inoPlat = (k, u, m) => { const q = REF.INO_PLAT[k ? 0 : 1], u0 = XC.INO.uAtZ(-(q.lat - X.LAT0) * X.MLAT); return u > u0 - m && u < u0 + REF.INO_PLAT_LEN + m; };
 
 const B = X.CITY.buildings, T = X.CITY.trees;
+// 駅の所(ホームの実範囲と駅舎の範囲の外へ REF.SOUTH_STA):高架の南でも建物は従来の DECK_CLEAR の外
+const STA_ZONES = X.STA.map((st, i) => { const r = i === 0 ? REF.PLAT_RANGE0 : [-REF.PLAT_HALF, REF.PLAT_HALF];
+  return [st.x + r[0] - REF.SOUTH_STA, st.x + Math.max(r[1], REF.BLDG_END[st.n] || 0) + REF.SOUTH_STA]; });
+const inStaZone = (s) => STA_ZONES.some((z) => s > z[0] && s < z[1]);
 /* 測る点:模式の建物・樹木は外接円(中心と半径)。PLATEAU の建物は足跡の多角形なので、頂点と辺の1mごとの点
    (半径0)で測る。点の (s,off) は検証側で求める:重心を線形へ射影し、その s の接線・法線で近似する */
 const POLY = (o) => !!(o.poly && o.poly.length >= 3);
@@ -236,7 +244,8 @@ const LAND = (() => {
       return Math.min(dU, KV.rowD(x, z));
     };
   }
-  return { roads: out, depth: depthP, elev: out.filter((R) => R.k === 2 && R.sec === 2), water: water };
+  // 高架の自動車道=自動車専用(k=2)の全部(橋梁 sec 2 と分合流 sec 4。2026-11 から sec 4 も床版。地表の道路の扱いは橋梁だけ高架)
+  return { roads: out, depth: depthP, elev: out.filter((R) => R.k === 2), water: water };
 })();
 const ALL = B.map((o) => ({ o: o, kind: '建物' })).concat(T.map((o) => ({ o: o, kind: '樹木' })));
 
@@ -249,12 +258,31 @@ ok('樹木の数', T.length >= REF.MIN_TREES, '≥' + REF.MIN_TREES + '本', T.l
   let bad = null;
   for (const e of ALL) for (const q of pts(e.o)) {
     // 掘割(DECK_END より西)は側ごとの幅(仙川の北は単式ホームの分だけ広い)
-    const lim = (q.s > X.DECK_END ? X.cutHalf(q.s, q.off < 0 ? -1 : 1) : X.deckHalf(q.s)) + REF.DECK_CLEAR;
+    const south = q.off < 0 && q.s <= X.DECK_END && !inStaZone(q.s);
+    const lim = (q.s > X.DECK_END ? X.cutHalf(q.s, q.off < 0 ? -1 : 1) : X.deckHalf(q.s)) + (south ? REF.SOUTH_CLEAR : REF.DECK_CLEAR);
     if (Math.abs(q.off) - q.r < lim && !bad)
       bad = [e.kind, 's=' + q.s.toFixed(0), 'off=' + q.off.toFixed(1), '限界' + lim.toFixed(1)];
   }
-  ok('高架下・側道に入らない', bad === null, '桁半幅+' + REF.DECK_CLEAR + 'm以遠',
+  ok('高架下・側道に入らない', bad === null, '桁半幅+' + REF.DECK_CLEAR + 'm以遠(高架の南の駅の外は +' + REF.SOUTH_CLEAR + 'm)',
     bad ? bad.join(' ') : ALL.length + '件すべて');
+}
+/* 2b. 高架の南は壁の 1m 付近まで建物が建つ(2026-11 利用者指示)。駅の外の南で、建物の足跡の点が桁の縁から SOUTH_NEAR の内にある建物が
+   SOUTH_MIN_N 棟以上(以前は 4.6m より内に 0 棟。実際の建物は線路の脇の道路の外に建つ物が多く、壁の近くまで来るのは約40棟)。南へ出た構造物(登録簿 STRUCT=高欄・外装・庇)の外面から SOUTH_WALL の内に建物・木が無い */
+{
+  let nNear = 0, bad = null;
+  const SB = X.STRUCT.filter((q) => q.o0 < 0 && Math.min(q.s0, q.s1) < X.DECK_END && -q.o0 > X.deckHalf((q.s0 + q.s1) / 2) - 0.5);
+  const SG = new Map(); for (const q of SB) for (let k = Math.floor(Math.min(q.s0, q.s1) / 10); k <= Math.floor(Math.max(q.s0, q.s1) / 10); k++) { if (!SG.has(k)) SG.set(k, []); SG.get(k).push(q); }
+  for (const e of ALL) { let near = false;
+    for (const q of pts(e.o)) { if (q.off >= 0 || q.s > X.DECK_END) continue;
+      const d = -q.off - q.r - X.deckHalf(q.s);
+      if (e.kind === '建物' && !inStaZone(q.s) && d >= REF.SOUTH_NEAR[0] - 0.05 && d < REF.SOUTH_NEAR[1]) near = true;
+      for (const S of SG.get(Math.floor(q.s / 10)) || []) {
+        if (q.s > Math.min(S.s0, S.s1) - q.r - REF.SOUTH_WALL && q.s < Math.max(S.s0, S.s1) + q.r + REF.SOUTH_WALL &&
+            q.off > S.o0 - q.r - REF.SOUTH_WALL && q.off < S.o1 + q.r + REF.SOUTH_WALL && !bad)
+          bad = e.kind + ' s=' + q.s.toFixed(1) + ' off=' + q.off.toFixed(2) + ' が ' + S.tag + '(off ' + S.o0.toFixed(2) + ')から ' + REF.SOUTH_WALL + 'm の内'; } }
+    if (near) nNear++; }
+  ok('高架の南は壁の 1m 付近まで建物', bad === null && nNear >= REF.SOUTH_MIN_N, '駅の外の南で桁の縁から ' + REF.SOUTH_NEAR.join('〜') + 'm に足跡が掛かる建物 ' + REF.SOUTH_MIN_N + '棟以上・南へ出た構造物から ' + REF.SOUTH_WALL + 'm の内に無い',
+    bad || nNear + '棟(構造物 ' + SB.length + '件)');
 }
 
 /* ---- 3. 交差鉄道(井の頭線・世田谷線)の上に無い --------------------------
@@ -436,6 +464,46 @@ if (LAND) {
   ok('自動車道の高架が京王線と当たらない', be === null && X.EXPY.deck.length === LAND.elev.filter((R) => R.P.some((v) => { const q = X.prjXY(v[0], v[1]); return q.s > X.DOM.x0 - 150 && q.s < X.DOM.x1 + 150 && Math.abs(q.off) < X.DOM.z + 60; })).length,
     '下面≥レール面+' + REF.EXPY_CLEAR + 'm・橋脚は側道の外',
     be ? be.join(' ') : '床版' + X.EXPY.deck.length + '面・重なる点' + ne + '・橋脚' + X.EXPY.piers.length + '基');
+  /* 自動車道の高架は途切れない(2026-11 利用者指摘「甲州街道の上に中途半端に高架橋」:分合流の面 sec 4 が抜けて床版が宙で途切れ、片の継ぎ目に
+     高欄が車道を横切っていた)。検証側で plateau_land.js から読んだ自動車専用の面(k=2)の和で:
+     ・高欄の線分(登録簿 EXPY.rails)は和の外周にある(中点の両側 0.4m のどちらかが和の外)・外周(辺の 2m ごとの点で、外へ 0.6m が和の外)の
+       98% 以上に 0.3m 以内の高欄がある
+     ・橋脚の柱は和の中(縁から 1.2m 以上内)・地表の道路の交差部(sec 4)から 2m 以上・互いに 6m 以上・京王線の帯(桁の半幅+4.6m)の外
+     ・和の中の 10m 格子の点(縁から 2m 以上内・京王線の帯の 40m の外)から 70m 以内に橋脚がある(支えの無い区間が無い) */
+  { const EL = LAND.elev.filter((R) => R.P.some((v) => { const q = X.prjXY(v[0], v[1]); return q.s > X.DOM.x0 - 150 && q.s < X.DOM.x1 + 150 && Math.abs(q.off) < X.DOM.z + 60; }));
+    const bbOf = (P) => { let a = 1e9, b = -1e9, c = 1e9, d = -1e9; for (const p of P) { a = Math.min(a, p[0]); b = Math.max(b, p[0]); c = Math.min(c, p[1]); d = Math.max(d, p[1]); } return [a, b, c, d]; };
+    for (const R of EL) R.bb2 = bbOf(R.P);
+    const uD = (x, z) => { let d = 1e9; for (const R of EL) if (x > R.bb2[0] - 30 && x < R.bb2[1] + 30 && z > R.bb2[2] - 30 && z < R.bb2[3] + 30) d = Math.min(d, polyDist(R.P, x, z)); return d; };   // 和までの距離(中は負。和の外周から測る近似)
+    const inU = (x, z) => EL.some((R) => x > R.bb2[0] && x < R.bb2[1] && z > R.bb2[2] && z < R.bb2[3] && polyDist(R.P, x, z) < 0);
+    let bad = null, nOut = 0, nCov = 0, nGrid = 0;
+    const RL = X.EXPY.rails || [];
+    for (const r of RL) { const dx = r[2] - r[0], dz = r[3] - r[1], L = Math.hypot(dx, dz) || 1, mx = (r[0] + r[2]) / 2, mz = (r[1] + r[3]) / 2, nx = dz / L, nz = -dx / L;
+      if (inU(mx + nx * 0.4, mz + nz * 0.4) && inU(mx - nx * 0.4, mz - nz * 0.4) && !bad) bad = '高欄 (' + mx.toFixed(0) + ',' + mz.toFixed(0) + ') が床版の継ぎ目(両側とも床版)'; }
+    const RG = new Map(); for (const r of RL) { const k = Math.floor((r[0] + r[2]) / 40) + ',' + Math.floor((r[1] + r[3]) / 40); if (!RG.has(k)) RG.set(k, []); RG.get(k).push(r); }
+    const nearRail = (x, z) => { for (let a = Math.floor(x / 20) - 1; a <= Math.floor(x / 20) + 1; a++) for (let c = Math.floor(z / 20) - 1; c <= Math.floor(z / 20) + 1; c++)
+      for (const r of RG.get(a + ',' + c) || []) { const dx = r[2] - r[0], dz = r[3] - r[1], L2 = dx * dx + dz * dz, u = L2 ? Math.max(0, Math.min(1, ((x - r[0]) * dx + (z - r[1]) * dz) / L2)) : 0;
+        if (Math.hypot(x - r[0] - dx * u, z - r[1] - dz * u) < 0.3) return true; } return false; };
+    for (const R of EL) for (let i = 0; i < R.P.length; i++) { const a = R.P[i], c = R.P[(i + 1) % R.P.length], L = Math.hypot(c[0] - a[0], c[1] - a[1]); if (L < 0.5) continue;
+      let nx = (c[1] - a[1]) / L, nz = -(c[0] - a[0]) / L; if (polyDist(R.P, (a[0] + c[0]) / 2 + nx * 0.3, (a[1] + c[1]) / 2 + nz * 0.3) < 0) { nx = -nx; nz = -nz; }
+      for (let t = 1; t < L; t += 2) { const x = a[0] + (c[0] - a[0]) * t / L, z = a[1] + (c[1] - a[1]) * t / L; if (inU(x + nx * 0.6, z + nz * 0.6)) continue; nOut++; if (nearRail(x, z)) nCov++; } }
+    if (!bad && nCov < nOut * 0.98) bad = '外周に高欄が無い所 ' + (nOut - nCov) + '/' + nOut;
+    const XS = LAND.roads.filter((R) => R.k !== 2 && R.sec === 4); for (const R of XS) R.bb2 = R.bb2 || bbOf(R.P);
+    const PI = X.EXPY.piers;
+    PI.forEach((p, i) => { if (bad) return; const q = X.prjXY(p[0], p[1]);
+      if (!(uD(p[0], p[1]) < -1.2)) bad = '橋脚 (' + p[0].toFixed(0) + ',' + p[1].toFixed(0) + ') が床版の縁から 1.2m の内でない';
+      else if (XS.some((R) => p[0] > R.bb2[0] - 2 && p[0] < R.bb2[1] + 2 && p[1] > R.bb2[2] - 2 && p[1] < R.bb2[3] + 2 && polyDist(R.P, p[0], p[1]) < 2)) bad = '橋脚 (' + p[0].toFixed(0) + ',' + p[1].toFixed(0) + ') が交差部の 2m 内';
+      else if (PI.some((o, j) => j !== i && Math.hypot(o[0] - p[0], o[1] - p[1]) < 6)) bad = '橋脚 (' + p[0].toFixed(0) + ',' + p[1].toFixed(0) + ') がほかの橋脚の 6m 内'; });
+    const PG = new Map(); for (const p of PI) { const k = Math.floor(p[0] / 70) + ',' + Math.floor(p[1] / 70); if (!PG.has(k)) PG.set(k, []); PG.get(k).push(p); }
+    for (const R of EL) for (let x = Math.ceil(R.bb2[0] / 10) * 10; x < R.bb2[1] && !bad; x += 10) for (let z = Math.ceil(R.bb2[2] / 10) * 10; z < R.bb2[3] && !bad; z += 10) {
+      if (!(polyDist(R.P, x, z) < -2)) continue; const q = X.prjXY(x, z);
+      if (q.s > X.DOM.x0 - 120 && q.s < X.DOM.x1 + 120 && Math.abs(q.off) < X.deckHalf(Math.max(X.DOM.x0, Math.min(X.DOM.x1, q.s))) + 40) continue;
+      nGrid++; let ok2 = false;
+      for (let a = Math.floor(x / 70) - 1; a <= Math.floor(x / 70) + 1 && !ok2; a++) for (let c = Math.floor(z / 70) - 1; c <= Math.floor(z / 70) + 1 && !ok2; c++)
+        for (const p of PG.get(a + ',' + c) || []) if (Math.hypot(p[0] - x, p[1] - z) < 70) { ok2 = true; break; }
+      if (!ok2) bad = '床版の (' + x + ',' + z + ') から 70m に橋脚が無い'; }
+    ok('自動車道の高架は途切れない', bad === null && EL.length >= 10 && RL.length > 200 && PI.length > 100,
+      '自動車専用の面の全部が床版・高欄は外周だけ(98% 以上を覆う)・橋脚は床版の中ほど・交差部と互いから離れ 70m 以内に支える',
+      bad || '面 ' + EL.length + '・高欄 ' + RL.length + '本(外周 ' + nCov + '/' + nOut + ')・橋脚 ' + PI.length + '基・格子 ' + nGrid + '点'); }
 }
 
 /* ---- 4e. 仙川の掘割(利用者指示 2026-10-11)----------------------------------------
@@ -1308,12 +1376,17 @@ if (TER_ON) {
         if (!TR.SW_Y.some((y) => Math.abs(P[k + 1] - t - y) < 0.003)) bad = '歩道の頂点 (' + P[k].toFixed(0) + ',' + P[k + 2].toFixed(0) + ') 地表+' + (P[k + 1] - t).toFixed(3); } });
     ok('歩く人と歩道が地表に載る', bad === null && nPU >= 20 && nSW > 1000, '歩く人=地表+0.27m・歩道の頂点=地表+0.12/0.27m・起伏の上の人 20人以上', bad || nP + '人(起伏の上 ' + nPU + ')・歩道の頂点 ' + nSW); }
   { let bad = null, n = 0;
-    const pm = []; X.scene.traverse((o) => { if (o.isMesh && o.mats && o.mats.length === X.EXPY.piers.length && o.material === X.MAT.pier) pm.push(o); });
-    if (pm.length !== 1) bad = '自動車道の橋脚のインスタンスが見つからない(' + pm.length + ')';
+    const pm = [], cm = []; X.scene.traverse((o) => { if (o.isMesh && o.mats && o.mats.length === X.EXPY.piers.length && o.material === X.MAT.pier) (o.name === '自動車道の橋脚の横梁' ? cm : pm).push(o); });
+    if (pm.length !== 1 || cm.length !== 1) bad = '自動車道の橋脚・横梁のインスタンスが見つからない(' + pm.length + '・' + cm.length + ')';
     else pm[0].mats.forEach((q, i) => { if (bad || !q) return; n++; const p = X.EXPY.piers[i], t = tH(q.p.x, q.p.z), bot = q.p.y - q.s.y / 2, top = q.p.y + q.s.y / 2;
+      const c = cm[0].mats[i], cb = c && c.p.y - c.s.y / 2, ct = c && c.p.y + c.s.y / 2;
+      // 床版の下面(検証側で登録簿の床版のうちこの点の上にある物の下面)
+      let db = -1e9; for (const D of X.EXPY.deck) if (polyDist(D.P, q.p.x, q.p.z) < 0) db = Math.max(db, D.bot);
       if (Math.abs(bot - t) > 0.005) bad = '橋脚 (' + q.p.x.toFixed(0) + ',' + q.p.z.toFixed(0) + ') の足元 ' + bot.toFixed(2) + ' ≠ 地表 ' + t.toFixed(2);
-      else if (Math.abs(top - p[2]) > 0.005) bad = '橋脚の上端 ' + top.toFixed(2) + ' ≠ 床版の下面 ' + p[2].toFixed(2); });
-    ok('自動車道の橋脚は地表から', bad === null && n > 100, '橋脚の足元=地表・上端=床版の下面', bad || n + '基'); }
+      else if (!c || Math.abs(top - cb) > 0.005) bad = '橋脚の上端 ' + top.toFixed(2) + ' ≠ 横梁の下面 ' + (c ? cb.toFixed(2) : 'なし');
+      else if (Math.abs(ct - db) > 0.005) bad = '横梁の上端 ' + ct.toFixed(2) + ' ≠ 床版の下面 ' + db.toFixed(2);
+      else if (Math.hypot(c.p.x - q.p.x, c.p.z - q.p.z) > 0.01) bad = '横梁が柱の上に無い'; });
+    ok('自動車道の橋脚は地表から', bad === null && n > 100, '柱の足元=地表・柱の上端=横梁の下面・横梁の上端=床版の下面', bad || n + '基'); }
   // (g) 起伏が効いている
   { const V = []; for (let k = 0; k < H.length; k++) if (WN[k] >= 0.999) V.push(H[k]);
     const mu = V.reduce((a, v) => a + v, 0) / Math.max(1, V.length), sd = Math.sqrt(V.reduce((a, v) => a + (v - mu) ** 2, 0) / Math.max(1, V.length));
@@ -1341,7 +1414,7 @@ if (TER_ON) {
    (g) 切替:OFF で uOrthoOn=0・水面を出す/ON で 1・写真が読めていれば水面を隠す
    (h) 読めないタイル:書かない(近の枠は α=0 で塗ったまま=前の窓のタイルが残らない)・待ちに数えない */
 const REF_OR = { URL: 'https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/', Z: [18, 16, 14], N: X.IS_MOBILE ? [0, 4] : [8, 8], AHEAD: [350, 1400],
-  TOL_PX: [0.25, 0.25, 0.6], GAIN: 0.65, NIGHT: 0.55, BAND_IN: 3.6, BAND_OUT: 6.7, END_OUT: 3, XR_IN: 1.0, BAND_HEX: 0x8f8d88, SNOW_MIN: 0.5,
+  TOL_PX: [0.25, 0.25, 0.6], GAIN: 0.65, NIGHT: 0.58, BAND_IN: 3.6, BAND_OUT: 6.7, END_OUT: 3, XR_IN: 1.0, BAND_HEX: 0x8f8d88, SNOW_MIN: 0.5,
   HOLE_OUT: 4.0, HOLE_MISS: 0.03, KEEP_PHOTO: 0.995, FAR_RM: 30 };   // 外した建物の足跡:この距離[m]の内は帯の外の検査から除く(帯の印は 4m/画素で、足跡どうしの狭い隙間では
                                                           // 双線形が距離を小さく読むので1画素)・重心で写真が出てよい割合・街の建物で写真が出る割合
 const OM = X.ORTHO_MGR, OU = X.ORTHO_U;
@@ -1477,7 +1550,10 @@ else {
         if (KARA_DATA && r.P.some((p) => KV.inPlan(p[0], p[1], 2))) { if (KV.planD(r.cx, r.cz) < -0.5) { kpN++; if (m <= 0.05) kpOK++; } continue; }   // 計画の区域と帯で外した物
         if (r.d <= REF.DECK_CLEAR) { rmN++; if (m > 0.05) { rmBad++; if (!rmEx) rmEx = '(' + r.cx.toFixed(0) + ',' + r.cz.toFixed(0) + ') の写真の割合 ' + m.toFixed(2); } }
         else if (r.d >= REF_OR.FAR_RM && !nearXR(r.cx, r.cz)) { fN++; if (m >= 0.95) fOK++; } }
-      for (const r of KP) { if (!inP(r.P, r.cx, r.cz)) continue; kN++; if (mwt(r.cx, r.cz) >= 0.95) kOK++; } }
+      for (const r of KP) { if (!inP(r.P, r.cx, r.cz)) continue;
+        // 高架の南で壁の 1m 付近まで建てた建物(2026-11)のうち、重心が線路の帯(写真を使わない帯)の中の物は今の色でよい
+        const pq = X.prjXY(r.cx, r.cz); if (pq.off < 0 && pq.s <= X.DECK_END && pq.s > X.DOM.x0 && -pq.off - X.deckHalf(pq.s) < REF_OR.BAND_OUT) continue;
+        kN++; if (mwt(r.cx, r.cz) >= 0.95) kOK++; } }
     ok('航空写真:外した建物の足跡は今の色', rmN >= 100 && rmBad <= rmN * REF_OR.HOLE_MISS && fN >= 50 && fOK >= fN * 0.95 && kN > 9000 && kOK >= kN * REF_OR.KEEP_PHOTO,
       '線路の帯で外した実際の建物(plateau_bldg.js を検証側で読み、足跡が構造物の半幅+4.6m に掛かる物)の重心で写真 0.05 以下(' + (REF_OR.HOLE_MISS * 100) + '% まで)・' +
       REF_OR.FAR_RM + 'm 以上離れて外した建物は写真のまま(95%)・街にある建物の重心は ' + (REF_OR.KEEP_PHOTO * 100) + '% 以上で 0.95 以上',
@@ -1850,70 +1926,12 @@ if (LAND && X.ROAD_MARKS) {
     ok('交差点:防護柵', bad === null && M.guards.length >= 300, '支柱は幹線の歩道の帯の上・交差部(千歳烏山の計画の範囲に掛かる物は範囲の外の部分)から 2.5m 以上・300本以上', bad || M.guards.length + '本'); }
 } else ok('路面標示と交差点の設備', !LAND, '実データの道路が無いときは描かない', '-');
 
-/* ---- 4j. 電柱・電線と航空写真の木(2026-11 利用者指示「更なるクオリティアップ」)-----------------------------------------------
-   電柱(推定の配置):道路の面の上(縁から 0.05m)・一般の道路(検証側の plateau_land.js で幹線・自動車専用の面の上に無い)・建物の足跡の 0.25m 外・
-     高架の帯(桁の半幅+5.2m)の外・千歳烏山の計画の範囲から 0.9m 外・ほかの電柱から 13.9m 以上・根元が地表+道路の高さ・500本以上
-   電線:径間 45m 以下・1本の電柱に3本まで。径間の水平の線(両端の電柱を結ぶ)の 1m ごとの点が道路の面から 1.9m 以内(電線の横のずれ 0.6m を含む)・
-     幹線と自動車専用の面の 0.7m より内に入らない・建物の足跡の上なら建物の上端が電線の最も低い所(通信 7.4m−垂れ 0.0005L²)より低い。
-     描いた '電線' の線分が径間の中ほどの真上(水平 1m 以内・地表+6m 以上)を通る。描いた線の頂点はすべて地表+2.9m 以上
-   引込線:電柱から(水平 0.6m 以内)・建物の壁の 0.5m 以内の外・壁の高さの中(基部+2.5m〜上端)・長さ 12.5m 以下・300本以上
-   航空写真の木:gsi_trees.js を HTML が読み、隣にあれば、検証側で復号した写真の木の 0.06m 以内に '写真' の木があり、半径は 1m 以上で
-     min(5m, 写真の半径×1.25) 以下・3,000本以上・公園の格子の木('公園')は無い。ファイルがあるのに '写真' の木が無ければ NG */
-if (LAND && X.DENCHU) {
-  const D = X.DENCHU, W = X.DENSEN || [], H = X.HIKIKOMI || [];
-  const MJ = new Map(), C5 = 30; for (const R of LAND.roads) if (R.k !== 0) for (let a = Math.floor(R.bb[0] / C5); a <= Math.floor(R.bb[1] / C5); a++) for (let c = Math.floor(R.bb[2] / C5); c <= Math.floor(R.bb[3] / C5); c++) { const k = a + ',' + c; if (!MJ.has(k)) MJ.set(k, []); MJ.get(k).push(R); }
-  const majD = (x, z) => { let d = 1e9; for (const R of MJ.get(Math.floor(x / C5) + ',' + Math.floor(z / C5)) || []) d = Math.min(d, polyDist(R.P, x, z)); return d; };   // 幹線・自動車専用の面まで(中は負)
-  const BG = new Map(); for (const e of B) if (e.poly) { let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9; for (const v of e.poly) { x0 = Math.min(x0, v[0]); x1 = Math.max(x1, v[0]); z0 = Math.min(z0, v[1]); z1 = Math.max(z1, v[1]); }
-    for (let a = Math.floor(x0 / 20); a <= Math.floor(x1 / 20); a++) for (let c = Math.floor(z0 / 20); c <= Math.floor(z1 / 20); c++) { const k = a + ',' + c; if (!BG.has(k)) BG.set(k, []); BG.get(k).push(e); } }
-  const bldNear = (x, z) => { const o = new Set(); for (let a = -1; a <= 1; a++) for (let c = -1; c <= 1; c++) for (const e of BG.get((Math.floor(x / 20) + a) + ',' + (Math.floor(z / 20) + c)) || []) o.add(e); return o; };
-  // 電柱
-  { let bad = null; const PG = new Map();
-    for (const p of D) { const k = Math.floor(p.x / 15) + ',' + Math.floor(p.z / 15); if (!PG.has(k)) PG.set(k, []); PG.get(k).push(p); }
-    for (const p of D) { const q = X.prjXY(p.x, p.z), at = '電柱 (' + p.x.toFixed(1) + ',' + p.z.toFixed(1) + ')';
-      if (bad) break;
-      if (LAND.depth(p.x, p.z) > 0.05) bad = at + ' が道路の外';
-      else if (majD(p.x, p.z) < 0) bad = at + ' が幹線か自動車専用の道路の上';
-      else if (Math.abs(q.off) < X.deckHalf(q.s) + 5.2) bad = at + ' が高架の帯の中';
-      else if (KARA_DATA && KV.planD(p.x, p.z) < 0.9) bad = at + ' が千歳烏山の計画の範囲';
-      else if (Math.abs(p.y - X.terH(p.x, p.z) - 0.12) > 0.03) bad = at + ' の根元 地表+' + (p.y - X.terH(p.x, p.z)).toFixed(2);
-      else { for (const e of bldNear(p.x, p.z)) if (polyDist(e.poly, p.x, p.z) < 0.25) { bad = at + ' が建物の足跡の 0.25m 内'; break; }
-        for (let a = -1; a <= 1 && !bad; a++) for (let c = -1; c <= 1 && !bad; c++) for (const o of PG.get((Math.floor(p.x / 15) + a) + ',' + (Math.floor(p.z / 15) + c)) || [])
-          if (o !== p && Math.hypot(o.x - p.x, o.z - p.z) < 13.9) { bad = at + ' とほかの電柱の間 ' + Math.hypot(o.x - p.x, o.z - p.z).toFixed(1) + 'm'; break; } } }
-    ok('電柱:一般の道路の縁', bad === null && D.length >= 500, '道路の面の上・幹線/自動車専用の外・建物の足跡の 0.25m 外・高架の帯と千歳烏山の計画の外・間 13.9m 以上・500本以上', bad || D.length + '本'); }
-  // 電線
-  { let bad = null; const deg = new Map();
-    const LV = [], LS = []; X.scene.traverse((o) => { if (o.name === '電線' && o.geometry && o.geometry.attributes.position) LS.push(o.geometry.attributes.position.array); });
-    const VG = new Map(); for (const a of LS) for (let k = 0; k < a.length; k += 3) { const h = a[k + 1] - X.terH(a[k], a[k + 2]); if (h < 2.9 && !bad) bad = '電線の頂点 (' + a[k].toFixed(1) + ',' + a[k + 2].toFixed(1) + ') が地表+' + h.toFixed(2); LV.push(1);
-      if (k % 6 === 0 && k + 5 < a.length) { const sg = [a[k], a[k + 1], a[k + 2], a[k + 3], a[k + 4], a[k + 5]];   // 線分(2点ずつ)を両端の升に
-        for (const g of new Set([Math.floor(sg[0] / 4) + ',' + Math.floor(sg[2] / 4), Math.floor(sg[3] / 4) + ',' + Math.floor(sg[5] / 4)])) { if (!VG.has(g)) VG.set(g, []); VG.get(g).push(sg); } } }
-    for (const w of W) { if (bad) break; const a = w.a, b = w.b, L = Math.hypot(b.x - a.x, b.z - a.z), at = '径間 (' + a.x.toFixed(1) + ',' + a.z.toFixed(1) + ')→(' + b.x.toFixed(1) + ',' + b.z.toFixed(1) + ')';
-      deg.set(a, (deg.get(a) || 0) + 1); deg.set(b, (deg.get(b) || 0) + 1);
-      if (L > 45) { bad = at + ' が ' + L.toFixed(1) + 'm'; break; }
-      const low = Math.min(a.y, b.y) + 7.4 - 0.0005 * L * L;
-      for (let t = 1; t < L; t += 1) { const x = a.x + (b.x - a.x) * t / L, z = a.z + (b.z - a.z) * t / L;
-        if (LAND.depth(x, z) > 1.9) { bad = at + ' の (' + x.toFixed(1) + ',' + z.toFixed(1) + ') が道路から ' + LAND.depth(x, z).toFixed(1) + 'm'; break; }
-        if (majD(x, z) < -0.7) { bad = at + ' が幹線か自動車専用の道路の上を通る'; break; }
-        for (const e of bldNear(x, z)) if (polyDist(e.poly, x, z) < -0.05 && (e.base || 0) + e.h > low) { bad = at + ' が建物(上端 ' + ((e.base || 0) + e.h).toFixed(1) + 'm)を貫く'; break; }
-        if (bad) break; }
-      if (bad) break;
-      const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2; let hit = false;
-      for (let i = -2; i <= 2 && !hit; i++) for (let j = -2; j <= 2 && !hit; j++) for (const sg of VG.get((Math.floor(mx / 4) + i) + ',' + (Math.floor(mz / 4) + j)) || []) {   // 描いた線分が中ほどの 1m 内を通る
-        const ex = sg[3] - sg[0], ez = sg[5] - sg[2], l2 = ex * ex + ez * ez || 1, t = Math.max(0, Math.min(1, ((mx - sg[0]) * ex + (mz - sg[2]) * ez) / l2)), px = sg[0] + ex * t, pz = sg[2] + ez * t, py = sg[1] + (sg[4] - sg[1]) * t;
-        if (Math.hypot(px - mx, pz - mz) < 1 && py - X.terH(px, pz) > 6) { hit = true; break; } }
-      if (!hit) bad = at + ' の中ほどの真上に描いた電線が無い'; }
-    for (const [p, n] of deg) if (n > 3 && !bad) bad = '電柱 (' + p.x.toFixed(1) + ',' + p.z.toFixed(1) + ') の径間 ' + n;
-    ok('電線:道路の上・建物を貫かない', bad === null && W.length >= 300 && LS.length > 0, '径間 45m 以下・3本まで・道路の上(1.9m)・幹線の上を通らない・建物の上端が電線より低い・描いた線が径間の上・地表+2.9m 以上・300径間以上',
-      bad || W.length + '径間・線の頂点 ' + LV.length); }
-  // 引込線
-  { let bad = null;
-    for (const d of H) { const at = '引込線 (' + d.b[0].toFixed(1) + ',' + d.b[2].toFixed(1) + ')';
-      const p = D.find((o) => Math.hypot(o.x - d.a[0], o.z - d.a[2]) < 0.6); if (!p) { bad = at + ' の元に電柱が無い'; break; }
-      const L = Math.hypot(d.b[0] - d.a[0], d.b[2] - d.a[2]); if (L > 12.5) { bad = at + ' の長さ ' + L.toFixed(1); break; }
-      let wall = null; for (const e of bldNear(d.b[0], d.b[2])) { const g = polyDist(e.poly, d.b[0], d.b[2]); if (g > 0 && g <= 0.5) { wall = e; break; } }
-      if (!wall) { bad = at + ' の先が建物の壁の外 0.5m に無い'; break; }
-      const y0 = (wall.base || 0); if (d.b[1] < y0 + 2.5 || d.b[1] > y0 + wall.h) { bad = at + ' の高さ ' + (d.b[1] - y0).toFixed(1) + 'm(壁 ' + wall.h.toFixed(1) + 'm)'; break; } }
-    ok('引込線:電柱から建物の壁へ', bad === null && H.length >= 300, '元は電柱・先は壁の外 0.5m 内で壁の高さの中・12.5m 以下・300本以上', bad || H.length + '本'); }
-}
+/* ---- 4j. 航空写真の木(2026-11 利用者指示「更なるクオリティアップ」。電柱・電線は 2026-11 利用者指示「クオリティが低く失敗」で撤去)----------
+   gsi_trees.js を HTML が読み、隣にあれば、検証側で復号した写真の木の 0.06m 以内に '写真' の木があり、半径は 1m 以上で
+   min(5m, 写真の半径×1.25) 以下・3,000本以上・公園の格子の木('公園')は無い。ファイルがあるのに '写真' の木が無ければ NG。
+   電柱・電線は無い(登録簿 DENCHU が無く、'電柱'・'電線' の Mesh も無い) */
+{ let bad = null; if (X.DENCHU) bad = '登録簿 DENCHU が残る'; X.scene.traverse((o) => { if (!bad && (o.name === '電柱' || o.name === '電線')) bad = o.name + ' が残る'; });
+  ok('電柱・電線は描かない', bad === null, '電柱・電線・引込線が無い', bad || '無い'); }
 {
   const fs = require('fs'), pth = require('path'), f = pth.join(pth.dirname(path), 'gsi_trees.js'), html = fs.readFileSync(path, 'utf8');
   if (LAND && html.includes('<script src="gsi_trees.js">') && fs.existsSync(f)) {

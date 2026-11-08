@@ -67,8 +67,17 @@ function findChromium() {
     a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);
     t=t+Math.imul(t^t>>>7,61|t)^t;return ((t^t>>>14)>>>0)/4294967296;};})()`);
   const t0 = Date.now();
+  /* 読み込み中の表示(2026-11):読み込み係が本体を「//@@PART n」の数+1の片に分けて実行し、片ごとに進み具合を出す。検証側で HTML から片の数を数え、
+     全部の片が実行された(KEIO_LT の数)・KEIO_READY・表示が消える・見えた進み具合が減らない を見る(片の途中で例外なら止まって表示が残る) */
+  const srcHtml = fs.readFileSync(HTML, 'utf8'), nParts = (srcHtml.match(/^\/\/@@PART\s+\d+/mg) || []).length + 1;
+  const pctSeen = [];
+  await p.exposeFunction('__pctSeen', (v) => { pctSeen.push(v); });
+  await p.addInitScript(`(()=>{ const f=()=>{ const b=document.getElementById('loadPct'); if(!b){ if(document.readyState==='loading') setTimeout(f,5); return; }
+    new MutationObserver(()=>window.__pctSeen(+b.textContent)).observe(b,{childList:true,characterData:true,subtree:true}); }; f(); })()`);
   await p.goto('file://' + PAGE, { timeout: 180000 });
   await p.waitForFunction('window.CINE!==undefined', { timeout: 180000 });
+  await p.waitForFunction('window.KEIO_READY!==false&&!document.getElementById("loading")', { timeout: 180000 });   // 読み込み中の表示が消えるまで
+  const loader = await p.evaluate(() => ({ ready: window.KEIO_READY, lt: (window.KEIO_LT || []).length, gone: !document.getElementById('loading') }));
   await p.waitForFunction('typeof PTX_READY==="undefined"||PTX_READY.all', { timeout: 180000 });   // 写真テクスチャの画像が読めるまで
   const loadMs = Date.now() - t0;
   const res = await p.evaluate(async ([W, H]) => {
@@ -157,6 +166,9 @@ function findChromium() {
   if (errs.length) console.log('ページのエラー:\n  ' + errs.slice(0, 5).join('\n  '));
   if (JSON_OUT) fs.writeFileSync(JSON_OUT, JSON.stringify(r, null, 1));
   let ng = errs.length ? 1 : 0;
+  { const mono = pctSeen.every((v, i) => i === 0 || v >= pctSeen[i - 1]), okL = loader.ready === true && loader.lt === nParts && loader.gone && mono && pctSeen.length >= 3 && pctSeen[pctSeen.length - 1] === 100;
+    if (!okL) ng++;
+    console.log(pad('読み込み中の表示', 36) + pad('片 ' + loader.lt + '/' + nParts + '・READY ' + loader.ready + '・表示 ' + (loader.gone ? '消えた' : '残る') + '・進み具合 ' + pctSeen.join(' '), 52) + (okL ? 'OK' : 'NG')); }
   if (BUDGET) {
     const B = JSON.parse(fs.readFileSync(BUDGET, 'utf8'));
     console.log('---- 予算(' + BUDGET + ') ----');

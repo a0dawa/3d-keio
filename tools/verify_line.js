@@ -11,7 +11,7 @@
 const path = process.argv[2] || 'keio_elevated_3d.html';
 const X = require('./stub_three')(path,
   'deckHalf:deckHalf,outerOff:outerOff,platOuter:platOuter,mainOff:mainOff,' +
-  'poleStep:poleStep,STA:STA,DOM:DOM,DECK_END:DECK_END,frame:frame,RAIL_TOP:RAIL_TOP,' +
+  'poleStep:poleStep,TURNOUTS:TURNOUTS,STA:STA,DOM:DOM,DECK_END:DECK_END,frame:frame,RAIL_TOP:RAIL_TOP,' +
   'DECK_MIN:DECK_MIN,railY:railY,platRange:platRange,PLAT_EDGE:PLAT_EDGE,' +
   'TRACKS:(typeof TRACKS!=="undefined"?TRACKS:null),' +
   'WIRES:(typeof WIRES!=="undefined"?WIRES:null),' +
@@ -497,6 +497,13 @@ if (X.TRACKS && X.WIRES) {
       if (b.y0 < y && !bad) bad = ['s=' + b.s.toFixed(0), 'ビームの下端が低い ' + (b.y0 - X.railY(b.s) - X.RAIL_TOP).toFixed(2)];
     }
     for (const L of X.POLE_LAMPS) if (!X.POLES.some((q) => Math.abs(q.s - L.s) < 0.01 && Math.abs(q.o - L.o) < 0.7) && !bad) bad = ['s=' + L.s.toFixed(0), '灯りが柱に付いていない'];
+    /* 架線柱の灯りは駅部とポイント部だけ(2026-11 利用者指示):灯りの s はホームの範囲(検証側で駅の中心 ±105m、笹塚は −155〜+55)の外 25m 以内か、
+       分岐器(TURNOUTS の先端〜かかと)の 20m 以内。駅間の柱(駅の範囲から 150m 以上・分岐器から 60m 以上)には灯りが無い。灯りは 20本以上 */
+    { let badL = null, nIn = 0; const inSta = (s, m) => X.STA.some((st, i) => s > (i === 0 ? st.x - 155 : st.x - 105) - m && s < (i === 0 ? st.x + 55 : st.x + 105) + m);
+      const inPt = (s, m) => X.TURNOUTS.some((T) => s > Math.min(T.s, T.heel) - m && s < Math.max(T.s, T.heel) + m);
+      for (const L of X.POLE_LAMPS) { if (inSta(L.s, 25) || inPt(L.s, 20)) nIn++; else if (!badL) badL = 's=' + L.s.toFixed(0) + ' の灯りが駅部・ポイント部の外'; }
+      for (const q of X.POLES) if (!inSta(q.s, 150) && !inPt(q.s, 60) && X.POLE_LAMPS.some((L) => Math.abs(L.s - q.s) < 0.01) && !badL) badL = '駅間の柱 s=' + q.s.toFixed(0) + ' に灯り';
+      ok('架線柱の灯りは駅部とポイント部', badL === null && nIn >= 20, '駅の範囲の外 25m・分岐器の 20m 以内だけ・20本以上', badL || nIn + '本'); }
     ok('架線柱の位置', bad === null && X.POLES.length > 0, '線路中心から面まで≥' + CATREF.POLE_CLEAR + 'm・ホームの縁から≥' + CATREF.POLE_EDGE + 'm・大屋根の下に無し',
       bad ? bad.join(' ') : X.POLES.length + '本(最小' + minC.toFixed(2) + 'm)・ビーム' + X.BEAMS.length);
   }
