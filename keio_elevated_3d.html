@@ -335,6 +335,13 @@ const RAW={
     o=原点の緯度・経度、輪の文字列は原点からの東・南の cm(最初の点の後は前の点からの差)。pave=舗装(車道の上 0.15m。車道は計画の範囲
     =区域+線路沿いの帯−216 の帯の全体に敷き、その上に舗装を載せる)・lawn=植え込み(p.20 の淡い緑・南側広場の濃い緑の塊)・
     roof=屋上の緑(pod=低層部の L 字と楕円・wing=棟の U 字。p.21)・trees=木(p.20・p.21 の木の記号の中心) */
+/* 明大前駅前広場と補助第154号線(都市計画。2026-11 利用者指示「明大前駅の駅前広場の計画を盛り込んで」):世田谷区の事業案内図の赤い線
+    (駅前広場と 154 の帯)を PLATEAU の道路に合わせて読んだ緯度・経度(読み方と値は reference/meidaimae/README.md)。
+    plaza=駅前広場の四隅(北西・北東・南東・南西。東の辺は 154 の西の縁)・h154=補助第154号線の中心線(北の端・曲がり・南の端) */
+ meida:{
+   plaza:[[35.66785975,139.64957825],[35.66797534,139.65012493],[35.66744262,139.65033282],[35.66741430,139.64975141]],
+   h154:[[35.66869883,139.64994704],[35.66819557,139.65013007],[35.66693389,139.65062247]],
+ },
  kara:{
    district:[[35.66802847,139.60159166],[35.66864186,139.60296063],[35.66695369,139.60300232],[35.66689289,139.60286191],[35.66709497,139.60226737]],
    plaza:[[35.66803920,139.60168381],[35.66770121,139.60191416],[35.66794621,139.60243630],[35.66799449,139.60249334],[35.66824128,139.60256793],[35.66828062,139.60262278],[35.66828062,139.60285313],[35.66821445,139.60294528],[35.66864186,139.60296063]],
@@ -1618,13 +1625,101 @@ function convexMinus(Q,C){
   }
   return out;
 }
-/* 地表に敷く多角形 P(PLATEAU の道路・緑地)から区域と 216 の帯を除く。掛からなければ null、掛かれば残りの凸の片(三角形を切った物)の配列 */
+/* ---- 明大前駅前広場と補助第154号線(都市計画。2026-11 利用者指示「明大前駅の駅前広場の計画を盛り込んで。ネット検索と(利用者の画像)を組み合わせて」) ----
+   出典:世田谷区「明大前駅周辺の道路・駅前広場の整備」(補助第154号線・明大前駅駅前広場=世田谷区画街路第13号線。事業案内図・みちづくりニュース
+   第1号・第2号)と、明大前駅周辺地区街づくり協議会「街づくりNEWS 第24号」(平成28年10月)の図3-3「駅前広場整備イメージ」(区が公開している構想図。
+   利用者の示した画像と同じ)。事業案内図の赤い線を PLATEAU の道路に合わせて読み、緯度・経度にした(RAW.meida。読み方と値は reference/meidaimae/README.md)。
+   ・補助第154号線:幅員 15m(歩道 3.0+車道 9.0+歩道 3.0。公表)・延長 約206m(公表。赤い線の中心線 約205m)。京王線の下を斜めに横切り、井の頭線の
+     西を南南東へ。PLATEAU の道路と同じ登録簿 ROADS_PL へ幹線として足す(地表の道路・柱を立てない所 ROAD_XING・歩道・車は既存の仕組み)
+   ・駅前広場:京王線の南・154 の西の四角形(赤い線の内 約2,900m²。公表は交通広場 約2,700m² と区画街路 幅21m・延長12m で 約3,000m²)。
+     中の配置は構想図(鳥瞰の絵)からの推定:駅前(北)の歩行者の広場と木の列・西と南の歩道・時計回りのロータリー(島に大きな木と時計)・
+     南の縁にバスの乗り場・西の縁にタクシーの乗り場・東の 154 へ出入りする取付道路(区画街路の公表の幅 21m・延長 12m:車道 13m と両側の歩道 4m)。
+     絵の歩行者デッキ(改札の前から 154 を渡る)は、ニュースで「この絵のように段差なく通路を作ることは難しいのでは」と指摘され形も分からないので描かない
+   ・既存の建物・道路・緑地は広場と帯の中に描かない(KEEP 'p'・karaCut)。地形は平ら(TER.POLY)。航空写真は今の色(帯の印 MEIDA.sd)
+   描くのは実データの道路と建物があるとき(MEIDA.on)。登録簿 MEIDA(plaza・row・core・island・mouth・pave・lawn・holes) */
+const MEIDA=(function(){
+  const R=RAW.meida, W=a=>a.map(p=>{const q=toXY(p[0],p[1]); return [q.x,q.z];});
+  const ar=P=>{let A=0; for(let i=0;i<P.length;i++){const a=P[i], b=P[(i+1)%P.length]; A+=a[0]*b[1]-b[0]*a[1];} return A/2;}, ccwP=P=>ar(P)>0?P:P.slice().reverse();
+  const K={on:!!(PLL&&HAS_PLB), W154:15.0, SW154:3.0};
+  K.c154=W(R.h154);
+  // 154 の帯:中心線の区間ごとの凸の四角形(継ぎ目は角の二等分線。KARA の 216 と同じ作り方)
+  { const C=K.c154, h=K.W154/2, nrm=i=>{const a=C[i], b=C[i+1], l=Math.hypot(b[0]-a[0],b[1]-a[1]); return [-(b[1]-a[1])/l,(b[0]-a[0])/l];};
+    const off=[]; for(let i=0;i<C.length;i++){ const n0=nrm(Math.max(0,i-1)), n1=nrm(Math.min(C.length-2,i)), m=[n0[0]+n1[0],n0[1]+n1[1]], l=Math.hypot(m[0],m[1]), c=(m[0]*n1[0]+m[1]*n1[1])/l;
+      off.push([m[0]/l*h/c, m[1]/l*h/c]); }
+    K.row=[]; for(let i=0;i<C.length-1;i++){ const a=C[i], b=C[i+1], oa=off[i], ob=off[i+1];
+      K.row.push(ccwP([[a[0]+oa[0],a[1]+oa[1]],[b[0]+ob[0],b[1]+ob[1]],[b[0]-ob[0],b[1]-ob[1]],[a[0]-oa[0],a[1]-oa[1]]])); } }
+  // 駅前広場:赤い線の四隅。東の辺は 154 の西の縁そのもの(北東と南東の角を、北と南の辺に沿って 154 の西の縁の線へ寄せる=継ぎ目に隙間も重なりも無い)
+  { const Q=W(R.plaza), C=K.c154, i=1, a=C[i], b=C[i+1], d=[b[0]-a[0],b[1]-a[1]], l=Math.hypot(d[0],d[1]);
+    // 154 の西の縁(中心線の第2区間を西へ半幅):線 p0+t*d
+    const nw=[d[1]/l,-d[0]/l], sg=(nw[0]*(Q[0][0]-a[0])+nw[1]*(Q[0][1]-a[1]))>0?1:-1, p0=[a[0]+sg*nw[0]*K.W154/2,a[1]+sg*nw[1]*K.W154/2];
+    const meet=(u,v)=>{ const e=[v[0]-u[0],v[1]-u[1]], den=e[0]*d[1]-e[1]*d[0], t=((p0[0]-u[0])*d[1]-(p0[1]-u[1])*d[0])/den; return [u[0]+e[0]*t,u[1]+e[1]*t]; };
+    K.plaza=[Q[0],meet(Q[0],Q[1]),meet(Q[3],Q[2]),Q[3]]; }
+  // 四角形の辺 k(0=北・1=東・2=南・3=西。北西から時計回りに並べた四隅)から内へ d の線どうしの交点。in4(dN,dE,dS,dW)=各辺から内へずらした四角形
+  const P4=K.plaza, line=(k,d)=>{ const a=P4[k], b=P4[(k+1)%4], l=Math.hypot(b[0]-a[0],b[1]-a[1]), t=[(b[0]-a[0])/l,(b[1]-a[1])/l];
+      let n=[-t[1],t[0]]; const c=[(P4[0][0]+P4[2][0])/2,(P4[0][1]+P4[2][1])/2]; if(n[0]*(c[0]-a[0])+n[1]*(c[1]-a[1])<0) n=[-n[0],-n[1]];
+      return {p:[a[0]+n[0]*d,a[1]+n[1]*d],t:t,n:n}; },
+    cross=(A,B)=>{ const den=A.t[0]*B.t[1]-A.t[1]*B.t[0], u=((B.p[0]-A.p[0])*B.t[1]-(B.p[1]-A.p[1])*B.t[0])/den; return [A.p[0]+A.t[0]*u,A.p[1]+A.t[1]*u]; },
+    in4=(dN,dE,dS,dW)=>{ const L=[line(0,dN),line(1,dE),line(2,dS),line(3,dW)]; return ccwP([cross(L[3],L[0]),cross(L[0],L[1]),cross(L[1],L[2]),cross(L[2],L[3])]); };
+  K.at=(k1,d1,k2,d2)=>cross(line(k1,d1),line(k2,d2));               // 辺 k1 から d1・辺 k2 から d2 の点(木・車・人の置き場)
+  // ロータリー(推定):車道の外形=北 10.5・東 12(取付道路の延長)・南 4・西 4.5m 内。島=その内へ北 7・東 7・南 9(バスの乗り場)・西 9m(タクシーの乗り場)、角は半径 4m
+  K.L={N:10.5, E:12.0, S:4.0, W:4.5, lane:{N:7,E:7,S:9,W:9}, R:4.0, mouth:[32,45], mouthSW:4.0};
+  K.core=in4(K.L.N,K.L.E,K.L.S,K.L.W);
+  { const g=K.L.lane, c=K.core, CL=[0,1,2,3].map(k=>{ const a=c[k], b=c[(k+1)%4]; return [a,b]; });
+    K.island=ccwP(KARA.fillet(in4(K.L.N+g.N,K.L.E+g.E,K.L.S+g.S,K.L.W+g.W),K.L.R,4));
+    K.lawn=[ccwP(KARA.fillet(in4(K.L.N+g.N+1.2,K.L.E+g.E+1.2,K.L.S+g.S+1.2,K.L.W+g.W+1.2),K.L.R-1.2,4))]; }
+  // 取付道路の車道:東の辺の北東の角から 32〜45m(東の辺に直角)、東の辺から 12m(=車道の外形の東の縁)まで
+  { const E=line(1,0), A=P4[1], m=K.L.mouth, pt=(u,d)=>[A[0]+E.t[0]*u+E.n[0]*d,A[1]+E.t[1]*u+E.n[1]*d];
+    K.mouth=ccwP([pt(m[0],0),pt(m[1],0),pt(m[1],K.L.E),pt(m[0],K.L.E)]); }
+  // 舗装(車道の外形と取付道路の車道の外):凸の片
+  { let pcs=convexMinus(ccwP(P4),K.core); pcs=[].concat(...pcs.map(Q=>convexMinus(ccwP(Q),K.mouth))); K.pave=pcs.filter(Q=>Math.abs(ar(Q))>0.05).map(ccwP); }
+  K.holes=[ccwP(K.plaza)].concat(K.row);
+  K.bb=[1e9,-1e9,1e9,-1e9]; for(const P of K.holes) for(const q of P){ K.bb[0]=Math.min(K.bb[0],q[0]); K.bb[1]=Math.max(K.bb[1],q[0]); K.bb[2]=Math.min(K.bb[2],q[1]); K.bb[3]=Math.max(K.bb[3],q[1]); }
+  K.inPlan=(x,z,r)=>K.on&&x>K.bb[0]-r&&x<K.bb[1]+r&&z>K.bb[2]-r&&z<K.bb[3]+r&&K.holes.some(P=>polyDist(P,x,z)<r);
+  // 広場と帯の和の境界(1m 以下の片のうち、外へ 0.05m の点がほかの穴の中でない物=継ぎ目は境界でない)までの符号付きの距離(中は負)
+  { const E=[]; K.holes.forEach((H,hi)=>{ for(let k=0;k<H.length;k++){ const a=H[k], b=H[(k+1)%H.length], L=Math.hypot(b[0]-a[0],b[1]-a[1]), n=Math.max(1,Math.ceil(L)), nx=(b[1]-a[1])/L, nz=-(b[0]-a[0])/L;
+      for(let j=0;j<n;j++){ const u0=j/n, u1=(j+1)/n, mx=a[0]+(b[0]-a[0])*(u0+u1)/2, mz=a[1]+(b[1]-a[1])*(u0+u1)/2;
+        if(K.holes.some((G,gi)=>gi!==hi&&polyDist(G,mx+nx*0.05,mz+nz*0.05)<0)) continue;
+        E.push([[a[0]+(b[0]-a[0])*u0,a[1]+(b[1]-a[1])*u0],[a[0]+(b[0]-a[0])*u1,a[1]+(b[1]-a[1])*u1]]); } } });
+    K.edges=E;
+    K.sd=(x,z)=>{ let d=1e9; for(const [a,b] of E){ const dx=b[0]-a[0], dz=b[1]-a[1], L2=dx*dx+dz*dz, u=L2?clamp(((x-a[0])*dx+(z-a[1])*dz)/L2,0,1):0; d=Math.min(d,Math.hypot(x-a[0]-dx*u,z-a[1]-dz*u)); }
+      return K.holes.some(P=>polyDist(P,x,z)<0)?-d:d; }; }
+  // 広場の車道(車道の外形か取付道路の車道で、島の外から m 以上)
+  K.roadway=(x,z,m)=>{ m=m||0; if(!K.on) return false; if(!(polyDist(K.core,x,z)<-m||polyDist(K.mouth,x,z)<-m)) return false; return polyDist(K.island,x,z)>m; };
+  // 取付道路の口(154 の西の歩道を切る所):取付道路の車道の東の縁の前後
+  K.mouthHit=(x,z,r)=>K.on&&polyDist(K.mouth,x,z)<(r||0)+0.5;
+  K.bld=[];
+  /* 置く物(構想図からの推定)。K.at(辺,内への距離,辺,内への距離):0=北・1=東・2=南・3=西
+     木:駅前の広場に1列(北から 5m)・西の歩道(西から 2.2m)・南の歩道(南から 2m。バスの乗り場の前は空ける)・東の取付道路の南北・島の中ほどに大きな木。
+     [x,z,樹冠の半径] */
+  K.trees=[]; const T=(q,r)=>K.trees.push([q[0],q[1],r]);
+  for(const d of [6,15,24,33]) T(K.at(0,5,3,d),2.2);
+  for(const d of [16,26,36]) T(K.at(3,2.2,0,d),1.9);
+  for(const d of [8,42]) T(K.at(2,2.0,3,d),1.8);
+  for(const d of [16,25]) T(K.at(1,6,0,d),2.2);
+  T(K.at(1,6,2,7),2.2);
+  { let cx=0, cz=0; for(const q of K.island){ cx+=q[0]; cz+=q[1]; } cx/=K.island.length; cz/=K.island.length; K.ic=[cx,cz]; T([cx-2.5,cz],3.2); K.clock=[cx+4.0,cz+1.0]; }
+  // 車(止まったまま):バス=南の縁(車道の外形の南の縁から 1.7m・西向き=時計回り)、タクシー=西の縁(北向き)に3台と北の縁(東向き)に1台。[辺,縁からの距離,辺,距離,向きの辺,種類]
+  const dirOf=k=>{ const a=P4[k], b=P4[(k+1)%4], l=Math.hypot(b[0]-a[0],b[1]-a[1]); return [(b[0]-a[0])/l,(b[1]-a[1])/l]; };
+  K.veh=[]; const V=(q,k,kind,col)=>{ const d=dirOf(k); K.veh.push({kind:kind,x:q[0],z:q[1],fx:d[0],fz:d[1],col:col}); };
+  V(K.at(2,K.L.S+1.7,3,26),2,'bus',0xffffff);
+  [16,22,28].forEach((d,i)=>V(K.at(3,K.L.W+1.5,0,d),3,'car',[0x1d1f22,0xf0c419,0x2e7d4f][i]));
+  V(K.at(0,K.L.N+1.5,3,20),0,'car',0x1d1f22);
+  // バス停の列(バスの前=西の 1m 先から西へ 0.8m おき・南の縁石から 1.1m 内・車道を向く)
+  K.queue=[]; for(let i=0;i<5;i++) K.queue.push(K.at(2,K.L.S-1.1,3,26-5.6-1.2-i*0.8));
+  K.qYaw=(()=>{ const l=line(2,0); return Math.atan2(-l.n[1],l.n[0]); })();   // 内向き(北)を向く
+  // 街灯の柱(高さ 5.2m。灯りは 8b章が ROAD_LAMPS から):駅前の広場の車道寄り・西と南の歩道・東の取付道路の脇
+  K.lamps=[K.at(0,9.5,3,10),K.at(0,9.5,3,30),K.at(3,1.0,0,22),K.at(3,1.0,0,40),K.at(2,0.9,3,15),K.at(2,0.9,3,37),K.at(1,5.0,0,30),K.at(1,5.0,2,13)];
+  return K;
+})();
+const PLANS=[KARA,MEIDA];                          // 計画の区域(地表の面を切る・建物を置かない・平ら・航空写真は今の色)
+/* 地表に敷く多角形 P(PLATEAU の道路・緑地)から計画の区域(千歳烏山の区域と 216 の帯・明大前の広場と 154 の帯)を除く。掛からなければ null、
+   掛かれば残りの凸の片(三角形を切った物)の配列 */
 function karaCut(P){
-  if(!KARA.on) return null;
   let x0=1e9,x1=-1e9,z0=1e9,z1=-1e9; for(const p of P){x0=Math.min(x0,p[0]);x1=Math.max(x1,p[0]);z0=Math.min(z0,p[1]);z1=Math.max(z1,p[1]);}
-  if(x1<KARA.bb[0]||x0>KARA.bb[1]||z1<KARA.bb[2]||z0>KARA.bb[3]) return null;
+  const HS=[]; for(const K of PLANS) if(K.on&&!(x1<K.bb[0]||x0>K.bb[1]||z1<K.bb[2]||z0>K.bb[3])) HS.push(...K.holes);
+  if(!HS.length) return null;
   let pcs=earTri(P).map(t=>[P[t[0]],P[t[1]],P[t[2]]]), hit=false;
-  for(const H of KARA.holes){ const nx=[];
+  for(const H of HS){ const nx=[];
     for(const Q of pcs){ const aq=Math.abs(terArea(Q)); if(aq<1e-6){ hit=true; continue; }   // 面積 0 の三角形(描いても見えない。穴の中に残っていた)
       const r=convexMinus(Q,H); let a=0; for(const q of r) a+=Math.abs(terArea(q));
       if(Math.abs(a-aq)<=1e-6*Math.max(1,aq)) nx.push(Q); else { hit=true; for(const q of r) nx.push(q); } }
@@ -1656,6 +1751,8 @@ TER.CORR=[{A:INO, hw:17, u0:XR.U0-10, u1:XR.U1+10, bl:30, n:'井の頭線'},
           {A:SETA, hw:7, u0:XR.SETA_U0-10, u1:XR.SETA_U1+10, bl:30, n:'世田谷線'}];
 // 千歳烏山駅前広場南側地区(再開発の計画。KARA):区域の多角形の中を平らに、外へ 30m で起伏へ(以前は駅前広場の点の周り 26m の円)
 TER.POLY=[{P:KARA.dist, bl:30, n:'千歳烏山駅前広場南側地区'}];
+// 明大前駅前広場と補助第154号線の帯(MEIDA):中を平らに、外へ 30m で起伏へ
+if(MEIDA.on) for(const P of MEIDA.holes) TER.POLY.push({P:P, bl:30, n:'明大前駅前広場・補助第154号線'});
 // 交差鉄道の線路の帯からの距離(中は負。端の先は中心線に沿う距離との大きい方)。中心線は曲線(xLineOf)
 TER.corrD=(C,x,z)=>{const p=C.A.uv(x,z); return Math.max(Math.abs(p.n)-C.hw, C.u0-p.u, p.u-C.u1);};
 // 線形の端の先は prjXY が端で止まるので、端の接線に沿ってはみ出した分を s に足す
@@ -1803,7 +1900,7 @@ function terWin(Q,i,j,half){                        // セル (i,j) の窓で切
   if(half===1) Q=terClipHP(Q,1,-1,za-xa); else if(half===2) Q=terClipHP(Q,-1,1,xa-za);
   return Q;
 }
-const terArea=Q=>{let A=0; for(let k=0;k<Q.length;k++){const a=Q[k], b=Q[(k+1)%Q.length]; A+=a[0]*b[1]-b[0]*a[1];} return A/2;};
+function terArea(Q){let A=0; for(let k=0;k<Q.length;k++){const a=Q[k], b=Q[(k+1)%Q.length]; A+=a[0]*b[1]-b[0]*a[1];} return A/2;}   // 関数の宣言(明大前の広場 MEIDA が前で使う)
 function terDrape(P,y0,out,col,G){
   const o0=out.P.length/3, nrm=[0,1,0];
   const emit=(V,T)=>{                               // V:[[x,z]…]・T:[[a,b,c]…] を地形に載せて積む(上向きの巻き順)
@@ -2081,6 +2178,8 @@ if(PLL){
   }
   // 補助216号線(計画):帯の区間ごとの凸の四角形を幹線として足す(地表の道路・横切る道路の柱・歩道・車は既存の道路と同じ仕組み)
   if(KARA.on) for(const Q of KARA.row) addRoad({k:1,sec:0,P:Q,kara:'補助216号線'});
+  // 補助第154号線(計画。MEIDA):同じく帯の区間ごとの凸の四角形を幹線として足す
+  if(MEIDA.on) for(const Q of MEIDA.row) addRoad({k:1,sec:0,P:Q,kara:'補助第154号線'});
   /* 線路を横切る実際の道路(中心と桁の両端の3点が道路の上に3m以上続く所):高架の柱を立てない所に足す。
      道路の縁から柱の中心まで4m。模式の位置(RAW.roads・XINGS)とずれていても実際の道路に柱が立たない */
   {let a=null;
@@ -2229,6 +2328,30 @@ if(PLL){
     const MAT_KX=mkMat('MeshLambertMaterial',{color:0xffffff,vertexColors:true});
     const mB=new THREE.Mesh(facesGeo(B.P,B.N,B.I,B.C),MAT_KX); mB.name='再開発ビルの付属'; scene.add(mB);
     K.extra=mB;
+  }
+  /* 明大前駅前広場(計画。MEIDA):車道(地表+0.12)を広場の全体に敷き、舗装の板(+0.27。車道の外形と取付道路の車道の外)と島(+0.27)、
+     島の植え込み(+0.29。季節の色)を載せる。板の縁は縁石の面。広場の北・南・西の縁には地表から車道の高さまで面を立てる(東は 154 の歩道に接する)。
+     道路と同じ材質の1つの Mesh '明大前駅前広場'(航空写真は帯の印で今の色) */
+  if(MEIDA.on){
+    const K=MEIDA, yR=ROAD_Y[1], yP=yR+0.15, F={P:[],N:[],I:[],C:[]}, col=h=>setSrgb(new THREE.Color(),h);
+    const ccw=P=>{let A=0; for(let i=0;i<P.length;i++){const a=P[i], b=P[(i+1)%P.length]; A+=a[0]*b[1]-b[0]*a[1];} return A>0?P:P.slice().reverse();};
+    const put=(M,V,n,cl,tris)=>{ const o=M.P.length/3; for(const v of V){M.P.push(v[0],v[1],v[2]); M.N.push(n[0],n[1],n[2]); M.C.push(cl.r,cl.g,cl.b);}
+      for(const t of tris){ const A=V[t[0]], Bv=V[t[1]], C=V[t[2]], ux=Bv[0]-A[0],uy=Bv[1]-A[1],uz=Bv[2]-A[2],vx=C[0]-A[0],vy=C[1]-A[1],vz=C[2]-A[2];
+        if((uy*vz-uz*vy)*n[0]+(uz*vx-ux*vz)*n[1]+(ux*vy-uy*vx)*n[2]>=0) M.I.push(o+t[0],o+t[1],o+t[2]); else M.I.push(o+t[0],o+t[2],o+t[1]); } };
+    const flat=(Q,y,cl)=>put(F,Q.map(p=>[p[0],terH(p[0],p[1])+y,p[1]]),[0,1,0],cl,earTri(Q));
+    const wall=(a,b,y0,y1,nx,nz,cl)=>{ const ha=terH(a[0],a[1]), hb=terH(b[0],b[1]); put(F,[[a[0],ha+y0,a[1]],[b[0],hb+y0,b[1]],[b[0],hb+y1,b[1]],[a[0],ha+y1,a[1]]],[nx,0,nz],cl,[[0,1,2],[0,2,3]]); };
+    const sides=(P,y0,y1,cl)=>{ const Q=ccw(P); for(let i=0;i<Q.length;i++){ const a=Q[i], b=Q[(i+1)%Q.length], l=Math.hypot(b[0]-a[0],b[1]-a[1]); if(l<1e-6) continue;
+      wall(a,b,y0,y1,(b[1]-a[1])/l,-(b[0]-a[0])/l,cl); } };
+    const cP=col(0xcfc6b4), cI=col(0xc4bcab), cR=RD_COL[1], cC=col(0xb3b0a8), cG=col(0xffffff);
+    flat(K.plaza,yR,cR);
+    { const Q=K.plaza; for(const k of [0,2,3]){ const a=Q[k], b=Q[(k+1)%4], l=Math.hypot(b[0]-a[0],b[1]-a[1]); let nx=(b[1]-a[1])/l, nz=-(b[0]-a[0])/l;
+        if(polyDist(Q,(a[0]+b[0])/2+nx*0.3,(a[1]+b[1])/2+nz*0.3)<0){ nx=-nx; nz=-nz; } wall(a,b,0,yR,nx,nz,cC); } }   // 外向き
+    for(const Q of K.pave){ flat(Q,yP,cP); sides(Q,yR,yP,cC); }
+    flat(K.island,yP,cI); sides(K.island,yR,yP,cC);
+    const GL=[]; for(const Q of K.lawn){ GL.push([F.P.length/3,Q.length,0]); flat(Q,yP+0.02,cG); }
+    const g=facesGeo(F.P,F.N,F.I,F.C), m=new THREE.Mesh(g,MAT_RD); m.userData.flat=true; m.name='明大前駅前広場'; scene.add(m);
+    g.userData.G=GL; LU.geos.push(g);
+    K.surf={yR:yR,yP:yP,mesh:m};
   }
   if(LU.tint) LU.tint(srgb(0xa6c893));
   /* 自動車専用の橋梁(首都高速4号新宿線・中央道):床版(上面・下面・外周の側面)・外周の高欄・T形の橋脚。
@@ -4776,6 +4899,7 @@ tag('京王井の頭線(ホーム渋谷寄り移設)',INOKASHIRA_X,18,-330);
 tag('東急世田谷線',SETAGAYA_X,14,-300);
 tag('駅前広場(計画)',PLAZA_S,14,PLAZA_OFF-30);
 if(KARA.on){ const q=prjXY(KARA.tower4[0][0]+20,KARA.tower4[0][1]+35); tag('千歳烏山駅前広場南側地区 再開発ビル(計画・約140m)',q.s,152,q.off); }
+if(MEIDA.on){ const q=prjXY(MEIDA.ic[0],MEIDA.ic[1]); tag('明大前駅前広場・補助第154号線(計画)',q.s,26,q.off); }
 tag('桜上水留置線(上り方)',(YE0+YE1)/2,26,46);
 tag('桜上水留置線(下り方)',(YW0+YW1)/2,26,46);
 tag('事業起点(笹塚第3架道橋付近)',Math.round(PS0),30,-70);
@@ -4823,6 +4947,8 @@ keepRect(SUBK.s,16,SUBK.off,12);keepRect(SUBC.s,17,SUBC.off,13);   // 変電所
 }
 // 千歳烏山駅前広場南側地区(再開発の区域)と補助216号線の帯:既存の建物・木は置かない(KARA。区域の中は計画の広場とビルを描く)
 if(KARA.on){ keepPoly(KARA.dist); for(const Q of KARA.row.concat(KARA.strip)) keepPoly(Q); }
+// 明大前駅前広場と補助第154号線の帯(MEIDA):既存の建物・木は置かない(広場の木は 8章が別に植える)
+if(MEIDA.on) for(const Q of MEIDA.holes) keepPoly(Q);
 else keepDisc(PLAZA_S,PLAZA_OFF,26);            // 千歳烏山駅前広場(実データが無いときは模式の円盤)
 // 交差鉄道:掘割・擁壁・ホームまで含めた幅で確保する(9章の車両もここを走る)
 keepLine(INO,inoKeepHalf,XR.U0-10,XR.U1+10);   // 2026-10-27 から線路と擁壁・ホームの外まで(以前は中心から 15m で脇の建物を消していた)
@@ -5808,7 +5934,7 @@ if(PLB){
     }
   }
   while(PARK.length>2500) PARK.splice(Math.floor(Math.random()*PARK.length),1);
-  const N=2300+PARK.length+(KARA.on?KARA.trees.length:0)+(GT?GT.length:0);
+  const N=2300+PARK.length+(KARA.on?KARA.trees.length:0)+(MEIDA.on?MEIDA.trees.length:0)+(GT?GT.length:0);
   /* 木は幹と樹冠を1つの形(頂点カラー:幹=茶・樹冠=白)にし、s の 480m ごとのまとまりのインスタンスにする。
      まとまりごとに外接球を持たせて画面の外・影の範囲の外を間引く(1つにまとめると数千本を毎回描く)。
      色(季節)はインスタンスの色で、幹にも掛かる(暗い茶になる)。登録簿の木 i は TREE_CH[ci].m の j 番目 */
@@ -5841,6 +5967,13 @@ if(PLB){
       T.push([t[0],t[1],sc,0x6f9160,q.s,ty]); i++; occAdd(t[0],t[1],rad);
       CITY.trees.push({s:q.s,off:q.off,x:t[0],z:t[1],y:ty,r:rad,kind:'広場'});
     } }
+  /* 明大前駅前広場の木(計画。構想図からの推定の位置 MEIDA.trees):広場は占有域なので cityFree を通さずに、ほかの木より先に植える。
+     車道(取付道路を含む)・154 の帯・高架の帯には掛けない */
+  if(MEIDA.on) for(const t of MEIDA.trees){ const rad=t[2], q=prjXY(t[0],t[1]);
+    if(i>=N||MEIDA.roadway(t[0],t[1],-rad)||MEIDA.row.some(Q=>polyDist(Q,t[0],t[1])<rad)||Math.abs(q.off)<deckHalf(q.s)+1.0+rad) continue;
+    const sc=rad/2.3, ty=Math.min(terH(t[0],t[1]),terH(t[0]+0.3,t[1]),terH(t[0]-0.3,t[1]),terH(t[0],t[1]+0.3),terH(t[0],t[1]-0.3));
+    T.push([t[0],t[1],sc,0x6f9160,q.s,ty]); i++; occAdd(t[0],t[1],rad);
+    CITY.trees.push({s:q.s,off:q.off,x:t[0],z:t[1],y:ty,r:rad,kind:'明大前広場'}); }
   // 街路樹(高架の両側=側道の外)。占有域に当たる区間は自動的に間引かれる
   for(let x=DOM.x0+40;x<DECK_END-30;x+=26)
     for(const sg of[-1,1])put(x,sg*(deckHalf(x)+8.2),.85,0x7fa268);
@@ -6058,6 +6191,9 @@ if(KARA.on) for(const P of KARA.pave){ let acc=9;
       if(!occFree(lx,lz,0.5)) continue;
       KARA_LAMPS.push([lx,lz]); ROAD_LAMPS.push([lx,lz]); }
     acc-=L; } }
+// 明大前駅前広場の街灯(計画。MEIDA.lamps の推定の位置。木から離れる所だけ)。柱は 10e章、灯りは 8b章が ROAD_LAMPS から
+const MEIDA_LAMPS=[];
+if(MEIDA.on) for(const q of MEIDA.lamps) if(occFree(q[0],q[1],0.5)&&!MEIDA.roadway(q[0],q[1],-0.4)){ MEIDA_LAMPS.push([q[0],q[1]]); ROAD_LAMPS.push([q[0],q[1]]); }
 const glow=h=>srgb(h).multiplyScalar(LIGHT_GAIN);
 const NIGHT=(function(){
   const G=new THREE.Group(); G.visible=false; G.name='night'; scene.add(G);
@@ -9161,6 +9297,7 @@ const PED_NEAR=70, PED_FAR=250;
     for(let u=W.a;u<W.b-0.01;u+=2){
       const u1=Math.min(W.b,u+2), p0=W.f(u), p1=W.f(u1);
       if(!roadHit(p0.x,p0.z,0)||!roadHit(p1.x,p1.z,0)||cutHit(p0.x,p0.z,1)||cutHit(p1.x,p1.z,1)) continue;
+      if([p0,p1].some(q=>MEIDA.mouthHit(q.x,q.z,W.w/2))) continue;                // 明大前駅前広場の取付道路の口(154 の西の歩道を切る)
       if([[p0,1],[p0,-1],[p1,1],[p1,-1]].some(([q,sd])=>!roadHit(q.x+sd*q.fz*W.w/2,q.z-sd*q.fx*W.w/2,0.3))) continue;   // 帯の両縁も道路の面の上(直線の歩道が折れた道路の外へ出ない)
       if([p0,p1].some(q=>Math.abs(prjXY(q.x,q.z).off)>ROAD_NEAR-W.w/2-0.5)) continue;     // 帯の外の縁まで線路から ROAD_NEAR 以内
       W.seg.push([u,u1]); use(p0.x,p0.z);
@@ -9539,14 +9676,75 @@ if(KARA.on){
       quad([q[0]-0.25,y+5.12,q[1]+0.25],[q[0]+0.25,y+5.12,q[1]+0.25],[q[0]+0.25,y+5.12,q[1]-0.25],[q[0]-0.25,y+5.12,q[1]-0.25],[0,1,0]); }
     const m=new THREE.Mesh(facesGeo(Pp,Nn,Ii,Cc),mkMat('MeshLambertMaterial',{vertexColors:true,side:THREE.DoubleSide})); m.name='駅前広場の街灯'; scene.add(m); lodAdd(m,B,600); }
 }
-// 往復する人を進める(stepWorld から)・描く(lodStruct から。近くだけ)
-function plazaStep(dt){ for(const w of KPZ.walk){ w.u+=w.dir*w.v*dt; if(w.u>w.L){ w.u=w.L; w.dir=-1; } else if(w.u<0){ w.u=0; w.dir=1; } w.ph+=dt*w.v*5.2; } KPZ.t+=dt; }
+/* 明大前駅前広場(計画。MEIDA。推定):南の縁のバス1台・西と北の縁のタクシー4台(止まったまま)、バス停の列 5人・舗装の上に立つ人 16人・
+   舗装の中のまっすぐな道を往復する人 8人、街灯の柱、島の時計(柱 4.2m と両面の文字盤)。近く(広場の中心から 400m)だけ描く。登録簿 MPZ */
+const MPZ={people:[], walk:[], im:null, veh:[], c:null, t:0};
+if(MEIDA.on){
+  const K=MEIDA, Y0=0.27;
+  const treeNear=(x,z,r)=>CITY.trees.some(t=>Math.hypot(t.x-x,t.z-z)<r+t.r*0.25);
+  const lampNear=(x,z,r)=>MEIDA_LAMPS.some(q=>Math.hypot(q[0]-x,q[1]-z)<r);
+  const onPave=(x,z,m)=>K.pave.some(P=>polyDist(P,x,z)<-m);
+  const clockNear=(x,z,r)=>Math.hypot(K.clock[0]-x,K.clock[1]-z)<r;
+  for(const v of K.veh) MPZ.veh.push(Object.assign({L:VEH[v.kind].L},v));
+  for(const q of K.queue) if(onPave(q[0],q[1],0.3)&&!treeNear(q[0],q[1],0.8)&&!lampNear(q[0],q[1],0.6))
+    MPZ.people.push({x:q[0],y:terH(q[0],q[1])+Y0,z:q[1],yaw:K.qYaw,look:personLook(),stop:true});
+  const bb=[1e9,-1e9,1e9,-1e9]; for(const p of K.plaza){ bb[0]=Math.min(bb[0],p[0]); bb[1]=Math.max(bb[1],p[0]); bb[2]=Math.min(bb[2],p[1]); bb[3]=Math.max(bb[3],p[1]); }
+  const freeAt=(x,z)=>onPave(x,z,0.5)&&!treeNear(x,z,0.9)&&!lampNear(x,z,0.6)&&!MPZ.people.some(p=>Math.hypot(p.x-x,p.z-z)<0.8);
+  for(let g=0;g<4000&&MPZ.people.length<21;g++){ const x=bb[0]+Math.random()*(bb[1]-bb[0]), z=bb[2]+Math.random()*(bb[3]-bb[2]);
+    if(freeAt(x,z)) MPZ.people.push({x:x,y:terH(x,z)+Y0,z:z,yaw:Math.random()*Math.PI*2,look:personLook()}); }
+  for(let g=0;g<6000&&MPZ.walk.length<8;g++){ const x=bb[0]+Math.random()*(bb[1]-bb[0]), z=bb[2]+Math.random()*(bb[3]-bb[2]), a=Math.random()*Math.PI*2, L=8+Math.random()*18;
+    const dx=Math.cos(a), dz=Math.sin(a); let ok=true;
+    for(let u=0;u<=L&&ok;u+=0.5){ const px=x+dx*u, pz=z+dz*u; if(!onPave(px,pz,0.6)||treeNear(px,pz,0.9)||lampNear(px,pz,0.6)||MPZ.people.some(p=>Math.hypot(p.x-px,p.z-pz)<0.9)) ok=false; }
+    if(ok) MPZ.walk.push({ax:x,az:z,dx:dx,dz:dz,L:L,u:Math.random()*L,dir:Math.random()<0.5?1:-1,v:1.1+Math.random()*0.4,look:personLook(),ph:Math.random()*6.28}); }
+  const cx=K.ic[0], cz=K.ic[1]; MPZ.c=[cx,cz];
+  const B={x0:cx-120,x1:cx+120,y0:-1,y1:20,z0:cz-120,z1:cz+120};
+  const _M=new THREE.Matrix4(), _Q=new THREE.Quaternion(), _E=new THREE.Euler(), _V=new THREE.Vector3(), _S=new THREE.Vector3(1,1,1), _C=new THREE.Color();
+  for(const kind of ['bus','car']){ const L=MPZ.veh.filter(v=>v.kind===kind); if(!L.length) continue;
+    const g=VEH[kind].geo.clone(), im=new THREE.InstancedMesh(g,M_ROADCAR,L.length); im.name='明大前駅前広場の車('+kind+')';
+    L.forEach((v,j)=>{ _E.set(0,Math.atan2(-v.fz,v.fx),0); _Q.setFromEuler(_E); _V.set(v.x,terH(v.x,v.z)+ROAD_Y[1]+0.01,v.z); _S.set(1,1,1);
+      _M.compose(_V,_Q,_S); im.setMatrixAt(j,_M); im.setColorAt(j,setSrgb(_C,v.col)); });
+    g.boundingSphere=new THREE.Sphere(new THREE.Vector3(cx,5,cz),130); im.instanceMatrix.needsUpdate=true; if(im.instanceColor) im.instanceColor.needsUpdate=true;
+    scene.add(im); lodAdd(im,B,400); }
+  const all=MPZ.people.concat(MPZ.walk.map(w=>({x:w.ax,y:0,z:w.az,yaw:0,look:w.look})));
+  if(all.length){ const im=peopleMesh(all,'明大前駅前広場の人',false); im.geometry.boundingSphere=new THREE.Sphere(new THREE.Vector3(cx,5,cz),130); im.frustumCulled=true;
+    scene.add(im); lodAdd(im,B,400); MPZ.im=im; }
+  // 街灯の柱(6角・高さ 5.2m)と島の時計(柱 4.2m・0.9m 角の箱の両面に白い文字盤と針=10時10分)
+  { const Pp=[],Nn=[],Ii=[],Cc=[], cpole=setSrgb(new THREE.Color(),0x5e6266), cw=setSrgb(new THREE.Color(),0xf4f2ec), ck=setSrgb(new THREE.Color(),0x23262a);
+    const quad=(A,Bq,Cq,D,n,col)=>{ const o=Pp.length/3; for(const v of [A,Bq,Cq,D]){ Pp.push(v[0],v[1],v[2]); Nn.push(n[0],n[1],n[2]); Cc.push(col.r,col.g,col.b); } Ii.push(o,o+1,o+2,o,o+2,o+3); };
+    const pole=(q,h,r0,r1)=>{ const y=terH(q[0],q[1])+0.27;
+      for(let k=0;k<6;k++){ const a0=k/6*Math.PI*2, a1=(k+1)/6*Math.PI*2;
+        quad([q[0]+Math.cos(a1)*r0,y,q[1]+Math.sin(a1)*r0],[q[0]+Math.cos(a0)*r0,y,q[1]+Math.sin(a0)*r0],[q[0]+Math.cos(a0)*r1,y+h,q[1]+Math.sin(a0)*r1],[q[0]+Math.cos(a1)*r1,y+h,q[1]+Math.sin(a1)*r1],[Math.cos((a0+a1)/2),0,Math.sin((a0+a1)/2)],cpole); }
+      return y; };
+    for(const q of MEIDA_LAMPS){ const y=pole(q,4.93,0.09,0.06);
+      quad([q[0]-0.25,y+4.93,q[1]-0.25],[q[0]+0.25,y+4.93,q[1]-0.25],[q[0]+0.25,y+4.93,q[1]+0.25],[q[0]-0.25,y+4.93,q[1]+0.25],[0,-1,0],cpole);     // 灯具の下面(灯りは 8b章)
+      quad([q[0]-0.25,y+5.05,q[1]+0.25],[q[0]+0.25,y+5.05,q[1]+0.25],[q[0]+0.25,y+5.05,q[1]-0.25],[q[0]-0.25,y+5.05,q[1]-0.25],[0,1,0],cpole); }
+    { const q=K.clock, y=pole(q,3.75,0.11,0.08);
+      // 文字盤は北(駅)と南を向く:北の辺の内向きの法線
+      const a=K.plaza[0], b=K.plaza[1], l=Math.hypot(b[0]-a[0],b[1]-a[1]), tx=(b[0]-a[0])/l, tz=(b[1]-a[1])/l;   // 箱の横の向き
+      const h0=y+3.75, h1=h0+0.9, w=0.45, t=0.15, nx=-tz, nz=tx;
+      const P=(u,v,yy)=>[q[0]+tx*u+nx*v,yy,q[1]+tz*u+nz*v];
+      for(const sd of [-1,1]){
+        quad(P(-w,sd*t,h0),P(w,sd*t,h0),P(w,sd*t,h1),P(-w,sd*t,h1),[nx*sd,0,nz*sd],cpole);                                   // 箱の面
+        const fc=(u,v)=>P(u,sd*(t+0.005),h0+0.45+v);
+        for(let k=0;k<16;k++){ const a0=k/16*Math.PI*2, a1=(k+1)/16*Math.PI*2, r=0.38;                                        // 白い文字盤(円を扇で)
+          quad(fc(0,0),fc(Math.cos(a0)*r,Math.sin(a0)*r),fc(Math.cos(a1)*r,Math.sin(a1)*r),fc(0,0),[nx*sd,0,nz*sd],cw); }
+        const hand=(ang,len,wd)=>{ const c=Math.cos(ang), s=Math.sin(ang), px=-s*wd, py=c*wd, hp=(u,v)=>P(u,sd*(t+0.01),h0+0.45+v);
+          quad(hp(px,py),hp(-px,-py),hp(c*len-px,s*len-py),hp(c*len+px,s*len+py),[nx*sd,0,nz*sd],ck); };
+        hand(Math.PI/2+Math.PI/3*sd,0.20,0.025); hand(Math.PI/2-Math.PI/3*sd,0.31,0.015); }   // 短針=10時・長針=10分(両面とも同じに見える向き)
+      for(const [u0,u1,v0,v1] of [[-w,w,-t,t]]){ quad(P(u0,v0,h1),P(u1,v0,h1),P(u1,v1,h1),P(u0,v1,h1),[0,1,0],cpole); }
+      for(const su of [-1,1]) quad(P(su*w,-t,h0),P(su*w,t,h0),P(su*w,t,h1),P(su*w,-t,h1),[tx*su,0,tz*su],cpole); }
+    const m=new THREE.Mesh(facesGeo(Pp,Nn,Ii,Cc),mkMat('MeshLambertMaterial',{vertexColors:true,side:THREE.DoubleSide})); m.name='明大前駅前広場の街灯と時計'; scene.add(m); lodAdd(m,B,600); }
+}
+// 往復する人を進める(stepWorld から)・描く(lodStruct から。近くだけ)。千歳烏山(KPZ)と明大前(MPZ)
+function plazaStep(dt){ for(const Z of [KPZ,MPZ]){ for(const w of Z.walk){ w.u+=w.dir*w.v*dt; if(w.u>w.L){ w.u=w.L; w.dir=-1; } else if(w.u<0){ w.u=0; w.dir=1; } w.ph+=dt*w.v*5.2; } Z.t+=dt; } }
 function plazaDraw(){
-  const im=KPZ.im; if(!im||!im.visible) return;
-  const n0=KPZ.people.length;
-  KPZ.walk.forEach((w,j)=>{ const x=w.ax+w.dx*w.u, z=w.az+w.dz*w.u;
-    personInst(im,n0+j,{x:x,y:terH(x,z)+0.27,z:z,yaw:Math.atan2(-w.dz*w.dir,w.dx*w.dir),look:w.look,walk:[1,w.ph]}); });
-  im.instanceMatrix.needsUpdate=true; im.geometry.attributes.iMW.needsUpdate=true;
+  for(const Z of [KPZ,MPZ]){
+    const im=Z.im; if(!im||!im.visible) continue;
+    const n0=Z.people.length;
+    Z.walk.forEach((w,j)=>{ const x=w.ax+w.dx*w.u, z=w.az+w.dz*w.u;
+      personInst(im,n0+j,{x:x,y:terH(x,z)+0.27,z:z,yaw:Math.atan2(-w.dz*w.dir,w.dx*w.dir),look:w.look,walk:[1,w.ph]}); });
+    im.instanceMatrix.needsUpdate=true; im.geometry.attributes.iMW.needsUpdate=true;
+  }
 }
 
 function pedPos(m){                              // 歩く人の位置と向き(世界座標)
@@ -10801,7 +10999,7 @@ ORTHO_MGR=(function(){
     const nearBand=P=>{ for(let i=0;i<P.length;i++){ const a=P[i], c=P[(i+1)%P.length], m=Math.max(1,Math.ceil(Math.hypot(c[0]-a[0],c[1]-a[1])/2));
       for(let k=0;k<m;k++) if(bandDist(a[0]+(c[0]-a[0])*k/m,a[1]+(c[1]-a[1])*k/m)<ORTHO_HOLE_NEAR) return true; } return false; };
     for(const P of ORTHO_HOLES){
-      if(!nearBand(P)&&!P.some(p=>KARA.inPlan(p[0],p[1],ORTHO_HOLE_NEAR))) continue;   // 千歳烏山駅前広場南側地区・216 の帯に掛かって外した建物も
+      if(!nearBand(P)&&!P.some(p=>PLANS.some(K=>K.inPlan(p[0],p[1],ORTHO_HOLE_NEAR)))) continue;   // 計画の区域(千歳烏山・明大前)に掛かって外した建物も
       let x0=1e9,x1=-1e9,z0=1e9,z1=-1e9; for(const p of P){ x0=Math.min(x0,p[0]); x1=Math.max(x1,p[0]); z0=Math.min(z0,p[1]); z1=Math.max(z1,p[1]); }
       const i0=Math.max(0,Math.floor((x0-14-TER.X0)/MC)), i1=Math.min(MW-1,Math.floor((x1+14-TER.X0)/MC));
       const j0=Math.max(0,Math.floor((z0-14-TER.Z0)/MC)), j1=Math.min(MH-1,Math.floor((z1+14-TER.Z0)/MC));
@@ -10810,10 +11008,11 @@ ORTHO_MGR=(function(){
     }
   }
   // 千歳烏山駅前広場南側地区と補助216号線の帯(KARA):写真は今の建物・道路なので、区域と帯の中は今の色(計画の広場・道路・ビル)
-  if(KARA.on){
-    const i0=Math.max(0,Math.floor((KARA.bb[0]-14-TER.X0)/MC)), i1=Math.min(MW-1,Math.floor((KARA.bb[1]+14-TER.X0)/MC));
-    const j0=Math.max(0,Math.floor((KARA.bb[2]-14-TER.Z0)/MC)), j1=Math.min(MH-1,Math.floor((KARA.bb[3]+14-TER.Z0)/MC));
-    for(let j=j0;j<=j1;j++) for(let i=i0;i<=i1;i++){ const k=j*MW+i, d=KARA.sd(TER.X0+(i+0.5)*MC,TER.Z0+(j+0.5)*MC);   // 穴の和の境界から(継ぎ目は境界でない)
+  // 明大前駅前広場と補助第154号線の帯(MEIDA)も同じく今の色
+  for(const K of PLANS) if(K.on){
+    const i0=Math.max(0,Math.floor((K.bb[0]-14-TER.X0)/MC)), i1=Math.min(MW-1,Math.floor((K.bb[1]+14-TER.X0)/MC));
+    const j0=Math.max(0,Math.floor((K.bb[2]-14-TER.Z0)/MC)), j1=Math.min(MH-1,Math.floor((K.bb[3]+14-TER.Z0)/MC));
+    for(let j=j0;j<=j1;j++) for(let i=i0;i<=i1;i++){ const k=j*MW+i, d=K.sd(TER.X0+(i+0.5)*MC,TER.Z0+(j+0.5)*MC);   // 穴の和の境界から(継ぎ目は境界でない)
       MD[k]=Math.min(MD[k],Math.max(0,Math.min(255,Math.round(128+10*d)))); }
   }
   const MT=new THREE.DataTexture(MD,MW,MH,THREE.LuminanceFormat,THREE.UnsignedByteType);
