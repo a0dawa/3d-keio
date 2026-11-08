@@ -190,6 +190,7 @@
 <script src="plateau_land.js"></script><!-- 沿線の道路(PLATEAU)。無ければ模式の道路で描く -->
 <script src="plateau_tex.js"></script><!-- 駅の周りの LOD2 の建物の写真(PLATEAU)。無ければ色で描く -->
 <script src="plateau_dem.js"></script><!-- 沿線の地形(PLATEAU)。無ければ平らな地表で描く -->
+<script src="gsi_trees.js"></script><!-- 沿線の木の位置(地理院タイルの航空写真から推定)。無ければ公園の格子と庭木をばらまく -->
 <script>
 'use strict';
 if(!window.THREE){document.body.insertAdjacentHTML('beforeend','<div class="panel" style="top:50%;left:50%;transform:translate(-50%,-50%);padding:20px">3Dライブラリを読み込めませんでした。通信環境をご確認ください。</div>');throw new Error('three missing');}
@@ -912,6 +913,59 @@ function sunFollow(fx,fz,dist){
   sun.target.position.set(t.x,t.y,t.z);
   sun.target.updateMatrixWorld();
   sun.position.set(t.x+SUN_N.x*SUN_DIST, t.y+SUN_N.y*SUN_DIST, t.z+SUN_N.z*SUN_DIST);
+  if(typeof farFollow==='function') farFollow(fx,fz);   // 遠くの影(すぐ下)
+}
+
+
+/* ---- 遠くの影(2026-11 利用者指示「更なるクオリティアップ」③ 影の段分け) ---------------------------------------
+   近くの影(sun。半径 180〜600m・2048px)の外は影が無かった。もう1つの平行光 sunFar(色 0=照らさない。影だけ)に粗い影マップ
+   (半径 FAR_R=2400m・2048px=1画素 約2.3m)を持たせて、その外を覆う。
+   ・Lambert(地表・道路・建物・木。街のほとんど)の影は getShadowMask() が平行光の影を掛け合わせるので、ShaderChunk を差し替えて
+     「近くの影マップの内(縁の 3% を除く)なら近く・外なら遠く」の片方だけを使う(両方を掛けると近くでも粗い影がにじむ)。
+     Phong・Standard(車両・レール・ガラス)は光ごとに影を掛けるので、色 0 の sunFar の影は効かない(近くの影は今のまま)
+   ・遠くの影は動かない物だけが落とす(層 FAR_LAYER。列車・交差鉄道の列車・自動車・人は入れない=applyShadows)。写し直すのは、
+     注視点が FAR_MOVE=200m 動いたとき・太陽の向きが変わったとき・影を入れ直したときだけ。ほかのコマは renderer.shadowMap.render に
+     渡す光から sunFar を外し、前の影マップと行列をそのまま使う(写し直すコマだけ影の描画が1回ぶん増える)
+   ・スマホは影を切るので無い */
+const FAR_R=2400, FAR_MAP=2048, FAR_MOVE=200, FAR_LAYER=6, FAR_DIST=4200;
+const sunFar=new THREE.DirectionalLight(0x000000,0);
+sunFar.castShadow=true; sunFar.shadow.mapSize.set(FAR_MAP,FAR_MAP);
+{ const c=sunFar.shadow.camera; c.left=-FAR_R; c.right=FAR_R; c.top=FAR_R; c.bottom=-FAR_R; c.near=FAR_DIST-FAR_R-300; c.far=FAR_DIST+FAR_R+300; c.layers.set(FAR_LAYER); }
+sunFar.shadow.bias=-0.0006; sunFar.shadow.normalBias=2.0;   // 1画素 2.3m の粗い影のアクネ(縞)対策
+scene.add(sunFar); scene.add(sunFar.target);               // sun より後に足す=平行光の影の 1 番目(シェーダの [1])
+const FAR={x:1e9, z:1e9, dir:'', need:true, n:0};
+if(THREE.ShaderChunk&&typeof THREE.ShaderChunk.shadowmask_pars_fragment==='string'){
+  const a='\t#pragma unroll_loop_start\n\tfor ( int i = 0; i < NUM_DIR_LIGHT_SHADOWS; i ++ ) {\n\t\tdirectionalLight = directionalLightShadows[ i ];\n\t\tshadow *= receiveShadow ? getShadow( directionalShadowMap[ i ], directionalLight.shadowMapSize, directionalLight.shadowBias, directionalLight.shadowRadius, vDirectionalShadowCoord[ i ] ) : 1.0;\n\t}\n\t#pragma unroll_loop_end\n';
+  const S=THREE.ShaderChunk.shadowmask_pars_fragment;
+  if(S.indexOf(a)>=0) THREE.ShaderChunk.shadowmask_pars_fragment=S.replace(a,
+    '\t#if NUM_DIR_LIGHT_SHADOWS == 2\n\t{\n'+
+    '\t\tvec3 c0 = vDirectionalShadowCoord[ 0 ].xyz / vDirectionalShadowCoord[ 0 ].w;\n'+
+    '\t\tbool in0 = c0.x > 0.03 && c0.x < 0.97 && c0.y > 0.03 && c0.y < 0.97 && c0.z < 1.0;\n'+     // 近くの影マップの内
+    '\t\tif ( receiveShadow && in0 ) { directionalLight = directionalLightShadows[ 0 ]; shadow *= getShadow( directionalShadowMap[ 0 ], directionalLight.shadowMapSize, directionalLight.shadowBias, directionalLight.shadowRadius, vDirectionalShadowCoord[ 0 ] ); }\n'+
+    '\t\telse if ( receiveShadow ) { directionalLight = directionalLightShadows[ 1 ]; shadow *= getShadow( directionalShadowMap[ 1 ], directionalLight.shadowMapSize, directionalLight.shadowBias, directionalLight.shadowRadius, vDirectionalShadowCoord[ 1 ] ); }\n'+
+    '\t}\n\t#else\n'+a+'\t#endif\n');
+}
+// 写し直すかを決めて sunFar を置く(sunFollow から)。向きは sun と同じ・中心は影テクセルの格子に載せる
+function farFollow(fx,fz){
+  if(!sunFar.castShadow) return;
+  const dk=SUN_N.x.toFixed(5)+','+SUN_N.y.toFixed(5)+','+SUN_N.z.toFixed(5);
+  if(!FAR.need&&dk===FAR.dir&&Math.hypot(fx-FAR.x,fz-FAR.z)<FAR_MOVE) return;
+  FAR.x=fx; FAR.z=fz; FAR.dir=dk; FAR.need=true;
+  const texel=2*FAR_R/FAR_MAP, p={x:fx,y:0,z:fz};
+  const a=Math.round(dot3(p,SUN_RT)/texel)*texel, b=Math.round(dot3(p,SUN_UP)/texel)*texel, c=dot3(p,SUN_F);
+  const t={x:SUN_RT.x*a+SUN_UP.x*b+SUN_F.x*c, y:SUN_RT.y*a+SUN_UP.y*b+SUN_F.y*c, z:SUN_RT.z*a+SUN_UP.z*b+SUN_F.z*c};
+  sunFar.target.position.set(t.x,t.y,t.z); sunFar.target.updateMatrixWorld();
+  sunFar.position.set(t.x+SUN_N.x*FAR_DIST, t.y+SUN_N.y*FAR_DIST, t.z+SUN_N.z*FAR_DIST); sunFar.updateMatrixWorld();
+}
+// 写し直さないコマは影の描画に渡す光から sunFar を外す(前の影マップ・行列をそのまま使う)
+if(renderer.shadowMap&&typeof renderer.shadowMap.render==='function'){
+  const _shR=renderer.shadowMap.render;
+  renderer.shadowMap.render=function(lights,scn,cam){
+    const k=lights&&lights.indexOf?lights.indexOf(sunFar):-1;
+    if(k>=0&&!FAR.need&&sunFar.shadow.map){ const L=lights.slice(); L.splice(k,1); return _shR.call(this,L,scn,cam); }
+    if(k>=0){ FAR.need=false; FAR.n++; }
+    return _shR.call(this,lights,scn,cam);
+  };
 }
 
 /* 材質は必ずこの工場を通す(色を素通しで書くとその面だけ不自然に明るくなる)。
@@ -1337,6 +1391,8 @@ function lodStruct(){
   if(typeof pedsDraw==='function') pedsDraw();    // 歩く人(近い人だけ)
   if(typeof carsDraw==='function') carsDraw();    // 自動車(近い車だけ)
   if(typeof flowDraw==='function') flowDraw();    // 乗り降りの人(近い人だけ)
+  if(typeof sigDraw==='function') sigDraw();      // 信号の灯(近いものだけ・色は世界時間から。10c章)
+  if(typeof plazaDraw==='function') plazaDraw();  // 千歳烏山駅前広場の往復する人(10e章)
   if(ORTHO_MGR) ORTHO_MGR.update();               // 航空写真の窓とタイル(3章・14章の前)
 }
 
@@ -1447,6 +1503,12 @@ const KARA=(function(){
     K.sd=(x,z)=>{ let d=1e9; for(const [a,b] of E){ const dx=b[0]-a[0], dz=b[1]-a[1], L2=dx*dx+dz*dz, u=L2?clamp(((x-a[0])*dx+(z-a[1])*dz)/L2,0,1):0; d=Math.min(d,Math.hypot(x-a[0]-dx*u,z-a[1]-dz*u)); }
       return K.holes.some(P=>polyDist(P,x,z)<0)?-d:d; }; }
   K.bld=[];
+  // 駅前広場の車道:計画の範囲(区域・線路沿いの帯)で、216 の帯・舗装・植え込み・再開発ビルの外から m 以上(10e章の車と灯りの置き場)
+  K.roadway=(x,z,m)=>{ m=m||0; if(!K.on) return false;
+    if(!(polyDist(K.dist,x,z)<-m||K.strip.some(P=>polyDist(P,x,z)<-m))) return false;
+    for(const L of [K.row,K.pave,K.lawn]) for(const P of L) if(polyDist(P,x,z)<m) return false;
+    for(const e of K.bld) if(polyDist(e.P,x,z)<m) return false;
+    return true; };
   return K;
 })();
 /* 凸の多角形 Q から凸の多角形 C(反時計回り)を除いた残り:C の辺 k の外側 ∩ 辺 0〜k−1 の内側(互いに重ならない凸の片) */
@@ -3049,8 +3111,10 @@ const setaXO=u=>{ const t=clamp((u-SETA_XO[0])/(SETA_XO[1]-SETA_XO[0]),0,1), f=t
   k.sweep(SETA_PLAT.u[0],SETA_PLAT.u[1],pm,SETA_PLAT.w,MAT.plat,SETA_PLAT.top/2,SETA_PLAT.top)
    .sweep(SETA_PLAT.u[0]-2,SETA_PLAT.u[1]+1,u=>pm(u)-0.3,SETA_PLAT.w+0.4,MAT.canopy,SETA_PLAT.top+2.6,.4).flush();
 }
-// 出典の表示(線路の位置は地理院のベクトルタイルを加工した数値=RAW.rail。CREDITS.txt と同じ表記)。航空写真の出典はこの上
-try{ const d=document.createElement('div'); d.textContent='井の頭線・世田谷線の線路の位置:地理院タイル(ベクトルタイル)を加工';
+// 出典の表示(線路の位置は地理院のベクトルタイルを加工した数値=RAW.rail。沿線の木の位置は地理院の航空写真から推定した数値=gsi_trees.js。
+// CREDITS.txt と同じ表記)。航空写真の出典はこの上
+try{ const d=document.createElement('div'); d.textContent='井の頭線・世田谷線の線路の位置:地理院タイル(ベクトルタイル)を加工'+
+    (PLL&&globalThis.GSI_TREES?'・沿線の木の位置:地理院タイル(全国最新写真(シームレス))から推定':'');
   d.style.cssText='position:fixed;right:6px;bottom:22px;font:11px sans-serif;color:#334;background:rgba(255,255,255,.7);padding:1px 6px;border-radius:4px;z-index:5;pointer-events:none';
   document.body.appendChild(d); }catch(e){}
 /* ============ 7. 駅・ラベル ============ */
@@ -4865,7 +4929,7 @@ const ATT_CELL=100;                         // 付属物の升[m]。まとまり
 /* 付属物の記録(detail の C.attS)。形そのものは持たず、1つ 19個の数で残し、近づいたときだけ形にする(makeAtt。数十万個の箱の頂点を
    全部のまとまりで持つと数百MB になる)。箱=[0,種類,建物の番号,原点 x,z,沿う向き tx,tz,外向き nx,nz,u0,u1,v0,v1,y0,y1,色 r,g,b,下面]、
    四角形=[1,4点の x,y,z,法線,色]。種類は ATT_KINDS の番号(0=登録しない部品:仕切り・手すりの子・軒樋など) */
-const ATT_KINDS=['','バルコニー','手すり','室外機','雨どい','屋上の室外機'], ATT_STRIDE=19;
+const ATT_KINDS=['','バルコニー','手すり','室外機','雨どい','屋上の室外機','高置水槽','屋上の看板'], ATT_STRIDE=19;   // 5 以上は屋上の物(4面とも描く)
 /* 記録を升(ATT_CELL 四方。記録の足元の中心で振り分ける)に分け、升ごとに外接球(x,y,z,r)と記録の位置 I を持たせる。形は升ごとに
    近づいたときだけ作る(cityLod)。升の外接球は記録の足元の4隅と上下の端を包む */
 function attCells(S){
@@ -5445,19 +5509,43 @@ if(PLB){
           const cs=[[-0.5,-0.4],[0.5,-0.4],[0.5,0.4],[-0.5,0.4]].map(([p,q])=>[x+ux*p-uz*q,z+uz*p+ux*q]);
           if(cs.every(p=>polyDist(Q,p[0],p[1])<-1.0)) obox([x,z],ux,uz,-uz,ux,-0.5,0.5,-0.4,0.4,yr,yr+0.7,AC_COL,false,'屋上の室外機',bi); }
       }
+      /* 屋上の物(2026-11 利用者指示「更なるクオリティアップ」。推定):航空写真が屋根に真上から貼られる(実際の太陽光パネルは写真に写る)ので、
+         横から見て効く物だけを立体で足す。置き場は足跡の 1m 内に収まり、屋上の室外機の列(重心の前後 2.1m・左右 0.4m)と重ならない所。
+         ・高置水槽:4〜10階の共同住宅・業務の4割。脚4本(高さ 2.2m)の上に FRP のパネル水槽(2.4×1.8×1.8m・淡い色)
+         ・屋上の看板:3階以上の商業(店舗併用を含む)で線路から 250m 以内の3割。線路の方を向く板(幅 5m・高さ 2.4m・脚 1.0m・厚さ 0.3m)。
+           面は無地の色(文字は描かない) */
+      { const ux=b.ux, uz=b.uz, vx=-uz, vz=ux, inQ=(x,z,u0,u1,v0,v1,ax,az,bx,bz)=>[[u0,v0],[u1,v0],[u1,v1],[u0,v1]].every(([p,q])=>polyDist(Q,x+ax*p+bx*q,z+az*p+bz*q)<-1.0);
+        const acRow=(x,z,r)=>{ const du=(x-b.cx)*ux+(z-b.cz)*uz, dv=(x-b.cx)*vx+(z-b.cz)*vz; return Math.abs(du)<2.1+r&&Math.abs(dv)<0.4+r; };
+        if((b.wt===1||b.wt===2)&&nf>=4&&nf<=10&&bh(b.seed,47)<0.4){
+          for(const dv of [2.6,-2.6,4.0,-4.0]){ const x=b.cx+vx*dv, z=b.cz+vz*dv;
+            if(!inQ(x,z,-1.2,1.2,-0.9,0.9,ux,uz,vx,vz)||acRow(x,z,1.5)) continue;
+            const TC=setSrgb(new THREE.Color(),bh(b.seed,49)<0.5?0xd9dfe1:0xd8d0bd), LC=setSrgb(new THREE.Color(),0x7d8287);
+            for(const [p,q] of [[-1.05,-0.75],[1.05,-0.75],[1.05,0.75],[-1.05,0.75]]) obox([x+ux*p+vx*q,z+uz*p+vz*q],ux,uz,vx,vz,-0.06,0.06,-0.06,0.06,yr,yr+2.2,LC,false,'高置水槽',bi);
+            obox([x,z],ux,uz,vx,vz,-1.2,1.2,-0.9,0.9,yr+2.2,yr+4.0,TC,true,'高置水槽',bi);
+            break; }
+        }
+        if((b.use===2||b.use===5)&&nf>=3&&bh(b.seed,48)<0.3){ const q0=prjXY(b.cx,b.cz);
+          if(Math.abs(q0.off)<250){ const f=frame(q0.s,0); let nx=f.x-b.cx, nz=f.z-b.cz; const nl=Math.hypot(nx,nz)||1; nx/=nl; nz/=nl;   // 線路の方
+            const tx=-nz, tz=nx, BC=[0xf2f1ec,0xd8443c,0x2f6db5,0xf0c419,0x2e9b57], FC=setSrgb(new THREE.Color(),BC[Math.floor(bh(b.seed,50)*BC.length)]), KC=setSrgb(new THREE.Color(),0x55595d);
+            for(const dd of [0,2,-2,4,-4]){ const x=b.cx+nx*dd, z=b.cz+nz*dd;
+              if(!inQ(x,z,-2.5,2.5,-0.15,0.15,tx,tz,nx,nz)||acRow(x,z,0.5)) continue;
+              for(const p of [-1.8,1.8]) obox([x+tx*p,z+tz*p],tx,tz,nx,nz,-0.06,0.06,-0.06,0.06,yr,yr+1.0,KC,false,'屋上の看板',bi);
+              obox([x,z],tx,tz,nx,nz,-2.5,2.5,-0.15,0.15,yr+1.0,yr+3.4,FC,true,'屋上の看板',bi);
+              break; } } }
+      }
     });
     const g=facesGeo(P,N,I,Cc); g.boundingSphere=sphere(C.bx);
     g.setAttribute('aBld',new THREE.Float32BufferAttribute(AB,4));     // 外装の番号(窓の種類+4×外装)・壁の上端・種・基部
     g.setAttribute('aWal',new THREE.Float32BufferAttribute(AW,4));     // 壁に沿う位置・壁の長さ・階高・1階の印
     const m=new THREE.Mesh(g,MAT_B); m.visible=false; scene.add(m);
-    m.castShadow=true; m.receiveShadow=true;        // 後から作るので applyShadows() の一括設定に載らない
+    m.castShadow=true; m.receiveShadow=true; m.layers.enable(FAR_LAYER);   // 後から作るので applyShadows() の一括設定に載らない(遠くの影も)
     C.mt=[];                                          // 写真の形(詰め合わせごとに1回の描画)。表示は m と一緒に cityLod が切り替える
     for(const [a,q] of TX){
       const gt=facesGeo(q.P,q.N,q.I,null); gt.boundingSphere=sphere(C.bx);
       gt.setAttribute('uv',new THREE.Float32BufferAttribute(q.U,2));
       gt.setAttribute('aBld',new THREE.Float32BufferAttribute(q.AB,4));
       gt.setAttribute('aWal',new THREE.Float32BufferAttribute(q.AW,4));
-      const mt=new THREE.Mesh(gt,ptxMat(a)); mt.visible=false; mt.castShadow=true; mt.receiveShadow=true; mt.userData.ptx=a;
+      const mt=new THREE.Mesh(gt,ptxMat(a)); mt.visible=false; mt.castShadow=true; mt.receiveShadow=true; mt.layers.enable(FAR_LAYER); mt.userData.ptx=a;
       scene.add(mt); C.mt.push(mt);
     }
     attDrop(C);                                       // 作り直すときは付属物の形も記録から作り直す
@@ -5477,8 +5565,8 @@ if(PLB){
       const o0=S[i+3],o1=S[i+4],tx=S[i+5],tz=S[i+6],nx=S[i+7],nz=S[i+8],u0=S[i+9],u1=S[i+10],v0=S[i+11],v1=S[i+12],y0=S[i+13],y1=S[i+14],r=S[i+15],g=S[i+16],bl=S[i+17];
       const W=(u,v,y)=>[o0+tx*u+nx*v,y,o1+tz*u+nz*v];
       q(W(u0,v1,y0),W(u1,v1,y0),W(u1,v1,y1),W(u0,v1,y1),[nx,0,nz],r,g,bl);
-      // 壁の側を向く面は描かない(壁と付属物の間に入らないと見えない。屋上の室外機=種類5 だけは向きが壁と関係ないので描く)
-      if(S[i+1]===5) q(W(u0,v0,y0),W(u1,v0,y0),W(u1,v0,y1),W(u0,v0,y1),[-nx,0,-nz],r,g,bl);
+      // 壁の側を向く面は描かない(壁と付属物の間に入らないと見えない。屋上の物=種類5 以上は向きが壁と関係ないので描く)
+      if(S[i+1]>=5) q(W(u0,v0,y0),W(u1,v0,y0),W(u1,v0,y1),W(u0,v0,y1),[-nx,0,-nz],r,g,bl);
       q(W(u1,v0,y0),W(u1,v1,y0),W(u1,v1,y1),W(u1,v0,y1),[tx,0,tz],r,g,bl);
       q(W(u0,v0,y0),W(u0,v1,y0),W(u0,v1,y1),W(u0,v0,y1),[-tx,0,-tz],r,g,bl);
       q(W(u0,v0,y1),W(u1,v0,y1),W(u1,v1,y1),W(u0,v1,y1),[0,1,0],r,g,bl);
@@ -5578,8 +5666,16 @@ if(PLB){
   // 本数は利用者指示で約2倍。街路樹の間隔を実際に近く詰め、残りは庭木として小さめに散らす
   /* 実データの土地利用(4章 LANDS_PL)があれば、公園・緑地(11m 格子)と山林(6.5m 格子)の中にも植える。
      格子を少しずらし、縁から樹冠の半径+0.5m 以上内側だけ。上限 2,500本。数が先に決まらないとインスタンスの枠を作れない */
+  /* 航空写真から推定した木(gsi_trees.js=tools/ortho_trees.py。2026-11 利用者指示「木を実際の位置に」):国土地理院の地理院タイル
+     (全国最新写真(シームレス) z18)の緑の塊の中心と半径。あれば公園・緑地・山林の格子の木と、ばらまいた庭木の代わりに植える。
+     推定:色と模様で見つけるので、写真で暗い(青みの)樹冠は取りこぼし、芝・緑の屋根を木と取り違えることがある。半径は塊の内接円の1.25倍
+     (影の側が欠けるぶん)・5m まで。ほかの木・建物・道路に掛かるなら 0.8倍ずつ 1m まで縮めて植える */
+  const GT=(()=>{ const g=typeof globalThis!=='undefined'&&globalThis.GSI_TREES; if(!g||!g.d||!PLL) return null;
+    const d=g.d.split(',').map(Number), o=toXY(g.o[0],g.o[1]), out=[]; let x=0,z=0;
+    for(let k=0;k+2<d.length;k+=3){ x+=d[k]; z+=d[k+1]; out.push([o.x+x/10,o.z+z/10,d[k+2]/10]); } return out; })();
+  CITY.gsiTrees=GT;
   const PARK=[];
-  for(const R of LANDS_PL){
+  if(!GT) for(const R of LANDS_PL){
     if(R.k!==0&&R.k!==2) continue;
     const g=R.k===2?6.5:11, sc0=R.k===2?0.95:0.85;
     for(let x=Math.ceil(R.bb[0]/g)*g;x<R.bb[1];x+=g)for(let z=Math.ceil(R.bb[2]/g)*g;z<R.bb[3];z+=g){
@@ -5588,7 +5684,7 @@ if(PLB){
     }
   }
   while(PARK.length>2500) PARK.splice(Math.floor(Math.random()*PARK.length),1);
-  const N=2300+PARK.length+(KARA.on?KARA.trees.length:0);
+  const N=2300+PARK.length+(KARA.on?KARA.trees.length:0)+(GT?GT.length:0);
   /* 木は幹と樹冠を1つの形(頂点カラー:幹=茶・樹冠=白)にし、s の 480m ごとのまとまりのインスタンスにする。
      まとまりごとに外接球を持たせて画面の外・影の範囲の外を間引く(1つにまとめると数千本を毎回描く)。
      色(季節)はインスタンスの色で、幹にも掛かる(暗い茶になる)。登録簿の木 i は TREE_CH[ci].m の j 番目 */
@@ -5596,9 +5692,9 @@ if(PLB){
   let i=0;
   // 樹冠の半径は 2.3*sc。占有半径はこれに合わせる(建物とも重ならない)
   // kind は樹種の別(既定='街路樹' / '桜')。季節の着色でここを見る
-  const put=(s,off,sc,c,kind,roadIn)=>{       // roadIn:道路区域へ入ってよい深さ(歩道の並木)
+  const put=(s,off,sc,c,kind,roadIn,at)=>{    // roadIn:道路区域へ入ってよい深さ(歩道の並木)・at=[x,z](写真の木はその位置のまま)
     if(i>=N)return false;
-    const p=frame(s,off), rad=2.3*sc;
+    const p=at?{x:at[0],z:at[1]}:frame(s,off), rad=2.3*sc;
     if(!cityFree(s,off,rad,p.x,p.z,roadIn===undefined?0:rad+roadIn))return false;
     if(!occFree(p.x,p.z,rad))return false;
     const ty=Math.min(terH(p.x,p.z),terH(p.x+0.3,p.z),terH(p.x-0.3,p.z),terH(p.x,p.z+0.3),terH(p.x,p.z-0.3));   // 根元(坂で浮かない)
@@ -5662,8 +5758,11 @@ if(PLB){
     }
   }
   for(let k=0;k<20;k++)put(JOSUI_X+(k-10)*7,(k-10)*34,.9,0x6f9160);// 玉川上水緑道
+  if(GT){ const GC=[0x7fa268,0x6f9160,0x5f8a4e];
+    for(const t of GT){ const q=prjXY(t[0],t[1]); if(q.s<DOM.x0||q.s>DOM.x1||Math.abs(q.off)>DOM.z) continue;
+      for(let r=Math.min(5.0,t[2]*1.25);r>=1.0;r*=0.8) if(put(q.s,q.off,r/2.3,GC[Math.floor(Math.abs(t[0]*7.3+t[1]*3.1))%3],'写真',undefined,t)) break; } }
   let guard=0;
-  while(i<N&&guard++<N*40){
+  while(!GT&&i<N&&guard++<N*40){
     const x=DOM.x0+Math.random()*(DOM.x1-DOM.x0),z=(Math.random()*2-1)*DOM.z;
     put(x,z,.55+Math.random()*.5,Math.random()<.5?0x7fa268:0x6f9160);   // 庭木は小ぶり
   }
@@ -5703,27 +5802,43 @@ if(PLB){
   const TREE_CH=new Map(), m4=new THREE.Matrix4(), q=new THREE.Quaternion(), e3=new THREE.Euler(), v3=new THREE.Vector3(), s3=new THREE.Vector3();
   T.forEach((t,k)=>{const ci=Math.floor(t[4]/480); let c=TREE_CH.get(ci); if(!c){c={L:[]};TREE_CH.set(ci,c);} CITY.trees[k].ci=ci; CITY.trees[k].j=c.L.length; c.L.push(t);});
   const GN=treeGeo(true), GF=treeGeo(false);
+  // 木の置き方(向き・高さ 0.85〜1.25倍・太さ)。zero=大きさ 0(近くの形で描く木を遠くの形から外す。位置はそのまま)
+  const treeM=(t,zero)=>{const h=0.85+0.4*((Math.sin(t[0]*1.7+t[1]*3.1)+1)/2), w=0.85+0.15*((Math.sin(t[0]*2.3-t[1]*1.3)+1)/2);
+    e3.set(0,(t[0]*0.37+t[1]*0.61)%(2*Math.PI),0); q.setFromEuler(e3);
+    return m4.compose(v3.set(t[0],t[5],t[1]),q,zero?s3.set(0,0,0):s3.set(t[2]*w,t[2]*h,t[2]*w));};
   for(const c of TREE_CH.values()){
     let x0=1e9,x1=-1e9,z0=1e9,z1=-1e9,y0=1e9,y1=-1e9;
     for(const t of c.L){x0=Math.min(x0,t[0]-3);x1=Math.max(x1,t[0]+3);z0=Math.min(z0,t[1]-3);z1=Math.max(z1,t[1]+3);y0=Math.min(y0,t[5]);y1=Math.max(y1,t[5]);}
     const sph=new THREE.Sphere(new THREE.Vector3((x0+x1)/2,(y0+y1)/2+5,(z0+z1)/2),Math.hypot(x1-x0,y1-y0+10,z1-z0)/2);
-    const mk=(G)=>{const g=G.clone(), im=new THREE.InstancedMesh(g,TREE_MAT,c.L.length);
-      c.L.forEach((t,j)=>{const h=0.85+0.4*((Math.sin(t[0]*1.7+t[1]*3.1)+1)/2), w=0.85+0.15*((Math.sin(t[0]*2.3-t[1]*1.3)+1)/2);
-        e3.set(0,(t[0]*0.37+t[1]*0.61)%(2*Math.PI),0); q.setFromEuler(e3);
-        m4.compose(v3.set(t[0],t[5],t[1]),q,s3.set(t[2]*w,t[2]*h,t[2]*w)); im.setMatrixAt(j,m4); im.setColorAt(j,setSrgb(col,t[3]));});
-      g.boundingSphere=sph; im.frustumCulled=true; im.instanceMatrix.needsUpdate=true; if(im.instanceColor) im.instanceColor.needsUpdate=true;
-      scene.add(im); return im;};
-    c.m=mk(GF); c.mn=mk(GN); c.mn.visible=false; c.sph=sph;
+    const g=GF.clone(), im=new THREE.InstancedMesh(g,TREE_MAT,c.L.length);
+    c.L.forEach((t,j)=>{im.setMatrixAt(j,treeM(t,false)); im.setColorAt(j,setSrgb(col,t[3]));});
+    g.boundingSphere=sph; im.frustumCulled=true; im.instanceMatrix.needsUpdate=true; if(im.instanceColor) im.instanceColor.needsUpdate=true;
+    scene.add(im); c.m=im; c.sph=sph; c.near=new Set();
   }
-  // 近く(まとまりの外接球の縁から TREE_NEAR 以内)は細かい形(lodStruct から毎コマ)
-  CITY.treeLod=function(){ const p=camera.position;
-    for(const c of TREE_CH.values()){ const n=c.sph.center.distanceTo(p)-c.sph.radius<TREE_NEAR*LOD_STRUCT;
-      if(c.mn.visible!==n){ c.mn.visible=n; c.m.visible=!n; } } };
+  /* 近く(カメラから TREE_NEAR 以内の木)は細かい形(2026-11 に木ごとへ。以前はまとまり(半径 約500m)ごとに切り替えたので、写真の木で
+     本数が倍になると視界のほぼ全部の木が細かい形になった)。全部の木で1つのインスタンス CITY.treeNear に、カメラが TREE_NEAR の 1割
+     動くたびに近い木を書き直す。遠くの形(まとまり)の同じ木は大きさ 0 にする(位置はそのまま) */
+  const NEAR_CAP=2400, near=new THREE.InstancedMesh(GN.clone(),TREE_MAT,NEAR_CAP);
+  near.name='木(近く)'; near.frustumCulled=false; near.setColorAt(0,setSrgb(col,0x7fa268)); near.count=0; scene.add(near);
+  CITY.treeNear=near;
+  const TL={x:1e9,y:1e9,z:1e9,dirty:true};
+  CITY.treeLod=function(){ const p=camera.position, R=TREE_NEAR*LOD_STRUCT;
+    if(!TL.dirty&&Math.hypot(p.x-TL.x,p.y-TL.y,p.z-TL.z)<R*0.1) return;
+    TL.x=p.x; TL.y=p.y; TL.z=p.z; TL.dirty=false; let n=0;
+    for(const c of TREE_CH.values()){
+      const was=c.near, now=new Set();
+      if(c.sph.center.distanceTo(p)-c.sph.radius<R) c.L.forEach((t,j)=>{ if(n+now.size<NEAR_CAP&&Math.hypot(t[0]-p.x,t[5]-p.y,t[1]-p.z)<R) now.add(j); });
+      let ch=false;
+      for(const j of was) if(!now.has(j)){ c.m.setMatrixAt(j,treeM(c.L[j],false)); ch=true; }
+      for(const j of now){ if(!was.has(j)){ c.m.setMatrixAt(j,treeM(c.L[j],true)); ch=true; }
+        near.setMatrixAt(n,treeM(c.L[j],false)); near.setColorAt(n,c.m.instanceColor&&c.m.instanceColor.array?col.fromArray(c.m.instanceColor.array,j*3):setSrgb(col,c.L[j][3])); n++; }
+      c.near=now; if(ch) c.m.instanceMatrix.needsUpdate=true; }
+    near.count=n; near.instanceMatrix.needsUpdate=true; if(near.instanceColor) near.instanceColor.needsUpdate=true; };
   /* 季節の着色(applyLook)と検証が「登録簿の i 番目の木」で触れる窓口。cols は検証用のスタブが記録する色を登録簿の順に並べる */
   CITY.treeChunks=TREE_CH;
   CITY.crown={
-    setColorAt(k,c){const t=CITY.trees[k], h=TREE_CH.get(t.ci); h.m.setColorAt(t.j,c); h.mn.setColorAt(t.j,c);},
-    get instanceColor(){return {set needsUpdate(v){for(const c of TREE_CH.values()) for(const m of [c.m,c.mn]) if(m.instanceColor) m.instanceColor.needsUpdate=v;}};},
+    setColorAt(k,c){const t=CITY.trees[k], h=TREE_CH.get(t.ci); h.m.setColorAt(t.j,c); TL.dirty=true;},   // 近くの形は次の treeLod で色を写す
+    get instanceColor(){return {set needsUpdate(v){for(const c of TREE_CH.values()) if(c.m.instanceColor) c.m.instanceColor.needsUpdate=v;}};},
     get cols(){return CITY.trees.map(t=>{const m=TREE_CH.get(t.ci).m; return m.cols?m.cols[t.j]:undefined;});},
     set cols(a){for(const c of TREE_CH.values()) c.m.cols=[];},
     get count(){return CITY.trees.length;}
@@ -5806,6 +5921,18 @@ function staLitPatch(mat,car){                 // car=車両の部品:夜はど�
    (利用者指示で2.5倍)。色はリニア値に掛けるので、トーンマッピングを通った
    画面上では白へ寄りながら明るくなる(飽和で色が飛ぶのを ACES が和らげる) */
 const LIGHT_GAIN=2.5;
+/* 千歳烏山駅前広場の街灯(2026-11 利用者指示「更なるクオリティアップ」。推定):舗装の縁のうち外が車道の所に 18m おき、縁の 0.6m 内側
+   (ほかの灯りから 10m)。灯具と暈けは 8b章が ROAD_LAMPS から地表+5.2m に描き、柱は 10e章 */
+const KARA_LAMPS=[];
+if(KARA.on) for(const P of KARA.pave){ let acc=9;
+  for(let k=0;k<P.length;k++){ const a=P[k], b=P[(k+1)%P.length], L=Math.hypot(b[0]-a[0],b[1]-a[1]); if(L<1e-6) continue;
+    const tx=(b[0]-a[0])/L, tz=(b[1]-a[1])/L; let nx=tz, nz=-tx;
+    if(polyDist(P,(a[0]+b[0])/2+nx*0.3,(a[1]+b[1])/2+nz*0.3)<0){ nx=-nx; nz=-nz; }   // 外向き
+    for(;acc<L;acc+=18){ const x=a[0]+tx*acc, z=a[1]+tz*acc, lx=x-nx*0.6, lz=z-nz*0.6;
+      if(!KARA.roadway(x+nx*2.0,z+nz*2.0,0.3)||polyDist(P,lx,lz)>-0.4||KARA_LAMPS.some(q=>Math.hypot(q[0]-lx,q[1]-lz)<10)) continue;
+      if(!occFree(lx,lz,0.5)) continue;
+      KARA_LAMPS.push([lx,lz]); ROAD_LAMPS.push([lx,lz]); }
+    acc-=L; } }
 const glow=h=>srgb(h).multiplyScalar(LIGHT_GAIN);
 const NIGHT=(function(){
   const G=new THREE.Group(); G.visible=false; G.name='night'; scene.add(G);
@@ -8934,6 +9061,507 @@ const PED_NEAR=70, PED_FAR=250;
   PEDS.near=peopleMesh([], '歩く人', false, PEDS.length); PEDS.far=peopleMesh([], '歩く人(遠く)', true, PEDS.length);
   for(const im of [PEDS.near,PEDS.far]){ im.frustumCulled=false; scene.add(im); }
 }
+/* ============ 10c. 路面標示と交差点の設備(2026-11 利用者指示「更なるクオリティアップ」) ============
+   PLATEAU の道路区域(ROADS_PL。sec 0/1=道路の区間・4=交差部)から作る。実データの道路があるときだけ(PLL)。
+   ・外側線:道路の区間の縁のうち、隣の道路の面に接しない縁(=建物や敷地の側)の内側に幅 0.15m の白線。幅 4m 以上の道。
+     縁からの距離は幅 8m 未満で 0.75m(路側帯)、8m 以上は歩道の幅(0.18×幅・1.5〜3m)+0.25m
+   ・中央線:幅 5.5m 以上の区間。区間の主軸に直角な断面を 2m ごとに取り、断面の中点をつなぐ(幅が中央値から 3割以上外れる所・中点の跳ぶ所で切る)。
+     幅 5.5〜9m は白の破線(5m・間 5m)、9〜12m は白の実線、12m 以上は黄の実線と車線の境の白の破線(片側の車線 約3.3m)
+   ・横断歩道と停止線:交差部の縁を隣の道路ごとにまとめた「口」で、幅 6m 以上の口が2つ以上あるか、幹線の交差部に幅 6m 以上の口があるとき、
+     幅 5m 以上の口に縞(幅 0.45m・間 0.45m・長さ 4m。交差部の縁から 1m)、その 2m 先の、近づく車の左半分に停止線(0.45m)
+   ・止まれ:幅 5.5m 未満の口が、幅 7m 以上か幹線の口をもつ交差部に入る所に、停止線・路面の「止まれ」・赤い逆三角の標識
+   ・信号:横断歩道のある交差部で幅 7m 以上の口があるとき、横断歩道のある口ごとに、近づく車の左の角に柱(高さ 5.6m)・腕・車両用の灯器
+     (3灯。左から青・黄・赤)・歩行者用の灯器・横断歩道の標識。灯る色は交差部の中で向きの組ごとに 60秒で回す(見た目だけ。stepSignals)
+   ・防護柵:幹線の歩道(SIDEWALKS)の車道側の縁に白いガードパイプ(2m ごとの支柱と2本の横の管)。交差部の 2.5m 内と横断歩道の 4m 内は切る
+   どれも線路から MARK_BAND=300m の内。路面の物は地表(terH)+道路の高さ+0.02m(押し下げを掛けた材質で道路の面と奥行きを取り合わない)。
+   s の 480m ごとのまとまりで、路面の物は外接球の縁から MARK_NEAR、柱の物は SIG_NEAR より近いときだけ描く(遠くは航空写真の白線)。
+   登録簿 ROAD_MARKS(⑦の 4i が検証側の plateau_land.js の道路・交差部と照合) */
+const MARK_NEAR=320, SIG_NEAR=650, MARK_BAND=300;
+const ROAD_MARKS={edge:0, center:[], lane:[], bars:[], stop:[], tomare:[], signals:[], guards:[], signs:[], lampN:0, chunks:0};
+const SIGNAL={im:null, lamps:[], t:-1};
+if(PLL&&ROADS_PL.length){
+  const swW=w=>w>=8?Math.min(3.0,Math.max(1.5,w*0.18)):0;
+  const area=P=>{let A=0; for(let i=0;i<P.length;i++){const a=P[i], b=P[(i+1)%P.length]; A+=a[0]*b[1]-b[0]*a[1];} return A/2;};
+  const ccw=P=>area(P)>0?P:P.slice().reverse();
+  const yOf=(R,x,z,dy)=>terH(x,z)+ROAD_Y[R.k]+dy;
+  // その点を含む道路の面(交差部も)
+  const roadsAt=(x,z)=>{ const l=PLR_GRID.get(Math.floor(x/PLR_CELL)+','+Math.floor(z/PLR_CELL)); const o=[];
+    if(l) for(const R of l) if(R.k!==2&&x>R.bb[0]&&x<R.bb[1]&&z>R.bb[2]&&z<R.bb[3]&&polyDist(R.P,x,z)<0) o.push(R); return o; };
+  const inBand=R=>{ const c=R.P.reduce((s,p)=>[s[0]+p[0]/R.P.length,s[1]+p[1]/R.P.length],[0,0]), q=prjXY(c[0],c[1]);
+    return Math.abs(q.off)<=MARK_BAND&&q.s>DOM.x0-30&&q.s<DOM.x1+30; };
+  // 区間の幅と中心:主軸(主成分)に直角な断面を step ごと
+  const info=new Map();
+  const inf=R=>{ let I=info.get(R); if(I) return I;
+    const P=ccw(R.P); let cx=0,cz=0; for(const p of P){cx+=p[0];cz+=p[1];} cx/=P.length; cz/=P.length;
+    let a=0,b=0,c=0; for(const p of P){const x=p[0]-cx,z=p[1]-cz; a+=x*x; b+=x*z; c+=z*z;}
+    const th=0.5*Math.atan2(2*b,a-c), ux=Math.cos(th), uz=Math.sin(th), vx=-uz, vz=ux;
+    let u0=1e9,u1=-1e9; for(const p of P){const u=(p[0]-cx)*ux+(p[1]-cz)*uz; u0=Math.min(u0,u); u1=Math.max(u1,u);}
+    const S=[];
+    for(let u=u0+1;u<u1-0.5;u+=2){ const xs=[];
+      for(let i=0;i<P.length;i++){ const p=P[i], q=P[(i+1)%P.length], pu=(p[0]-cx)*ux+(p[1]-cz)*uz, qu=(q[0]-cx)*ux+(q[1]-cz)*uz;
+        if((pu-u)*(qu-u)<0){ const t=(u-pu)/(qu-pu), pv=(p[0]-cx)*vx+(p[1]-cz)*vz, qv=(q[0]-cx)*vx+(q[1]-cz)*vz; xs.push(pv+(qv-pv)*t); } }
+      xs.sort((m,n)=>m-n); let best=null; for(let i=0;i+1<xs.length;i+=2) if(!best||xs[i+1]-xs[i]>best[1]-best[0]) best=[xs[i],xs[i+1]];
+      if(best) S.push({u:u,v0:best[0],v1:best[1]}); }
+    const ws=S.map(s=>s.v1-s.v0).sort((m,n)=>m-n), W=ws.length?ws[ws.length>>1]:0;
+    I={P:P,cx:cx,cz:cz,ux:ux,uz:uz,vx:vx,vz:vz,S:S,W:W,L:u1-u0}; info.set(R,I); return I; };
+  // ---- 面を積む(まとまりごと) ----
+  const CHS=new Map(), cM=new THREE.Color();
+  const chunkOf=(x,z)=>{ const k=Math.floor(prjXY(x,z).s/480); let q=CHS.get(k);
+    if(!q){ q={m:{P:[],N:[],I:[],C:[]}, t:{P:[],N:[],I:[],U:[]}, s:{P:[],N:[],I:[],C:[]}, g:{P:[],N:[],I:[],U:[]}, bm:[1e9,-1e9,1e9,-1e9,1e9,-1e9], bs:[1e9,-1e9,1e9,-1e9,1e9,-1e9]}; CHS.set(k,q); } return q; };
+  const grow=(b,x,y,z)=>{ b[0]=Math.min(b[0],x); b[1]=Math.max(b[1],x); b[2]=Math.min(b[2],y); b[3]=Math.max(b[3],y); b[4]=Math.min(b[4],z); b[5]=Math.max(b[5],z); };
+  const WHITE=0xeceae4, YELLOW=0xe8b53a;
+  // 路面の四角(4点は地表+道路の高さ+0.02 に置く)
+  const markQuad=(R,Q,hex)=>{ if(Q.some(p=>cutHit(p[0],p[1],0.3))) return;     // 仙川の掘割の中(道路の面は描かない)には描かない
+    const q=chunkOf((Q[0][0]+Q[2][0])/2,(Q[0][1]+Q[2][1])/2), M=q.m, o=M.P.length/3; setSrgb(cM,hex);
+    for(const p of Q){ const y=yOf(R,p[0],p[1],0.02); M.P.push(p[0],y,p[1]); M.N.push(0,1,0); M.C.push(cM.r,cM.g,cM.b); grow(q.bm,p[0],y,p[1]); }
+    const a=Q[0], b=Q[1], c=Q[2]; if((b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0])<0) M.I.push(o,o+1,o+2,o,o+2,o+3); else M.I.push(o,o+2,o+1,o,o+3,o+2); };
+  // 線(点の列)を幅 w の四角に。長い区間は 3m 以下に分ける(地表の起伏に沿う)
+  const markLine=(R,pts,w,hex)=>{ for(let i=0;i+1<pts.length;i++){ const a=pts[i], b=pts[i+1], L=Math.hypot(b[0]-a[0],b[1]-a[1]); if(L<0.05) continue;
+      const nx=-(b[1]-a[1])/L*w/2, nz=(b[0]-a[0])/L*w/2, n=Math.ceil(L/3);
+      for(let k=0;k<n;k++){ const p=[a[0]+(b[0]-a[0])*k/n,a[1]+(b[1]-a[1])*k/n], r=[a[0]+(b[0]-a[0])*(k+1)/n,a[1]+(b[1]-a[1])*(k+1)/n];
+        markQuad(R,[[p[0]+nx,p[1]+nz],[r[0]+nx,r[1]+nz],[r[0]-nx,r[1]-nz],[p[0]-nx,p[1]-nz]],hex); } } };
+  // 破線:点の列を道のりで 5m 引き・5m 空ける
+  const dashed=(pts,on,off)=>{ const out=[]; let s=0, cur=null;
+    for(let i=0;i+1<pts.length;i++){ const a=pts[i], b=pts[i+1], L=Math.hypot(b[0]-a[0],b[1]-a[1]); let t=0;
+      while(t<L-1e-9){ const ph=s%(on+off), inOn=ph<on, rem=(inOn?on-ph:on+off-ph), d=Math.min(rem,L-t), p=[a[0]+(b[0]-a[0])*t/L,a[1]+(b[1]-a[1])*t/L], r=[a[0]+(b[0]-a[0])*(t+d)/L,a[1]+(b[1]-a[1])*(t+d)/L];
+        if(inOn){ if(!cur){cur=[p]; out.push(cur);} cur.push(r); } else cur=null;
+        t+=d; s+=d; } }
+    return out.filter(c=>c.length>=2); };
+  // 箱(柱・腕・灯器・柵)。向きは水平の単位ベクトル (fx,fz)=前、上は y
+  const boxA=(q,cx,y0,cz,fx,fz,lf,lw,h,hex)=>{ const S=q.s, o=S.P.length/3, rx=-fz, rz=fx; setSrgb(cM,hex);
+    const V=(a,b,c)=>[cx+fx*a+rx*b, y0+c, cz+fz*a+rz*b];
+    const F=[[[ lf/2,-lw/2,0],[ lf/2, lw/2,0],[ lf/2, lw/2,h],[ lf/2,-lw/2,h],[fx,0,fz]],[[-lf/2, lw/2,0],[-lf/2,-lw/2,0],[-lf/2,-lw/2,h],[-lf/2, lw/2,h],[-fx,0,-fz]],
+             [[-lf/2,-lw/2,0],[ lf/2,-lw/2,0],[ lf/2,-lw/2,h],[-lf/2,-lw/2,h],[-rx,0,-rz]],[[ lf/2, lw/2,0],[-lf/2, lw/2,0],[-lf/2, lw/2,h],[ lf/2, lw/2,h],[rx,0,rz]],
+             [[-lf/2,-lw/2,h],[ lf/2,-lw/2,h],[ lf/2, lw/2,h],[-lf/2, lw/2,h],[0,1,0]],[[-lf/2, lw/2,0],[ lf/2, lw/2,0],[ lf/2,-lw/2,0],[-lf/2,-lw/2,0],[0,-1,0]]];
+    for(const f of F){ const b=S.P.length/3;
+      for(let k=0;k<4;k++){ const v=V(...f[k]); S.P.push(...v); S.N.push(...f[4]); S.C.push(cM.r,cM.g,cM.b); grow(q.bs,v[0],v[1],v[2]); }
+      const A=V(...f[0]), B=V(...f[1]), C=V(...f[2]), ux=B[0]-A[0],uy=B[1]-A[1],uz=B[2]-A[2],vx=C[0]-A[0],vy=C[1]-A[1],vz=C[2]-A[2], n=f[4];
+      if((uy*vz-uz*vy)*n[0]+(uz*vx-ux*vz)*n[1]+(ux*vy-uy*vx)*n[2]>=0) S.I.push(b,b+1,b+2,b,b+2,b+3); else S.I.push(b,b+2,b+1,b,b+3,b+2); } };
+  // 絵の付いた板(標識・路面の文字):中心・向き・幅・高さ・絵の枠 [u0,v0,u1,v1]
+  const texQuad=(T,q,b,C4,uv)=>{ const o=T.P.length/3; for(let k=0;k<4;k++){ T.P.push(...C4[k]); grow(b,C4[k][0],C4[k][1],C4[k][2]); }
+    const A=C4[0], B=C4[1], C=C4[2], ux=B[0]-A[0],uy=B[1]-A[1],uz=B[2]-A[2],vx=C[0]-A[0],vy=C[1]-A[1],vz=C[2]-A[2];
+    let nx=uy*vz-uz*vy, ny=uz*vx-ux*vz, nz=ux*vy-uy*vx; const l=Math.hypot(nx,ny,nz)||1; nx/=l; ny/=l; nz/=l;
+    for(let k=0;k<4;k++) T.N.push(nx,ny,nz);
+    T.U.push(uv[0],uv[1], uv[2],uv[1], uv[2],uv[3], uv[0],uv[3]); T.I.push(o,o+1,o+2,o,o+2,o+3); };
+  const signPlate=(q,cx,y,cz,fx,fz,w,h,uv)=>{ const rx=-fz, rz=fx, d=0.03;   // 前(fx,fz)を向く板。左右は前から見て
+    const P=(a,c)=>[cx+fx*d-rx*a, y+c, cz+fz*d-rz*a];
+    texQuad(q.g,q,q.bs,[P(-w/2,-h/2),P(w/2,-h/2),P(w/2,h/2),P(-w/2,h/2)],uv); };
+  // 絵(標識と路面の文字):1枚の画像
+  const AT=document.createElement('canvas'); AT.width=512; AT.height=256; const g2=AT.getContext('2d');
+  if(g2&&g2.fillRect){
+    g2.clearRect(0,0,512,256);
+    // [0,0]-[128,128] 横断歩道(青の四角に白の三角と人)
+    g2.fillStyle='#1f5fbf'; g2.fillRect(4,4,120,120); g2.fillStyle='#fff'; g2.beginPath(); g2.moveTo(64,14); g2.lineTo(116,108); g2.lineTo(12,108); g2.closePath(); g2.fill();
+    g2.fillStyle='#111'; g2.beginPath(); g2.arc(64,52,7,0,6.3); g2.fill(); g2.fillRect(58,60,12,22); g2.fillRect(52,82,8,18); g2.fillRect(68,82,8,18);
+    for(let i=0;i<4;i++) g2.fillRect(30+i*18,100,10,4);
+    // [128,0]-[256,128] 止まれ(赤の逆三角に白の文字)
+    g2.fillStyle='#fff'; g2.beginPath(); g2.moveTo(130,6); g2.lineTo(254,6); g2.lineTo(192,122); g2.closePath(); g2.fill();
+    g2.fillStyle='#d4232b'; g2.beginPath(); g2.moveTo(138,10); g2.lineTo(246,10); g2.lineTo(192,112); g2.closePath(); g2.fill();
+    g2.fillStyle='#fff'; g2.font='bold 26px sans-serif'; g2.textAlign='center'; g2.textBaseline='middle'; g2.fillText('止まれ',192,40);
+    // [0,128]-[256,256] 路面の「止まれ」(白の文字・透明の地。縦に長い字)
+    g2.save(); g2.translate(128,192); g2.scale(1,1.0); g2.fillStyle='#fff'; g2.font='bold 100px sans-serif'; g2.textAlign='center'; g2.textBaseline='middle'; g2.fillText('止まれ',0,4); g2.restore();
+    // [256,0]-[384,128] 信号の歩行者の灯器の面(暗い灰)
+    g2.fillStyle='#202326'; g2.fillRect(260,4,120,120);
+  }
+  const TEX=canvasTex(AT); TEX.anisotropy=4;
+  const UV={cross:[4/512,1-124/256,124/512,1-4/256], stop:[130/512,1-124/256,254/512,1-6/256], paint:[8/512,1-252/256,248/512,1-132/256]};
+  // ---- 1. 外側線 ----
+  const SEG=ROADS_PL.filter(R=>(R.sec===1||R.sec===0)&&R.k!==2&&inBand(R));
+  for(const R of SEG){
+    const I=inf(R); if(I.W<4||I.L<4) continue;
+    const P=I.P, n=P.length, d=I.W<8?0.75:swW(I.W)+0.25;
+    const bnd=P.map((a,i)=>{ const b=P[(i+1)%n], L=Math.hypot(b[0]-a[0],b[1]-a[1]); if(L<1e-6) return false;
+      const ox=(b[1]-a[1])/L, oz=-(b[0]-a[0])/L, mx=(a[0]+b[0])/2+ox*0.5, mz=(a[1]+b[1])/2+oz*0.5;      // 外向き=右の法線(反時計回り)
+      return !roadsAt(mx,mz).length; });
+    if(bnd.every(v=>v)) continue;                                  // 周りに道路の無い孤立した面(敷地の通路など)
+    let st=bnd.findIndex((v,i)=>v&&!bnd[(i+n-1)%n]); if(st<0) continue;
+    for(let c=0;c<n;c++){ const i0=(st+c)%n; if(!bnd[i0]||bnd[(i0+n-1)%n]) continue;
+      const run=[]; let i=i0; while(bnd[i]&&run.length<n){ run.push(i); i=(i+1)%n; }
+      const nrm=j=>{ const a=P[j], b=P[(j+1)%n], L=Math.hypot(b[0]-a[0],b[1]-a[1])||1; return [-(b[1]-a[1])/L,(b[0]-a[0])/L]; };   // 内向き
+      const pts=[];
+      for(let k=0;k<=run.length;k++){ const j=k<run.length?run[k]:(run[run.length-1]+1)%n, p=P[j];
+        const nA=k>0?nrm(run[k-1]):null, nB=k<run.length?nrm(run[k]):null; let m;
+        if(nA&&nB){ const sx=nA[0]+nB[0], sz=nA[1]+nB[1], l=Math.hypot(sx,sz); if(l<0.2) m=nB; else { const cs=(sx/l)*nB[0]+(sz/l)*nB[1]; m=[sx/l/Math.max(cs,0.5),sz/l/Math.max(cs,0.5)]; } }
+        else m=nA||nB;
+        pts.push([p[0]+m[0]*d,p[1]+m[1]*d]); }
+      // 面の外へ出た点で切る
+      let cur=[]; for(const p of pts){ if(polyDist(P,p[0],p[1])<-0.1){ cur.push(p); } else { if(cur.length>=2){ markLine(R,cur,0.15,WHITE); ROAD_MARKS.edge++; } cur=[]; } }
+      if(cur.length>=2){ markLine(R,cur,0.15,WHITE); ROAD_MARKS.edge++; }
+    }
+  }
+  // ---- 2. 中央線と車線の境 ----
+  for(const R of SEG){
+    if(R.kara) continue;
+    const I=inf(R); if(I.W<5.5||I.L<12) continue;
+    const ok=I.S.filter(s=>Math.abs((s.v1-s.v0)-I.W)<0.3*I.W);
+    const runs=[]; let cur=null;
+    for(const s of ok){ const mid=(s.v0+s.v1)/2; if(cur&&Math.abs(s.u-cur[cur.length-1].u-2)<0.01&&Math.abs(mid-cur[cur.length-1].m)<0.8) cur.push({u:s.u,m:mid,w:s.v1-s.v0}); else { cur=[{u:s.u,m:mid,w:s.v1-s.v0}]; runs.push(cur); } }
+    for(const r of runs){ if(r.length<4) continue;
+      const sm=r.map((s,i)=>{ let a=0,c=0; for(let j=Math.max(0,i-1);j<=Math.min(r.length-1,i+1);j++){a+=r[j].m;c++;} return {u:s.u,m:a/c,w:s.w}; }).slice(1,-1);
+      if(sm.length<3) continue;
+      const at=(s,dv)=>[I.cx+I.ux*s.u+I.vx*(s.m+dv), I.cz+I.uz*s.u+I.vz*(s.m+dv)];
+      const W=I.W, line=dv=>sm.map(s=>at(s,dv));
+      const center=line(0);
+      if(W<9){ for(const d of dashed(center,5,5)) markLine(R,d,0.15,WHITE); }
+      else markLine(R,center,0.15,W>=12?YELLOW:WHITE);
+      ROAD_MARKS.center.push({R:R,pts:center,w:W});
+      if(W>=12){ const cw=W-2*swW(W), nl=Math.max(1,Math.round(cw/2/3.3));
+        for(let j=1;j<nl;j++) for(const sg of[-1,1]){ const L=line(sg*j*cw/2/nl); for(const d of dashed(L,5,5)) markLine(R,d,0.15,WHITE); ROAD_MARKS.lane.push({R:R,pts:L}); } }
+    }
+  }
+  // ---- 3. 交差部:横断歩道・停止線・止まれ・信号 ----
+  const INT=ROADS_PL.filter(R=>R.sec===4&&R.k!==2&&inBand(R));
+  for(const X of INT){
+    const P=ccw(X.P), n=P.length; if(n<3) continue;
+    // 縁ごとの隣(外へ 0.6m の点を含む道路の区間)
+    const nb=P.map((a,i)=>{ const b=P[(i+1)%n], L=Math.hypot(b[0]-a[0],b[1]-a[1]); if(L<1e-6) return null;
+      const ox=(b[1]-a[1])/L, oz=-(b[0]-a[0])/L, l=roadsAt((a[0]+b[0])/2+ox*0.6,(a[1]+b[1])/2+oz*0.6).filter(R=>R!==X&&(R.sec===1||R.sec===0));
+      return l.length?l[0]:null; });
+    // 同じ隣が続く縁を「口」に
+    const mouths=[]; const st=nb.findIndex((v,i)=>v!==nb[(i+n-1)%n]); if(st<0) continue;   // 縁がすべて同じ隣(ふつうは無い)
+    for(let c=0;c<n;c++){ const i0=(st+c)%n; const N=nb[i0]; if(!N||nb[(i0+n-1)%n]===N) continue;
+      let j=i0, cnt=0; while(nb[j]===N&&cnt<n){ j=(j+1)%n; cnt++; }
+      const a=P[i0], b=P[j], L=Math.hypot(b[0]-a[0],b[1]-a[1]); if(L<2) continue;
+      const tx=(b[0]-a[0])/L, tz=(b[1]-a[1])/L, nx=tz, nz=-tx;            // 外向き(隣の区間へ)
+      mouths.push({N:N,a:a,b:b,L:L,tx:tx,tz:tz,nx:nx,nz:nz,W:Math.min(inf(N).W||L,L+1)}); }
+    if(mouths.length<2) continue;
+    // 信号:幹線(幅 7m 以上)の口があるか、幅 8m 以上の口が2つ以上。横断歩道:信号があるか、幅 7m 以上の口が2つ以上
+    const w7=mouths.filter(m=>m.W>=7).length, w8=mouths.filter(m=>m.W>=8).length;
+    const signal=mouths.some(m=>m.N.k===1&&m.W>=7)||w8>=2, crossing=signal||w7>=2;
+    const phase=Math.random()*60, nRef=[mouths[0].nx,mouths[0].nz];
+    for(const m of mouths){
+      const P0=(x,v)=>[m.a[0]+m.tx*x+m.nx*v, m.a[1]+m.tz*x+m.nz*v];   // 口の座標:x=縁に沿って・v=交差部から外へ
+      const inRoad=p=>roadsAt(p[0],p[1]).length>0&&!cutHit(p[0],p[1],0.3);
+      const inMouth=p=>{ const l=roadsAt(p[0],p[1]); return l.length>0&&!l.some(R=>R.sec===4)&&!cutHit(p[0],p[1],0.3); };   // 口の道路の上で、ほかの交差部の外
+      const lx=-m.nz, lz=m.nx, sL=m.tx*lx+m.tz*lz;                        // 近づく車の左(前=−n)。口の向きでの左の側
+      const sw=m.W>=8?swW(m.W):0.4;
+      const grp=Math.abs(m.nx*nRef[0]+m.nz*nRef[1])>0.707?0:1;
+      if(crossing&&m.W>=5&&m.L>=4){
+        let nb2=0;
+        for(let x=sw;x+0.45<=m.L-sw+1e-6;x+=0.9){ const Q=[P0(x,1),P0(x+0.45,1),P0(x+0.45,5),P0(x,5)]; if(!Q.every(inMouth)) continue;
+          markQuad(m.N,Q,WHITE); ROAD_MARKS.bars.push({x:(Q[0][0]+Q[2][0])/2,z:(Q[0][1]+Q[2][1])/2,X:X}); nb2++; }
+        const xa=sL>0?m.L/2+0.1:sw, xb=sL>0?m.L-sw:m.L/2-0.1;
+        if(xb-xa>1){ const Q=[P0(xa,7),P0(xb,7),P0(xb,7.45),P0(xa,7.45)]; if(Q.every(inMouth)){ markQuad(m.N,Q,WHITE); ROAD_MARKS.stop.push({x:(Q[0][0]+Q[2][0])/2,z:(Q[0][1]+Q[2][1])/2}); } }
+        if(signal&&nb2>0){
+          // 柱:近づく車の左の角(口の端)、交差部の縁から 0.6m 外・道路の縁から 0.35m 内
+          const e=sL>0?m.L:0, din=sL>0?-1:1;
+          let base=null; for(const inset of [0.35,0.8,1.3]){ const p=P0(e+din*inset,0.6); if(inRoad(p)&&!plbHit(p[0],p[1],0.3)){ base=p; break; } }
+          if(base){ const q=chunkOf(base[0],base[1]), y0=terH(base[0],base[1])+ROAD_Y[m.N.k], arm=Math.min(Math.max(m.W/2-1,1.5),5);
+            const ax=m.tx*din, az=m.tz*din;                                 // 腕の向き(道路の中ほどへ)
+            boxA(q,base[0],y0,base[1],ax,az,0.26,0.26,5.6,0x8a8f93);          // 柱
+            boxA(q,base[0]+ax*arm/2,y0+5.25,base[1]+az*arm/2,ax,az,arm,0.14,0.14,0x8a8f93);   // 腕
+            const hx=base[0]+ax*(arm-0.2), hz=base[1]+az*(arm-0.2);
+            boxA(q,hx,y0+5.0,hz,ax,az,1.25,0.32,0.42,0x2c3034);                  // 灯器の箱(腕の向きに横長)
+            boxA(q,hx+m.nx*0.18,y0+5.36,hz+m.nz*0.18,ax,az,1.3,0.05,0.04,0x2c3034);  // 庇
+            // 灯(近づく車から見て左から青・黄・赤。車の左= l)
+            const lamp=(x,y,z,fx,fz,kind,g)=>{ SIGNAL.lamps.push({x:x,y:y,z:z,fx:fx,fz:fz,kind:kind,g:g,ph:phase}); };
+            for(const [k,o] of [['G',-0.4],['Y',0],['R',0.4]]){ const dd=o*(lx*ax+lz*az>0?-1:1);   // 車の左へ青
+              lamp(hx+ax*dd+m.nx*0.17,y0+5.21,hz+az*dd+m.nz*0.17,m.nx,m.nz,k,grp); }
+            // 歩行者用(横断歩道の向こうの人へ=腕の向き)
+            boxA(q,base[0]+ax*0.2,y0+2.2,base[1]+az*0.2,ax,az,0.22,0.36,0.75,0x2c3034);
+            lamp(base[0]+ax*0.32,y0+2.75,base[1]+az*0.32,ax,az,'PR',grp); lamp(base[0]+ax*0.32,y0+2.4,base[1]+az*0.32,ax,az,'PG',grp);
+            signPlate(q,base[0]+m.nx*0.15,y0+3.6,base[1]+m.nz*0.15,m.nx,m.nz,0.6,0.6,UV.cross);
+            ROAD_MARKS.signals.push({x:base[0],z:base[1],X:X,arm:arm});
+          }
+        }
+      }
+      // 止まれ:狭い口が広い道・幹線の交差部へ
+      if(!crossing&&m.W<5.5&&m.L>=2.5&&mouths.some(o=>o!==m&&(o.W>=7||o.N.k===1))){
+        const xa=0.3, xb=m.L-0.3, Q=[P0(xa,1.5),P0(xb,1.5),P0(xb,1.95),P0(xa,1.95)];
+        if(Q.every(inRoad)){ markQuad(m.N,Q,WHITE); ROAD_MARKS.stop.push({x:(Q[0][0]+Q[2][0])/2,z:(Q[0][1]+Q[2][1])/2});
+          // 路面の文字(近づく車から読める向き:字の上が交差部の側)
+          const xc=m.L/2, w=Math.min(1.8,m.L-0.8), Pp=(x,v)=>{const p=P0(x,v); return [p[0],terH(p[0],p[1])+ROAD_Y[m.N.k]+0.025,p[1]];};
+          const right=sL>0?-1:1;                                      // 口の x が増える向きが車の右なら −1
+          const x0=xc-right*w/2, x1=xc+right*w/2, q=chunkOf(...P0(xc,3));
+          if([P0(x0,2.4),P0(x1,2.4),P0(x0,5.0),P0(x1,5.0)].every(inRoad)){
+            texQuad(q.t,q,q.bm,[Pp(x0,5.0),Pp(x1,5.0),Pp(x1,2.4),Pp(x0,2.4)],UV.paint); ROAD_MARKS.tomare.push({x:P0(xc,3.7)[0],z:P0(xc,3.7)[1]}); }
+          // 標識:近づく車の左の縁
+          const e=sL>0?m.L:0, din=sL>0?-1:1; let base=null; for(const inset of [0.3,0.6]){ const p=P0(e+din*inset,2.0); if(inRoad(p)&&!plbHit(p[0],p[1],0.2)){ base=p; break; } }
+          if(base){ const q2=chunkOf(base[0],base[1]), y0=terH(base[0],base[1])+ROAD_Y[m.N.k];
+            boxA(q2,base[0],y0,base[1],m.nx,m.nz,0.07,0.07,2.4,0x9aa0a4); signPlate(q2,base[0],y0+2.15,base[1],m.nx,m.nz,0.8,0.7,UV.stop);
+            ROAD_MARKS.signs.push({x:base[0],z:base[1],t:'止まれ'}); }
+        } }
+    }
+  }
+  // ---- 4. 防護柵(幹線の歩道の車道側) ----
+  {
+    const nearInt=(x,z,r)=>gridAny(PLR_GRID,x,z,r,R=>R.sec===4&&x>R.bb[0]-r&&x<R.bb[1]+r&&z>R.bb[2]-r&&z<R.bb[3]+r&&polyDist(R.P,x,z)<r);
+    const BAR_G=new Map(); for(const b of ROAD_MARKS.bars) gridPut(BAR_G,b.x,b.x,b.z,b.z,b);
+    const nearBar=(x,z)=>gridAny(BAR_G,x,z,4,b=>Math.hypot(b.x-x,b.z-z)<4);
+    for(const W of SIDEWALKS) for(const run of W.runs||[]){
+      let prev=null;
+      for(let u=run[0]+1;u<=run[1]-1;u+=2){
+        const p=W.f(u), nx=p.fz, nz=-p.fx, h=W.w/2;
+        if(Math.abs(prjXY(p.x,p.z).off)>MARK_BAND){ prev=null; continue; }
+        const side=[1,-1].filter(sd=>roadsAt(p.x+nx*sd*(h+1.0),p.z+nz*sd*(h+1.0)).length>0);   // 車道の側
+        if(side.length!==1){ prev=null; continue; }
+        const sd=side[0], x=p.x+nx*sd*(h-0.25), z=p.z+nz*sd*(h-0.25);
+        if(nearInt(x,z,2.5)||nearBar(x,z)){ prev=null; continue; }
+        const q=chunkOf(x,z), y0=terH(x,z)+ROAD_Y[1]+0.15;
+        boxA(q,x,y0,z,p.fx,p.fz,0.06,0.06,0.85,0xe9e9e6);
+        if(prev&&Math.hypot(prev[0]-x,prev[1]-z)<2.3){ const mx=(prev[0]+x)/2, mz=(prev[1]+z)/2, L=Math.hypot(x-prev[0],z-prev[1]), fx=(x-prev[0])/L, fz=(z-prev[1])/L;
+          for(const hy of [0.5,0.78]) boxA(q,mx,y0+hy,mz,fx,fz,L,0.05,0.05,0xe9e9e6); }
+        ROAD_MARKS.guards.push({x:x,z:z}); prev=[x,z];
+      }
+    }
+  }
+  // ---- 面と柱をまとまりごとの Mesh に ----
+  const MAT_MARK=mkMat('MeshLambertMaterial',{vertexColors:true,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2});
+  const MAT_PAINT=mkMat('MeshLambertMaterial',{map:TEX,transparent:true,alphaTest:0.4,depthWrite:false,side:THREE.DoubleSide,polygonOffset:true,polygonOffsetFactor:-3,polygonOffsetUnits:-3});
+  const MAT_SIG=mkMat('MeshLambertMaterial',{vertexColors:true});
+  const MAT_SIGN=mkMat('MeshLambertMaterial',{map:TEX,alphaTest:0.4,side:THREE.DoubleSide});
+  const mk=(D,mat,nm,hasUV)=>{ const g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.Float32BufferAttribute(D.P,3)); g.setAttribute('normal',new THREE.Float32BufferAttribute(D.N,3));
+    if(hasUV) g.setAttribute('uv',new THREE.Float32BufferAttribute(D.U,2)); else g.setAttribute('color',new THREE.Float32BufferAttribute(D.C,3)); g.setIndex(D.I);
+    const m=new THREE.Mesh(g,mat); m.name=nm; return m; };
+  for(const q of CHS.values()){
+    const BB=b=>({x0:b[0],x1:b[1],y0:b[2],y1:b[3],z0:b[4],z1:b[5]});
+    if(q.m.I.length){ const m=mk(q.m,MAT_MARK,'路面標示'); m.userData.decal=true; m.receiveShadow=true; scene.add(m); lodAdd(m,BB(q.bm),MARK_NEAR); ROAD_MARKS.chunks++; }
+    if(q.t.I.length){ const m=mk(q.t,MAT_PAINT,'路面標示の文字',true); m.userData.decal=true; m.receiveShadow=true; m.renderOrder=1; scene.add(m); lodAdd(m,BB(q.bm),MARK_NEAR); }
+    if(q.s.I.length){ const m=mk(q.s,MAT_SIG,'信号・標識・防護柵'); scene.add(m); lodAdd(m,BB(q.bs),SIG_NEAR); }
+    if(q.g.I.length){ const m=mk(q.g,MAT_SIGN,'標識の面',true); scene.add(m); lodAdd(m,BB(q.bs),SIG_NEAR); }
+  }
+  // ---- 信号の灯(全部で1つのインスタンス。色は stepSignals、近いものだけ sigDraw) ----
+  if(SIGNAL.lamps.length){
+    const cg=new THREE.CircleGeometry(0.13,14), M=mkMat('MeshBasicMaterial',{color:0xffffff});
+    const im=new THREE.InstancedMesh(cg,M,SIGNAL.lamps.length); im.frustumCulled=false; im.name='信号の灯'; im.userData.night=true;
+    const C=new THREE.Color(); for(let i=0;i<SIGNAL.lamps.length;i++) im.setColorAt(i,C.setRGB(0.05,0.05,0.05));
+    im.count=0; scene.add(im); SIGNAL.im=im; ROAD_MARKS.lampN=SIGNAL.lamps.length;
+  }
+}
+/* 信号の灯の色:交差部の中で向きの組 g ごとに 60秒で回す(組0:青 0〜25・黄 25〜28・赤 28〜60/組1 は 30秒ずらす。歩行者は車の組が赤の間の 2〜24秒だけ青) */
+const SIG_COL={G:0x35e0b4,Y:0xffb21e,R:0xff3c30,PG:0x35e0b4,PR:0xff3c30,off:0x1b1d20};
+function signalLit(L,t){ const c=((t+L.ph+(L.g?30:0))%60+60)%60;
+  if(L.kind==='G') return c<25; if(L.kind==='Y') return c>=25&&c<28; if(L.kind==='R') return c>=28;
+  const pc=((c-30)%60+60)%60; if(L.kind==='PG') return pc>=2&&pc<24; return !(pc>=2&&pc<24); }
+const _sgM=new THREE.Matrix4(), _sgQ=new THREE.Quaternion(), _sgE=new THREE.Euler(), _sgV=new THREE.Vector3(), _sgS=new THREE.Vector3(1,1,1), _sgC=new THREE.Color();
+function sigDraw(){
+  const im=SIGNAL.im; if(!im) return;
+  const cp=camera.position, t=RD_T; let n=0;
+  for(const L of SIGNAL.lamps){ if(Math.hypot(L.x-cp.x,L.z-cp.z)>SIG_NEAR*LOD_STRUCT) continue;
+    _sgE.set(0,Math.atan2(L.fx,L.fz),0); _sgQ.setFromEuler(_sgE); _sgV.set(L.x,L.y,L.z); _sgM.compose(_sgV,_sgQ,_sgS); im.setMatrixAt(n,_sgM);
+    setSrgb(_sgC,signalLit(L,t)?SIG_COL[L.kind]:SIG_COL.off); if(signalLit(L,t)) _sgC.multiplyScalar(1.6); im.setColorAt(n,_sgC); n++; }
+  im.count=n; im.instanceMatrix.needsUpdate=true; if(im.instanceColor) im.instanceColor.needsUpdate=true;
+}
+/* ============ 10d. 電柱と電線(2026-11 利用者指示「更なるクオリティアップ」) ============
+   沿線の PLATEAU に電柱の都市設備のデータは無い(渋谷区・杉並区の一部だけ)ので、推定で置く。実データの道路があるときだけ(PLL)。
+   ・置く道:幅 3.5〜14m の一般の道路の区間(sec 1・k 0。幹線は地中化が多いので置かない)。区間の縁(隣の道路に接しない縁)の長い方の 0.35m 内側に、
+     約30m おき(区間の端から 6m)。置かない所:建物の足跡の 0.3m 内・高架の帯(桁の半幅+5.2m)・千歳烏山の計画の範囲・横断歩道の 2m 内・
+     信号の柱の 4m 内・木の幹の 1.2m 内・ほかの電柱の 14m 内
+   ・電柱:コンクリート柱(高さ 12m・根元 0.38m→頂部 0.24m の6角の先細り)、高圧の腕金(10.9m)と碍子(3つを1つの帯で)、低圧の腕金(9.3m)、
+     3本に1本は柱上変圧器(8.4m)。腕金は電線の向きと直角
+   ・電線:電柱どうしを、近い順に 45m 以内で、どちらかの電柱の縁の向きに沿い(向きの差 32° 以内)、道路の上を通る(2m ごとの点が道路の面から 1.2m 以内・
+     幹線と自動車専用の道路の上は通らない)所だけつなぐ(1本の電柱に3本まで)。
+     高圧3本(10.9m)・低圧2本(9.3m)・通信2本(7.4m)を、径間の2乗に比例して垂らす(30m で 0.45m)
+   ・引込線:2本に1本の電柱から、低圧の高さで 12m 以内の建物の壁の 0.15m 手前(高さ 4.5m か軒の 0.5m 下の低い方)へ1〜2本
+   s の 480m ごとのまとまりで、柱は外接球の縁から SIG_NEAR、電線は DENSEN_NEAR より近いときだけ描く。登録簿 DENCHU・DENSEN(⑦の 4j) */
+const DENSEN_NEAR=420;
+const DENCHU=[], DENSEN=[], HIKIKOMI=[];
+const DC_H=12, DC_HV=10.9, DC_LV=9.3, DC_TEL=7.4;
+// 径間の電線の点(a→b、横のずれ off、高さ h。両端の地表から)。描くのと検証が同じ関数を使う
+function densenPts(a,b,off,h,n){
+  const L=Math.hypot(b.x-a.x,b.z-a.z)||1, nx=-(b.z-a.z)/L, nz=(b.x-a.x)/L, sag=0.0005*L*L, o=[];
+  for(let k=0;k<=n;k++){ const t=k/n, x=a.x+(b.x-a.x)*t+nx*off, z=a.z+(b.z-a.z)*t+nz*off, y=a.y+(b.y-a.y)*t+h-4*sag*t*(1-t); o.push([x,y,z]); }
+  return o;
+}
+if(PLL&&ROADS_PL.length){
+  const area=P=>{let A=0; for(let i=0;i<P.length;i++){const a=P[i], b=P[(i+1)%P.length]; A+=a[0]*b[1]-b[0]*a[1];} return A/2;};
+  const ccw=P=>area(P)>0?P:P.slice().reverse();
+  const roadsAt=(x,z)=>{ const l=PLR_GRID.get(Math.floor(x/PLR_CELL)+','+Math.floor(z/PLR_CELL)); if(l) for(const R of l) if(R.k!==2&&x>R.bb[0]&&x<R.bb[1]&&z>R.bb[2]&&z<R.bb[3]&&polyDist(R.P,x,z)<0) return true; return false; };
+  // 区間の幅(主軸に直角な断面の中央値。10c の inf と同じ考え)
+  const widthOf=P=>{ let cx=0,cz=0; for(const p of P){cx+=p[0];cz+=p[1];} cx/=P.length; cz/=P.length;
+    let a=0,b=0,c=0; for(const p of P){const x=p[0]-cx,z=p[1]-cz; a+=x*x; b+=x*z; c+=z*z;}
+    const th=0.5*Math.atan2(2*b,a-c), ux=Math.cos(th), uz=Math.sin(th), vx=-uz, vz=ux;
+    let u0=1e9,u1=-1e9; for(const p of P){const u=(p[0]-cx)*ux+(p[1]-cz)*uz; u0=Math.min(u0,u); u1=Math.max(u1,u);}
+    const ws=[]; for(let u=u0+1;u<u1-0.5;u+=3){ const xs=[];
+      for(let i=0;i<P.length;i++){ const p=P[i], q=P[(i+1)%P.length], pu=(p[0]-cx)*ux+(p[1]-cz)*uz, qu=(q[0]-cx)*ux+(q[1]-cz)*uz;
+        if((pu-u)*(qu-u)<0){ const t=(u-pu)/(qu-pu), pv=(p[0]-cx)*vx+(p[1]-cz)*vz, qv=(q[0]-cx)*vx+(q[1]-cz)*vz; xs.push(pv+(qv-pv)*t); } }
+      xs.sort((m,n)=>m-n); let best=0; for(let i=0;i+1<xs.length;i+=2) best=Math.max(best,xs[i+1]-xs[i]); if(best>0) ws.push(best); }
+    ws.sort((m,n)=>m-n); return ws.length?ws[ws.length>>1]:0; };
+  const PG=new Map(), PC=20, gput=(x,z,o)=>{ const k=Math.floor(x/PC)+','+Math.floor(z/PC); if(!PG.has(k)) PG.set(k,[]); PG.get(k).push(o); };
+  const near=(G,x,z,r,f)=>{ for(let a=Math.floor((x-r)/PC);a<=Math.floor((x+r)/PC);a++) for(let c=Math.floor((z-r)/PC);c<=Math.floor((z+r)/PC);c++) for(const o of G.get(a+','+c)||[]) if(Math.hypot(o.x-x,o.z-z)<r&&(!f||f(o))) return o; return null; };
+  // 避ける物(横断歩道・信号・木)
+  const AV=new Map(); const aput=(x,z,r)=>{ const o={x:x,z:z,r:r}, k=Math.floor(x/PC)+','+Math.floor(z/PC); if(!AV.has(k)) AV.set(k,[]); AV.get(k).push(o); };
+  for(const b of ROAD_MARKS.bars) aput(b.x,b.z,2.0); for(const s of ROAD_MARKS.signals) aput(s.x,s.z,4.0); for(const t of CITY.trees) aput(t.x,t.z,1.2);
+  const avoid=(x,z)=>{ for(let a=Math.floor((x-4)/PC);a<=Math.floor((x+4)/PC);a++) for(let c=Math.floor((z-4)/PC);c<=Math.floor((z+4)/PC);c++) for(const o of AV.get(a+','+c)||[]) if(Math.hypot(o.x-x,o.z-z)<o.r) return true; return false; };
+  const SEGS=ROADS_PL.filter(R=>R.sec===1&&R.k===0&&!R.kara);   // 一般の道路だけ(幹線は地中化が多い。自動車専用・交差部・千歳烏山の計画は除く)
+  for(const R of SEGS){
+    const P=ccw(R.P), n=P.length; let cx=0,cz=0; for(const p of P){cx+=p[0];cz+=p[1];} cx/=n; cz/=n;
+    const q0=prjXY(cx,cz); if(Math.abs(q0.off)>MARK_BAND||q0.s<DOM.x0-30||q0.s>DOM.x1+30) continue;
+    const W=widthOf(P); if(W<3.5||W>14) continue;
+    const bnd=P.map((a,i)=>{ const b=P[(i+1)%n], L=Math.hypot(b[0]-a[0],b[1]-a[1]); if(L<1e-6) return false;
+      return !roadsAt((a[0]+b[0])/2+(b[1]-a[1])/L*0.5,(a[1]+b[1])/2-(b[0]-a[0])/L*0.5); });
+    // 縁の続き(反時計回りの順)のうち、最も長いもの
+    let best=null;
+    for(let i0=0;i0<n;i0++){ if(!bnd[i0]||bnd[(i0+n-1)%n]) continue; const run=[]; let i=i0, L=0;
+      while(bnd[i]&&run.length<n){ run.push(i); const a=P[i], b=P[(i+1)%n]; L+=Math.hypot(b[0]-a[0],b[1]-a[1]); i=(i+1)%n; }
+      if(!best||L>best.L) best={run:run,L:L}; }
+    if(!best||best.L<20) continue;
+    // 縁の 0.35m 内側を道のりで 30m おき
+    const pts=[]; for(const j of best.run){ const a=P[j], b=P[(j+1)%n], L=Math.hypot(b[0]-a[0],b[1]-a[1])||1, ix=-(b[1]-a[1])/L*0.35, iz=(b[0]-a[0])/L*0.35; pts.push([a[0]+ix,a[1]+iz,b[0]+ix,b[1]+iz,L]); }
+    let s=0, next=6+Math.random()*4;
+    for(const e of pts){ let t=0;
+      while(s+e[4]-t>=next){ const u=t+(next-s), f=u/e[4], x=e[0]+(e[2]-e[0])*f, z=e[1]+(e[3]-e[1])*f;
+        const q=prjXY(x,z);
+        if(polyDist(P,x,z)<-0.1&&Math.abs(q.off)>deckHalf(q.s)+5.2&&!plbHit(x,z,0.3)&&!KARA.inPlan(x,z,1)&&!avoid(x,z)&&!near(PG,x,z,14)){
+          const o={x:x,z:z,y:terH(x,z)+ROAD_Y[R.k],yaw:Math.atan2(e[3]-e[1],e[2]-e[0]),ex:(e[2]-e[0])/e[4],ez:(e[3]-e[1])/e[4],tr:false,deg:0,R:R}; DENCHU.push(o); gput(x,z,o); }
+        next+=28+Math.random()*7; }
+      s+=e[4]; }
+  }
+  // 電線:近い順に 45m 以内・道路の上を通る径間(1本の電柱に3本まで)
+  const overMajor=(x,z)=>{ const l=PLR_GRID.get(Math.floor(x/PLR_CELL)+','+Math.floor(z/PLR_CELL)); if(l) for(const R of l) if(R.k!==0&&x>R.bb[0]&&x<R.bb[1]&&z>R.bb[2]&&z<R.bb[3]&&polyDist(R.P,x,z)<0) return true; return false; };
+  // 建物の足跡(電線が上を通れない高い建物の判定と引込線)
+  const BG=new Map(); for(const b of CITY.buildings) if(b.poly){ let x0=1e9,x1=-1e9,z0=1e9,z1=-1e9; for(const p of b.poly){ x0=Math.min(x0,p[0]); x1=Math.max(x1,p[0]); z0=Math.min(z0,p[1]); z1=Math.max(z1,p[1]); }
+    for(let a=Math.floor(x0/30);a<=Math.floor(x1/30);a++) for(let c=Math.floor(z0/30);c<=Math.floor(z1/30);c++){ const k=a+','+c; if(!BG.has(k)) BG.set(k,[]); BG.get(k).push(b); } }
+  const bldsAt=(x,z,r)=>{ const o=[]; for(const b of BG.get(Math.floor(x/30)+','+Math.floor(z/30))||[]) if(polyDist(b.poly,x,z)<r) o.push(b); return o; };
+  const overRoad=(a,b)=>{ const L=Math.hypot(b.x-a.x,b.z-a.z), n=Math.max(2,Math.ceil(L/2)), low=Math.min(a.y,b.y)+DC_TEL-0.0005*L*L-0.3;
+    for(let k=1;k<n;k++){ const x=a.x+(b.x-a.x)*k/n, z=a.z+(b.z-a.z)*k/n; if(!roadHit(x,z,1.2)||overMajor(x,z)) return false; const q=prjXY(x,z); if(Math.abs(q.off)<deckHalf(q.s)+3) return false;
+      if(bldsAt(x,z,0.7).some(B=>(B.base||0)+B.h>low)) return false; }   // 電線より高い建物の上(横のずれ 0.6m を含む)を通らない
+    return true; };
+  const done=new Set();
+  for(const a of DENCHU){ if(a.deg>=3) continue;
+    const C=[]; for(let gx=Math.floor((a.x-45)/PC);gx<=Math.floor((a.x+45)/PC);gx++) for(let gz=Math.floor((a.z-45)/PC);gz<=Math.floor((a.z+45)/PC);gz++)
+      for(const b of PG.get(gx+','+gz)||[]){ const d=Math.hypot(b.x-a.x,b.z-a.z); if(b!==a&&d<45&&d>5) C.push([d,b]); }
+    C.sort((m,n)=>m[0]-n[0]);
+    let dirs=[];
+    for(const [d,b] of C){ if(a.deg>=3) break; if(b.deg>=3) continue; const key=a.x<b.x||(a.x===b.x&&a.z<b.z)?a.x+','+a.z+'|'+b.x+','+b.z:b.x+','+b.z+'|'+a.x+','+a.z; if(done.has(key)) continue;
+      const ux=(b.x-a.x)/d, uz=(b.z-a.z)/d; if(dirs.some(v=>v[0]*ux+v[1]*uz>0.8)) continue;   // 同じ向きへ2本張らない
+      if(Math.abs(ux*a.ex+uz*a.ez)<0.85&&Math.abs(ux*b.ex+uz*b.ez)<0.85) continue;   // 道の縁に沿う径間だけ(道を斜めに横切らない)
+      if(!overRoad(a,b)) continue;
+      done.add(key); DENSEN.push({a:a,b:b}); a.deg++; b.deg++; dirs.push([ux,uz]); }
+  }
+  // 腕金の向き:つながった径間の平均の向きと直角(径間が無ければ縁の向き)
+  for(const p of DENCHU){ let sx=0,sz=0; for(const w of DENSEN){ if(w.a!==p&&w.b!==p) continue; const o=w.a===p?w.b:w.a; let dx=o.x-p.x, dz=o.z-p.z; const l=Math.hypot(dx,dz); dx/=l; dz/=l;
+      if(dx*sx+dz*sz<0){dx=-dx; dz=-dz;} sx+=dx; sz+=dz; } if(Math.hypot(sx,sz)>0.1) p.yaw=Math.atan2(sz,sx); }
+  DENCHU.forEach((p,i)=>{ p.tr=(i%3===0); });
+  // 引込線:2本に1本の電柱から、12m 以内の建物の壁へ
+  const bldAt=(x,z)=>{ for(const b of bldsAt(x,z,0.05)) if(b.plateau) return b; return null; };
+  DENCHU.forEach((p,i)=>{ if(i%2) return; let got=0;
+    for(const sd of [1,-1]){ if(got>=2) break; const nx=-Math.sin(p.yaw)*sd, nz=Math.cos(p.yaw)*sd;   // 腕金の向き(電線と直角)の両側
+      for(let d=1.5;d<=12;d+=0.5){ const x=p.x+nx*d, z=p.z+nz*d; if(!plbHit(x,z,0)) continue;
+        const B=bldAt(x,z); if(!B) break;
+        let lo=d-0.5, hi=d; for(let k=0;k<12;k++){ const m=(lo+hi)/2; if(polyDist(B.poly,p.x+nx*m,p.z+nz*m)<0) hi=m; else lo=m; }   // 壁の位置(二分)
+        const dw=lo-0.15; if(dw<1.0) break;
+        { const g=polyDist(B.poly,p.x+nx*dw,p.z+nz*dw); if(!(g>0.05&&g<0.4)) break; }        // 壁の 0.05〜0.4m 外(角の近くで別の辺に近いときはやめる)
+        const xw=p.x+nx*dw, zw=p.z+nz*dw, top=(B.base||0)+(B.eave||B.h), yw=Math.min(terH(xw,zw)+4.5,top-0.5);
+        if(yw<terH(xw,zw)+3) break;
+        HIKIKOMI.push({a:[p.x,p.y+DC_LV-0.3,p.z],b:[xw,yw,zw]}); got++; break; } } });
+  // ---- 形:まとまりごと(柱=頂点カラーの面・電線=線) ----
+  const CH=new Map(), cc=new THREE.Color();
+  const chunk=(x,z)=>{ const k=Math.floor(prjXY(x,z).s/480); let q=CH.get(k); if(!q){ q={P:[],N:[],I:[],C:[],L:[],b:[1e9,-1e9,1e9,-1e9,1e9,-1e9]}; CH.set(k,q); } return q; };
+  const grow=(b,x,y,z)=>{ b[0]=Math.min(b[0],x); b[1]=Math.max(b[1],x); b[2]=Math.min(b[2],y); b[3]=Math.max(b[3],y); b[4]=Math.min(b[4],z); b[5]=Math.max(b[5],z); };
+  const quad=(q,A,Bv,C,D,hex)=>{ const o=q.P.length/3; setSrgb(cc,hex); const ux=Bv[0]-A[0],uy=Bv[1]-A[1],uz=Bv[2]-A[2],vx=D[0]-A[0],vy=D[1]-A[1],vz=D[2]-A[2];
+    let nx=uy*vz-uz*vy, ny=uz*vx-ux*vz, nz=ux*vy-uy*vx; const l=Math.hypot(nx,ny,nz)||1; nx/=l; ny/=l; nz/=l;
+    for(const v of [A,Bv,C,D]){ q.P.push(v[0],v[1],v[2]); q.N.push(nx,ny,nz); q.C.push(cc.r,cc.g,cc.b); grow(q.b,v[0],v[1],v[2]); } q.I.push(o,o+1,o+2,o,o+2,o+3); };
+  // 先細りの6角柱(x,z の中心・y0〜y1・半径 r0→r1)。外向きの面。top=上の蓋(4三角形)。1本の三角形を減らすため8角から6角に
+  const prism8=(q,x,z,y0,y1,r0,r1,hex,top)=>{ for(let k=0;k<6;k++){ const a0=k/6*Math.PI*2, a1=(k+1)/6*Math.PI*2;
+      quad(q,[x+Math.cos(a1)*r0,y0,z+Math.sin(a1)*r0],[x+Math.cos(a0)*r0,y0,z+Math.sin(a0)*r0],[x+Math.cos(a0)*r1,y1,z+Math.sin(a0)*r1],[x+Math.cos(a1)*r1,y1,z+Math.sin(a1)*r1],hex); }
+    if(top){ const o=q.P.length/3; setSrgb(cc,hex); for(let k=0;k<6;k++){ const a=k/6*Math.PI*2, v=[x+Math.cos(a)*r1,y1,z+Math.sin(a)*r1]; q.P.push(...v); q.N.push(0,1,0); q.C.push(cc.r,cc.g,cc.b); }
+      for(let k=1;k<5;k++) q.I.push(o,o+k+1,o+k); } };
+  // 向きのある細長い箱(中心・前の向き fx,fz・長さ lf・幅 lw・高さ y0〜y1)。両端の小口は描かない(8三角形)
+  const box=(q,cx,cz,fx,fz,lf,lw,y0,y1,hex)=>{ const rx=-fz, rz=fx, V=(a,b,y)=>[cx+fx*a+rx*b,y,cz+fz*a+rz*b], h=lf/2, w=lw/2;
+    quad(q,V(-h,-w,y0),V(h,-w,y0),V(h,-w,y1),V(-h,-w,y1),hex); quad(q,V(h,w,y0),V(-h,w,y0),V(-h,w,y1),V(h,w,y1),hex);
+    quad(q,V(-h,-w,y1),V(h,-w,y1),V(h,w,y1),V(-h,w,y1),hex); quad(q,V(-h,w,y0),V(h,w,y0),V(h,-w,y0),V(-h,-w,y0),hex); };
+  for(const p of DENCHU){ const q=chunk(p.x,p.z), ax=-Math.sin(p.yaw), az=Math.cos(p.yaw);   // 腕金の向き(電線と直角)
+    prism8(q,p.x,p.z,p.y-0.1,p.y+DC_H,0.19,0.12,0xb7b4ac,true);
+    box(q,p.x,p.z,ax,az,1.5,0.09,p.y+DC_HV-0.12,p.y+DC_HV-0.02,0x6d7073);                // 高圧の腕金
+    box(q,p.x,p.z,ax,az,1.3,0.07,p.y+DC_HV-0.02,p.y+DC_HV+0.14,0xd9d4c4);                // 碍子(3つを1つの帯で)
+    box(q,p.x,p.z,ax,az,0.9,0.08,p.y+DC_LV-0.1,p.y+DC_LV-0.02,0x6d7073);                 // 低圧の腕金
+    if(p.tr){ const dx=Math.cos(p.yaw+Math.PI/2), dz=Math.sin(p.yaw+Math.PI/2);
+      prism8(q,p.x+dx*0.45,p.z+dz*0.45,p.y+8.0,p.y+9.0,0.3,0.3,0x8c948e,true);                 // 柱上変圧器
+      { const o=q.P.length/3, X0=p.x+dx*0.45, Z0=p.z+dz*0.45; setSrgb(cc,0x8c948e);             // 下の蓋(下から見える)
+        for(let k=0;k<6;k++){ const a=k/6*Math.PI*2; q.P.push(X0+Math.cos(a)*0.3,p.y+8.0,Z0+Math.sin(a)*0.3); q.N.push(0,-1,0); q.C.push(cc.r,cc.g,cc.b); }
+        for(let k=1;k<5;k++) q.I.push(o,o+k,o+k+1); } }
+  }
+  const line=(q,A)=>{ for(let k=0;k+1<A.length;k++){ q.L.push(...A[k],...A[k+1]); grow(q.b,A[k][0],A[k][1],A[k][2]); } };
+  for(const w of DENSEN){ const q=chunk((w.a.x+w.b.x)/2,(w.a.z+w.b.z)/2), L=Math.hypot(w.b.x-w.a.x,w.b.z-w.a.z), n=Math.max(4,Math.ceil(L/4));
+    for(const o of [-0.6,0,0.6]) line(q,densenPts(w.a,w.b,o,DC_HV+0.14,n));
+    for(const o of [-0.3,0.3]) line(q,densenPts(w.a,w.b,o,DC_LV-0.05,n));
+    for(const o of [0.0,0.2]) line(q,densenPts(w.a,w.b,o,DC_TEL,n)); }
+  for(const d of HIKIKOMI){ const q=chunk(d.a[0],d.a[2]), A=[]; for(let k=0;k<=6;k++){ const t=k/6, s=0.35*4*t*(1-t); A.push([d.a[0]+(d.b[0]-d.a[0])*t,d.a[1]+(d.b[1]-d.a[1])*t-s,d.a[2]+(d.b[2]-d.a[2])*t]); } line(q,A); }
+  const MAT_DENCHU=mkMat('MeshLambertMaterial',{vertexColors:true}), MAT_DENSEN=new THREE.LineBasicMaterial({color:srgb(0x1c1d1f)});
+  for(const q of CH.values()){ const BB={x0:q.b[0],x1:q.b[1],y0:q.b[2],y1:q.b[3],z0:q.b[4],z1:q.b[5]};
+    if(q.I.length){ const m=new THREE.Mesh(facesGeo(q.P,q.N,q.I,q.C),MAT_DENCHU); m.name='電柱'; scene.add(m); lodAdd(m,BB,SIG_NEAR); }
+    if(q.L.length){ const g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.Float32BufferAttribute(q.L,3)); const l=new THREE.LineSegments(g,MAT_DENSEN); l.name='電線'; l.userData.night=true;   /* 影の対象から外す(線は影を落とさない) */ scene.add(l); lodAdd(l,BB,DENSEN_NEAR); }
+  }
+}
+
+/* ============ 10e. 千歳烏山駅前広場の人と車(2026-11 利用者指示「更なるクオリティアップ」。推定) ============
+   計画の駅前広場(KARA。4章)に:
+   ・車:舗装の縁のうち外が車道の 12m 以上まっすぐな所(縁から 0.9〜2.6m 外が車道)。最も長い縁にバス(10.5m)、ほかの縁にタクシー(4.4m)を
+     6m おきに3台。縁から 1.6m 外を向きに沿って止まったまま(ロータリーの客待ち)
+   ・人:バス停(バスの前方の縁の 1.0m 内側)に 5人の列(車道を向く)、舗装の上に立つ人 24人、舗装の中の 8〜30m のまっすぐな道を往復する人 14人
+     (木の幹・建物・灯りの柱から離す。世界時間で進め、近くだけ毎コマ書く)
+   ・街灯の柱(KARA_LAMPS。高さ 5.2m・灯具の腕)
+   近く(広場の中心から 400m)だけ描く。登録簿 KPZ.veh・KPZ.people・KPZ.walk(⑦ 4h) */
+const KPZ={people:[], walk:[], im:null, veh:[], c:null, t:0};
+if(KARA.on){
+  const K=KARA, Y0=0.27;                                   // 舗装の高さ(地表+)
+  const treeNear=(x,z,r)=>CITY.trees.some(t=>Math.hypot(t.x-x,t.z-z)<r);
+  const lampNear=(x,z,r)=>KARA_LAMPS.some(q=>Math.hypot(q[0]-x,q[1]-z)<r);
+  const bldIn=(x,z,r)=>K.bld.some(e=>polyDist(e.P,x,z)<r)||plbHit(x,z,r);
+  const onPave=(x,z,m)=>K.pave.some(P=>polyDist(P,x,z)<-m)&&!K.lawn.some(P=>polyDist(P,x,z)<m);
+  // ---- 車 ----
+  // 舗装の輪郭(図を色で分けた細かい点の列)を道のりでたどり、弦から 0.35m 以内のまっすぐな区間(バス 13m・タクシー 6m)で外が車道の所
+  const edges=[];
+  for(const P of K.pave){ const n=P.length, cum=[0]; for(let k=0;k<n;k++){ const a=P[k], b=P[(k+1)%n]; cum.push(cum[k]+Math.hypot(b[0]-a[0],b[1]-a[1])); }
+    const tot=cum[n], at=s=>{ s=((s%tot)+tot)%tot; let k=0; while(k<n-1&&cum[k+1]<s) k++; const a=P[k], b=P[(k+1)%n], t=(s-cum[k])/((cum[k+1]-cum[k])||1); return [a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t]; };
+    for(const need of [13,6]) for(let s=0;s<tot;s+=1){ const A=at(s), Bp=at(s+need), L=Math.hypot(Bp[0]-A[0],Bp[1]-A[1]); if(L<need*0.97) continue;
+      const tx=(Bp[0]-A[0])/L, tz=(Bp[1]-A[1])/L; let nx=tz, nz=-tx; const Mq=at(s+need/2); if(polyDist(P,Mq[0]+nx*0.3,Mq[1]+nz*0.3)<0){ nx=-nx; nz=-nz; }
+      let ok=true; for(let u=0;u<=need&&ok;u+=0.5){ const q=at(s+u); if(Math.abs((q[0]-A[0])*nx+(q[1]-A[1])*nz)>0.35) ok=false; }
+      for(let u=0.3;u<=L-0.3&&ok;u+=1) for(const v of [0.9,1.6,2.6]) if(!K.roadway(A[0]+tx*u+nx*v,A[1]+tz*u+nz*v,0.05)){ ok=false; break; }
+      if(ok) edges.push({a:A,tx:tx,tz:tz,nx:nx,nz:nz,L:L}); } }
+  const putVeh=(e,u,kind,L,col)=>{ const x=e.a[0]+e.tx*u+e.nx*1.6, z=e.a[1]+e.tz*u+e.nz*1.6;
+    if(KPZ.veh.some(v=>Math.hypot(v.x-x,v.z-z)<(v.L+L)/2+1.0)) return false;
+    KPZ.veh.push({kind:kind,x:x,z:z,fx:e.tx,fz:e.tz,L:L,col:col}); return true; };
+  if(edges.length){ const e=edges[0]; putVeh(e,e.L/2,'bus',VEH.bus.L,0xffffff);
+    const TX=[0x1d1f22,0xf0c419,0x2e7d4f]; let nT=0;
+    for(const e2 of edges.filter(q=>q.L<10)) if(nT<3&&putVeh(e2,e2.L/2,'car',VEH.car.L,TX[nT%3])) nT++; }
+  // ---- 人 ----
+  const bus=KPZ.veh.find(v=>v.kind==='bus');
+  if(bus){ const e=edges[0];
+    for(let k=0;k<5;k++){ const u=e.L/2+VEH.bus.L/2+1.5+k*0.8, x=e.a[0]+e.tx*u-e.nx*1.0, z=e.a[1]+e.tz*u-e.nz*1.0;
+      if(onPave(x,z,0.3)&&!treeNear(x,z,0.8)&&!lampNear(x,z,0.6)&&!bldIn(x,z,0.4)) KPZ.people.push({x:x,y:terH(x,z)+Y0,z:z,yaw:Math.atan2(-e.nz,e.nx),look:personLook(),stop:true}); } }
+  const bb=[1e9,-1e9,1e9,-1e9]; for(const P of K.pave) for(const p of P){ bb[0]=Math.min(bb[0],p[0]); bb[1]=Math.max(bb[1],p[0]); bb[2]=Math.min(bb[2],p[1]); bb[3]=Math.max(bb[3],p[1]); }
+  const freeAt=(x,z)=>onPave(x,z,0.5)&&!treeNear(x,z,0.9)&&!lampNear(x,z,0.6)&&!bldIn(x,z,0.5)&&!KPZ.people.some(p=>Math.hypot(p.x-x,p.z-z)<0.8);
+  for(let g=0;g<4000&&KPZ.people.length<29;g++){ const x=bb[0]+Math.random()*(bb[1]-bb[0]), z=bb[2]+Math.random()*(bb[3]-bb[2]);
+    if(freeAt(x,z)) KPZ.people.push({x:x,y:terH(x,z)+Y0,z:z,yaw:Math.random()*Math.PI*2,look:personLook()}); }
+  for(let g=0;g<6000&&KPZ.walk.length<14;g++){ const x=bb[0]+Math.random()*(bb[1]-bb[0]), z=bb[2]+Math.random()*(bb[3]-bb[2]), a=Math.random()*Math.PI*2, L=8+Math.random()*22;
+    const dx=Math.cos(a), dz=Math.sin(a); let ok=true;
+    for(let u=0;u<=L&&ok;u+=0.5){ const px=x+dx*u, pz=z+dz*u; if(!onPave(px,pz,0.6)||treeNear(px,pz,0.9)||lampNear(px,pz,0.6)||bldIn(px,pz,0.6)||KPZ.people.some(p=>Math.hypot(p.x-px,p.z-pz)<0.9)) ok=false; }
+    if(ok) KPZ.walk.push({ax:x,az:z,dx:dx,dz:dz,L:L,u:Math.random()*L,dir:Math.random()<0.5?1:-1,v:1.1+Math.random()*0.4,look:personLook(),ph:Math.random()*6.28}); }
+  // ---- 形 ----
+  let cx=0, cz=0; for(const p of K.dist){ cx+=p[0]; cz+=p[1]; } cx/=K.dist.length; cz/=K.dist.length; KPZ.c=[cx,cz];
+  const B={x0:cx-120,x1:cx+120,y0:-1,y1:20,z0:cz-120,z1:cz+120};
+  const _M=new THREE.Matrix4(), _Q=new THREE.Quaternion(), _E=new THREE.Euler(), _V=new THREE.Vector3(), _S=new THREE.Vector3(1,1,1), _C=new THREE.Color();
+  for(const kind of ['bus','car']){ const L=KPZ.veh.filter(v=>v.kind===kind); if(!L.length) continue;
+    const g=VEH[kind].geo.clone(), im=new THREE.InstancedMesh(g,M_ROADCAR,L.length); im.name='駅前広場の車('+kind+')';
+    L.forEach((v,j)=>{ _E.set(0,Math.atan2(-v.fz,v.fx),0); _Q.setFromEuler(_E); _V.set(v.x,terH(v.x,v.z)+ROAD_Y[1]+0.01,v.z); _S.set(v.L/VEH[kind].L,1,1);
+      _M.compose(_V,_Q,_S); im.setMatrixAt(j,_M); im.setColorAt(j,setSrgb(_C,v.col)); });
+    g.boundingSphere=new THREE.Sphere(new THREE.Vector3(cx,5,cz),130); im.instanceMatrix.needsUpdate=true; if(im.instanceColor) im.instanceColor.needsUpdate=true;
+    scene.add(im); lodAdd(im,B,400); }
+  const all=KPZ.people.concat(KPZ.walk.map(w=>({x:w.ax,y:0,z:w.az,yaw:0,look:w.look})));
+  if(all.length){ const im=peopleMesh(all,'駅前広場の人',false); im.geometry.boundingSphere=new THREE.Sphere(new THREE.Vector3(cx,5,cz),130); im.frustumCulled=true;
+    scene.add(im); lodAdd(im,B,400); KPZ.im=im; }
+  // 街灯の柱(6角・高さ 5.2m・灯具へ 0.6m の腕)
+  if(KARA_LAMPS.length){ const Pp=[],Nn=[],Ii=[],Cc=[], col=setSrgb(new THREE.Color(),0x5e6266);
+    const quad=(A,Bq,Cq,D,n)=>{ const o=Pp.length/3; for(const v of [A,Bq,Cq,D]){ Pp.push(v[0],v[1],v[2]); Nn.push(n[0],n[1],n[2]); Cc.push(col.r,col.g,col.b); } Ii.push(o,o+1,o+2,o,o+2,o+3); };
+    for(const q of KARA_LAMPS){ const y=terH(q[0],q[1]);
+      for(let k=0;k<6;k++){ const a0=k/6*Math.PI*2, a1=(k+1)/6*Math.PI*2, r0=0.09, r1=0.06;
+        quad([q[0]+Math.cos(a1)*r0,y,q[1]+Math.sin(a1)*r0],[q[0]+Math.cos(a0)*r0,y,q[1]+Math.sin(a0)*r0],[q[0]+Math.cos(a0)*r1,y+5.0,q[1]+Math.sin(a0)*r1],[q[0]+Math.cos(a1)*r1,y+5.0,q[1]+Math.sin(a1)*r1],[Math.cos((a0+a1)/2),0,Math.sin((a0+a1)/2)]); }
+      quad([q[0]-0.25,y+5.0,q[1]-0.25],[q[0]+0.25,y+5.0,q[1]-0.25],[q[0]+0.25,y+5.0,q[1]+0.25],[q[0]-0.25,y+5.0,q[1]+0.25],[0,-1,0]);     // 灯具の下面(灯りは 8b章)
+      quad([q[0]-0.25,y+5.12,q[1]+0.25],[q[0]+0.25,y+5.12,q[1]+0.25],[q[0]+0.25,y+5.12,q[1]-0.25],[q[0]-0.25,y+5.12,q[1]-0.25],[0,1,0]); }
+    const m=new THREE.Mesh(facesGeo(Pp,Nn,Ii,Cc),mkMat('MeshLambertMaterial',{vertexColors:true,side:THREE.DoubleSide})); m.name='駅前広場の街灯'; scene.add(m); lodAdd(m,B,600); }
+}
+// 往復する人を進める(stepWorld から)・描く(lodStruct から。近くだけ)
+function plazaStep(dt){ for(const w of KPZ.walk){ w.u+=w.dir*w.v*dt; if(w.u>w.L){ w.u=w.L; w.dir=-1; } else if(w.u<0){ w.u=0; w.dir=1; } w.ph+=dt*w.v*5.2; } KPZ.t+=dt; }
+function plazaDraw(){
+  const im=KPZ.im; if(!im||!im.visible) return;
+  const n0=KPZ.people.length;
+  KPZ.walk.forEach((w,j)=>{ const x=w.ax+w.dx*w.u, z=w.az+w.dz*w.u;
+    personInst(im,n0+j,{x:x,y:terH(x,z)+0.27,z:z,yaw:Math.atan2(-w.dz*w.dir,w.dx*w.dir),look:w.look,walk:[1,w.ph]}); });
+  im.instanceMatrix.needsUpdate=true; im.geometry.attributes.iMW.needsUpdate=true;
+}
+
 function pedPos(m){                              // 歩く人の位置と向き(世界座標)
   const p=m.sw.f(m.u), x=p.x+p.fz*m.lat, z=p.z-p.fx*m.lat;
   return {x:x,y:ROAD_Y[1]+0.15+terH(x,z),z:z,yaw:Math.atan2(-p.fz*m.dir,p.fx*m.dir)};
@@ -9405,7 +10033,7 @@ if(IS_MOBILE){
   LOD_NEAR=260;                                             // 高精細モデルの適用範囲を短縮
   LOD_FAR=900;                                              // 台車・床下・冷房・パンタを描く範囲も短縮
   LOD_STRUCT=0.6;                                           // 駅・高架橋の細部も近くだけに
-  renderer.shadowMap.enabled=false;sun.castShadow=false;    // 影は1パス増えるので無効
+  renderer.shadowMap.enabled=false;sun.castShadow=false;sunFar.castShadow=false;    // 影は1パス増えるので無効(遠くの影も)
   const lockLandscape=()=>{                                 // 可能なら横画面に固定
     if(screen.orientation&&screen.orientation.lock) screen.orientation.lock('landscape').catch(()=>{});
   };
@@ -9424,12 +10052,23 @@ function applyShadows(){
     o.receiveShadow=true;SHADOW_STAT.recv++;
     // 空ドームは裏面の巨大な球。影の対象に入れると世界中が影になる
     if(o===skyDome){o.castShadow=false;o.receiveShadow=false;SHADOW_STAT.recv--;return;}
-    if(o===groundMesh||o.userData.flat){o.castShadow=false;return;}   // 地表と、地表に敷いた平らな面(道路)は受けるだけ
+    if(o===groundMesh||o.userData.flat||o.userData.decal){o.castShadow=false;return;}   // 地表と、地表に敷いた平らな面(道路)・路面標示(decal)は受けるだけ
     // 夜の灯りは「光っている面」なので影を落とさない(落とすと灯りが黒い塊になる)
     if(o.userData.night){o.castShadow=false;o.receiveShadow=false;SHADOW_STAT.recv--;return;}
     o.castShadow=true;SHADOW_STAT.cast++;
+    if(!farMoving(o)) o.layers.enable(FAR_LAYER);     // 遠くの影は動かない物だけ(遠くの影の章)
   });
 }
+// 動く物(走行列車・留置車・交差鉄道の列車・自動車・人):遠くの影マップは 200m 動くまで写し直さないので、動く物の影は残像になる
+function farMoving(o){
+  for(let p=o;p;p=p.parent) if(p.userData&&p.userData.mv) return true;
+  return false;
+}
+for(const t of trains) for(const c of t.cars) c.userData.mv=true;
+for(const c of parkedCars) c.userData.mv=true;
+for(const t of inoTrains) t.g.userData.mv=true;
+setaTrain.g.userData.mv=true;
+scene.traverse(o=>{ if(o.isInstancedMesh&&(/^自動車/.test(o.name)||o.material===M_PEOPLE)) o.userData.mv=true; });
 applyShadows();
 
 let last=performance.now();
@@ -9439,6 +10078,7 @@ let last=performance.now();
 function stepWorld(dt){
   stepRoadCars(dt);       // 自動車(線路を横切る道路・並ぶ幹線)
   stepPeds(dt);           // 歩道を歩く人
+  plazaStep(dt);          // 千歳烏山駅前広場の往復する人(10e章)
   if(!trainsOn) return;
   for(const t of trains){
     driveTrain(t,dt);     // 各駅停車の自動運転(加速P4/60km/h上限/減速B5/停車25秒)
@@ -9504,7 +10144,109 @@ function loop(now){
   // あり、笹塚の留置車を高精細で描いて車番の画像まで作っていた)
   for(const t of trains) for(const c of t.cars) if(c.visible) lodCar(c);
   for(const c of parkedCars) lodCar(c);
-  renderer.render(scene,camera);
+  postRender();           // 画面の後処理(12b章)を通して描く
+}
+
+/* ============ 12b. 画面の後処理(2026-11 利用者指示「更なるクオリティアップ」) ============
+   描画をいったん中間の画像(色=半精度の浮動小数・奥行き=奥行きの画像)へ描き、全画面の描画を重ねて仕上げる:
+   ① 接地の陰(SAO:奥行きから位置と面の向きを戻し、周りの 12点が面の上に出ているほど暗くする。半分の解像度で求めて 4×4 でならす。
+      半径 POST.R=1.0m・強さ POST.ao=0.7。空(奥行き=1)と 250m より遠くは掛けない)
+   ② 光のにじみ(明るさ POST.th を超えた所を 1/4 の解像度に取り出し、横と縦のぼかしを2段=1/4・1/8 で足す。夜は強く POST.bloomN、昼は弱く POST.bloomD)
+   ③ sRGB へ(r128 は中間の画像に描くときもトーンマップ(ACES)は掛け、出力の符号化だけが線形になる。画面へ直接描くときと同じ式 LinearTosRGB。
+      2026-11 に確かめた:ここで ACES を掛け直すと全体が 15〜24/255 明るくなる=二重に掛かる)
+   ④ FXAA(縁のギザギザ。中間の画像は MSAA が効かないので)
+   画面のループと撮影(CINE.render)が postRender() を呼ぶ。照合の描画(⑩⑮・⑯の位置合わせ・⑰ の renderer.render)には掛からない
+   (⑯の「繋がらないとき ON と OFF が同じ」は CINE.render=後処理を通した絵どうしで比べる)。
+   描画の数(renderer.info)は場面(従来どおり影マップは数えない)と後処理の 9回の合計にする(⑫)。スマホ・WebGL1 は使わない(POST.on=false で従来の1回の描画) */
+const POST={on:!IS_MOBILE, ao:0.7, R:1.0, th:0.82, bloomN:0.85, bloomD:0.12, rt:null, w:0, h:0};
+(function(){
+  if(!POST.on) return;
+  const gl=renderer.getContext&&renderer.getContext();
+  if(!renderer.capabilities||!renderer.capabilities.isWebGL2){ POST.on=false; return; }
+  const FSQ_V='varying vec2 vUv; void main(){ vUv=uv; gl_Position=vec4(position.xy,0.,1.); }';
+  const quad=new THREE.Mesh(new THREE.PlaneGeometry(2,2),null); quad.frustumCulled=false;
+  const qs=new THREE.Scene(); qs.add(quad); const qc=new THREE.OrthographicCamera(-1,1,1,-1,0,1);
+  const mat=(frag,uni)=>new THREE.ShaderMaterial({uniforms:uni,vertexShader:FSQ_V,fragmentShader:frag,depthTest:false,depthWrite:false,toneMapped:false});
+  POST.mAO=mat(`
+    uniform sampler2D tD; uniform mat4 uPI, uP; uniform vec2 uRes; uniform float uR, uK; varying vec2 vUv;
+    vec3 vpos(vec2 uv){ float d=texture2D(tD,uv).x; vec4 c=vec4(uv*2.-1.,d*2.-1.,1.); vec4 v=uPI*c; return v.xyz/v.w; }
+    float h12(vec2 p){ return fract(sin(dot(p,vec2(12.9898,78.233)))*43758.5453); }
+    void main(){
+      float d=texture2D(tD,vUv).x; if(d>=0.99999){ gl_FragColor=vec4(1.); return; }
+      vec3 P=vpos(vUv); if(-P.z>250.){ gl_FragColor=vec4(1.); return; }
+      vec3 N=normalize(cross(dFdx(P),dFdy(P)));
+      float rp=uR*uP[1][1]/(-P.z)*0.5;                                 // 半径を画面の割合に
+      float a0=h12(gl_FragCoord.xy)*6.2832, occ=0.;
+      for(int i=0;i<12;i++){ float fi=float(i), t=(fi+0.5)/12., a=a0+fi*2.39996;
+        vec2 o=vec2(cos(a),sin(a))*rp*sqrt(t)*vec2(uRes.y/uRes.x,1.);
+        vec3 S=vpos(vUv+o)-P; float l=length(S);
+        occ+=max(0.,dot(N,S)/max(l,1e-3)-0.12)*smoothstep(uR*2.2,uR*0.6,l); }
+      float ao=clamp(1.-uK*occ/12.*1.6,0.,1.); gl_FragColor=vec4(ao,ao,ao,1.); }`,
+    {tD:{value:null},uPI:{value:new THREE.Matrix4()},uP:{value:new THREE.Matrix4()},uRes:{value:new THREE.Vector2()},uR:{value:POST.R},uK:{value:POST.ao}});
+  POST.mAOB=mat(`uniform sampler2D tA; uniform vec2 uTx; varying vec2 vUv;
+    void main(){ float s=0.; for(int i=-2;i<2;i++) for(int j=-2;j<2;j++) s+=texture2D(tA,vUv+(vec2(float(i),float(j))+0.5)*uTx).x; s/=16.; gl_FragColor=vec4(s,s,s,1.); }`,
+    {tA:{value:null},uTx:{value:new THREE.Vector2()}});
+  POST.mBR=mat(`uniform sampler2D tC; uniform float uTh; varying vec2 vUv;
+    void main(){ vec3 c=texture2D(tC,vUv).rgb; float l=max(c.r,max(c.g,c.b)); gl_FragColor=vec4(c*smoothstep(uTh,uTh+0.25,l),1.); }`,
+    {tC:{value:null},uTh:{value:POST.th}});
+  POST.mBL=mat(`uniform sampler2D tC; uniform vec2 uDir; varying vec2 vUv;
+    void main(){ vec3 s=texture2D(tC,vUv).rgb*0.227; s+=(texture2D(tC,vUv+uDir*1.385).rgb+texture2D(tC,vUv-uDir*1.385).rgb)*0.316;
+      s+=(texture2D(tC,vUv+uDir*3.231).rgb+texture2D(tC,vUv-uDir*3.231).rgb)*0.070; gl_FragColor=vec4(s,1.); }`,
+    {tC:{value:null},uDir:{value:new THREE.Vector2()}});
+  POST.mCO=mat(`uniform sampler2D tC, tA, tB1, tB2; uniform float uB; varying vec2 vUv;
+    vec3 toS(vec3 c){ return mix(c*12.92, 1.055*pow(c,vec3(0.41666))-0.055, step(0.0031308,c)); }
+    void main(){ vec3 c=texture2D(tC,vUv).rgb*texture2D(tA,vUv).x + (texture2D(tB1,vUv).rgb+texture2D(tB2,vUv).rgb)*uB;
+      gl_FragColor=vec4(toS(clamp(c,0.,1.)),1.); }`,
+    {tC:{value:null},tA:{value:null},tB1:{value:null},tB2:{value:null},uB:{value:0}});
+  POST.mFX=mat(`uniform sampler2D tC; uniform vec2 uTx; varying vec2 vUv;
+    float lu(vec3 c){ return dot(c,vec3(0.299,0.587,0.114)); }
+    void main(){ vec3 rgbM=texture2D(tC,vUv).rgb; float lM=lu(rgbM);
+      float lNW=lu(texture2D(tC,vUv+vec2(-1.,-1.)*uTx).rgb), lNE=lu(texture2D(tC,vUv+vec2(1.,-1.)*uTx).rgb),
+            lSW=lu(texture2D(tC,vUv+vec2(-1.,1.)*uTx).rgb),  lSE=lu(texture2D(tC,vUv+vec2(1.,1.)*uTx).rgb);
+      float mn=min(lM,min(min(lNW,lNE),min(lSW,lSE))), mx=max(lM,max(max(lNW,lNE),max(lSW,lSE)));
+      vec2 dir=vec2(-((lNW+lNE)-(lSW+lSE)),((lNW+lSW)-(lNE+lSE)));
+      float red=max((lNW+lNE+lSW+lSE)*0.25*0.125,1./128.), rcp=1./(min(abs(dir.x),abs(dir.y))+red);
+      dir=clamp(dir*rcp,vec2(-8.),vec2(8.))*uTx;
+      vec3 A=0.5*(texture2D(tC,vUv+dir*(1./3.-0.5)).rgb+texture2D(tC,vUv+dir*(2./3.-0.5)).rgb);
+      vec3 B=A*0.5+0.25*(texture2D(tC,vUv-dir*0.5).rgb+texture2D(tC,vUv+dir*0.5).rgb);
+      float lB=lu(B); gl_FragColor=vec4((lB<mn||lB>mx)?A:B,1.); }`,
+    {tC:{value:null},uTx:{value:new THREE.Vector2()}});
+  POST.quad=quad; POST.qs=qs; POST.qc=qc;
+})();
+function postSize(){
+  const v=renderer.getDrawingBufferSize(new THREE.Vector2()), w=Math.max(2,v.x|0), h=Math.max(2,v.y|0);
+  if(POST.rt&&POST.w===w&&POST.h===h) return;
+  for(const k of ['rt','tAO','tAOB','bA','bB','bC','bD','cmp']) if(POST[k]){ POST[k].dispose(); POST[k]=null; }
+  const T=(x,y,o)=>new THREE.WebGLRenderTarget(x,y,Object.assign({minFilter:THREE.LinearFilter,magFilter:THREE.LinearFilter,depthBuffer:false,stencilBuffer:false},o||{}));
+  POST.rt=T(w,h,{type:THREE.HalfFloatType,depthBuffer:true}); POST.rt.depthTexture=new THREE.DepthTexture(w,h); POST.rt.depthTexture.type=THREE.UnsignedIntType;
+  POST.tAO=T(w>>1,h>>1); POST.tAOB=T(w>>1,h>>1);
+  POST.bA=T(w>>2,h>>2,{type:THREE.HalfFloatType}); POST.bB=T(w>>2,h>>2,{type:THREE.HalfFloatType});
+  POST.bC=T(w>>3,h>>3,{type:THREE.HalfFloatType}); POST.bD=T(w>>3,h>>3,{type:THREE.HalfFloatType});
+  POST.cmp=T(w,h); POST.w=w; POST.h=h;
+}
+function postRender(){
+  if(!POST.on||!POST.quad){ renderer.render(scene,camera); return; }
+  postSize();
+  const info=renderer.info, ar=info.autoReset;
+  const pass=(m,target)=>{ POST.quad.material=m; renderer.setRenderTarget(target); renderer.render(POST.qs,POST.qc); };
+  renderer.setRenderTarget(POST.rt); renderer.render(scene,camera);   // 描画の数はここで従来どおり数え直す(r128 は影マップの描画の後で数え直す)
+  info.autoReset=false;                                               // 後処理の 9回は場面の数に足す
+  // ① 接地の陰
+  const U=POST.mAO.uniforms; U.tD.value=POST.rt.depthTexture; U.uP.value.copy(camera.projectionMatrix); U.uPI.value.copy(camera.projectionMatrixInverse);
+  U.uRes.value.set(POST.w>>1,POST.h>>1); U.uK.value=POST.ao; pass(POST.mAO,POST.tAO);
+  POST.mAOB.uniforms.tA.value=POST.tAO.texture; POST.mAOB.uniforms.uTx.value.set(1/(POST.w>>1),1/(POST.h>>1)); pass(POST.mAOB,POST.tAOB);
+  // ② 光のにじみ
+  const night=!!(NIGHT&&NIGHT.on), bk=night?POST.bloomN:POST.bloomD;
+  POST.mBR.uniforms.tC.value=POST.rt.texture; POST.mBR.uniforms.uTh.value=night?POST.th-0.12:POST.th; pass(POST.mBR,POST.bA);
+  const B=POST.mBL.uniforms;
+  B.tC.value=POST.bA.texture; B.uDir.value.set(1/(POST.w>>2),0); pass(POST.mBL,POST.bB);
+  B.tC.value=POST.bB.texture; B.uDir.value.set(0,1/(POST.h>>2)); pass(POST.mBL,POST.bA);
+  B.tC.value=POST.bA.texture; B.uDir.value.set(2/(POST.w>>3),0); pass(POST.mBL,POST.bC);
+  B.tC.value=POST.bC.texture; B.uDir.value.set(0,2/(POST.h>>3)); pass(POST.mBL,POST.bD);
+  // ③ 合わせて sRGB へ → ④ FXAA で画面へ
+  const C=POST.mCO.uniforms; C.tC.value=POST.rt.texture; C.tA.value=POST.tAOB.texture; C.tB1.value=POST.bA.texture; C.tB2.value=POST.bD.texture; C.uB.value=bk; pass(POST.mCO,POST.cmp);
+  POST.mFX.uniforms.tC.value=POST.cmp.texture; POST.mFX.uniforms.uTx.value.set(1/POST.w,1/POST.h); pass(POST.mFX,null);
+  info.autoReset=ar;
 }
 
 /* ============ 13. 撮影モード(動画用) ============
@@ -9957,7 +10699,7 @@ const CINE=(function(){
   /* 影の品質。影は1パス増えるうえ影マップの解像度ぶん描き直すので、
      撮影の所要時間に最も効く。size を変えたら影マップは作り直させる。 */
   function setShadow(on,size){
-    renderer.shadowMap.enabled=!!on; sun.castShadow=!!on;
+    renderer.shadowMap.enabled=!!on; sun.castShadow=!!on; sunFar.castShadow=!!on; FAR.need=true;   // 遠くの影も
     if(size){
       sun.shadow.mapSize.set(size,size);
       if(sun.shadow.map){sun.shadow.map.dispose();sun.shadow.map=null;}
@@ -9975,7 +10717,7 @@ const CINE=(function(){
     for(const t of trains) for(const c of t.cars) if(c.visible) lodCar(c);
     for(const c of parkedCars) lodCar(c);
     lodStruct();                 // 駅・高架橋の細部も今のカメラで判定する
-    renderer.render(scene,camera);
+    postRender();                // 画面の後処理(12b章:接地の陰・光のにじみ・FXAA)
   }
   return {
     begin(){cineOn=true;hideUI();},

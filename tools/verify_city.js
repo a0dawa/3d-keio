@@ -27,7 +27,10 @@ const X = require('./stub_three')(path,
   'STRUCT:STRUCT,groundMesh:groundMesh,scene:scene,ROAD_LAMPS:(typeof ROAD_LAMPS!=="undefined"?ROAD_LAMPS:[]),' +
   'TER:(typeof TER!=="undefined"?TER:null),terH:(typeof terH!=="undefined"?terH:()=>0),DP:DP,S_OFS:S_OFS,MAT:MAT,MAT_FENCE:MAT_FENCE,NIGHT:NIGHT,' +
   'ORTHO_MGR:(typeof ORTHO_MGR!=="undefined"?ORTHO_MGR:null),ORTHO_U:(typeof ORTHO_U!=="undefined"?ORTHO_U:null),LON0:LON0,MLON:MLON,' +
-  'lodStruct:lodStruct,renderer:renderer,LU:LU,CINE:CINE,MAT_JOSUI:(typeof MAT_JOSUI!=="undefined"?MAT_JOSUI:null),IS_MOBILE:IS_MOBILE');
+  'lodStruct:lodStruct,renderer:renderer,LU:LU,CINE:CINE,MAT_JOSUI:(typeof MAT_JOSUI!=="undefined"?MAT_JOSUI:null),IS_MOBILE:IS_MOBILE,' +
+  'KPZ:(typeof KPZ!=="undefined"?KPZ:null),plazaStep:(typeof plazaStep!=="undefined"?plazaStep:()=>{}),KARA_LAMPS:(typeof KARA_LAMPS!=="undefined"?KARA_LAMPS:null),' +
+  'DENCHU:(typeof DENCHU!=="undefined"?DENCHU:null),DENSEN:(typeof DENSEN!=="undefined"?DENSEN:null),HIKIKOMI:(typeof HIKIKOMI!=="undefined"?HIKIKOMI:null),' +
+  'ROAD_MARKS:(typeof ROAD_MARKS!=="undefined"?ROAD_MARKS:null),SIGNAL:(typeof SIGNAL!=="undefined"?SIGNAL:null),signalLit:(typeof signalLit!=="undefined"?signalLit:null)');
 
 /* ---- 期待値(検証側が独立して持つ) ----------------------------------------
    道路の幅は4章の描画寸法(box の第1引数)。ここでは"路面の半幅"だけを持ち、
@@ -830,7 +833,7 @@ let L2_ALL = null, P0_ALL = null;          // 4c で読んだ LOD2 の面(建物
         const pts = []; for (let i = 0; i < 4; i++) { const p = a.c[i], q = a.c[(i + 1) % 4]; for (let t = 0; t < 1; t += 0.25) pts.push([p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t]); }
         for (const [x, z] of pts) {
           const dOwn = polyDist(own.poly, x, z);
-          if (a.kind === '屋上の室外機') { if (dOwn > -REF_F.ROOF_IN + 0.01 && !bA) bA = a.kind + ' (' + x.toFixed(1) + ',' + z.toFixed(1) + ') 足跡の縁から ' + (-dOwn).toFixed(2) + 'm'; continue; }
+          if (a.kind === '屋上の室外機' || a.kind === '高置水槽' || a.kind === '屋上の看板') { if (dOwn > -REF_F.ROOF_IN + 0.01 && !bA) bA = a.kind + ' (' + x.toFixed(1) + ',' + z.toFixed(1) + ') 足跡の縁から ' + (-dOwn).toFixed(2) + 'm'; continue; }
           if (dOwn > REF_F.ATT_OUT + 0.01 && !bA) bA = a.kind + ' (' + x.toFixed(1) + ',' + z.toFixed(1) + ') 足跡から ' + dOwn.toFixed(2) + 'm';
           for (const o2 of (BG.get(Math.floor(x / 26) + ',' + Math.floor(z / 26)) || [])) if (o2 !== own && (o2.base || 0) + o2.h > a.y0 + 0.01 && x > o2.__bb[0] - 1 && x < o2.__bb[1] + 1 && z > o2.__bb[2] - 1 && z < o2.__bb[3] + 1 && polyDist(o2.poly, x, z) < -REF_F.ATT_GAP && !bA)
             bA = a.kind + ' (' + x.toFixed(1) + ',' + z.toFixed(1) + ') がほかの建物の足跡の中';
@@ -857,7 +860,7 @@ let L2_ALL = null, P0_ALL = null;          // 4c で読んだ LOD2 の面(建物
           X.camera.position.set(a.x, a.y + 2, a.z); X.cityLod();
           if (!(a.ma && a.ma.visible) && !bL) bL = '升の中で描かない';
           if (a.ma && !bL) { const n = a.ma.geometry.attributes.position.array.length / 3, ab = a.ma.geometry.attributes.aBld.array;
-            let ne = 0; for (const i of a.I) ne += C.attS[i] === 1 ? 4 : (C.attS[i + 18] ? 24 : 20) - (C.attS[i + 1] === 5 ? 0 : 4);   // 壁の側の面は描かない(屋上の室外機は描く)
+            let ne = 0; for (const i of a.I) ne += C.attS[i] === 1 ? 4 : (C.attS[i + 18] ? 24 : 20) - (C.attS[i + 1] >= 5 ? 0 : 4);   // 壁の側の面は描かない(屋上の物=室外機・高置水槽・看板は描く)
             if (n !== ne) bL = '形の頂点 ' + n + ' が記録(' + ne + ')と違う'; for (let i = 0; i < ab.length; i += 4) if (ab[i] > -0.5) { bL = bL || '付属物に外装を描く'; break; } }
           X.camera.position.set(a.x + a.r + AD + 20, a.y, a.z); X.cityLod(); if (a.ma && a.ma.visible && !bL) bL = '升から遠くでも描く';
           X.camera.position.set(a.x + a.r + 2 * AD + 20, a.y, a.z); X.cityLod(); if (a.ma && !bL) bL = '升から遠くても捨てない'; }
@@ -877,15 +880,17 @@ let L2_ALL = null, P0_ALL = null;          // 4c で読んだ LOD2 の面(建物
 }
 
 /* ---- 4c3. 木の形(2026-10-12 利用者指示:単純すぎて浮いている) ------------------------------------
-   まとまりごとに近く・遠くの2つの形。近くは樹冠の塊が3つ以上(三角形が遠くの2倍以上)、季節の色(インスタンスの色)は樹冠だけ
-   (幹 aTint=0 は暗い茶のまま)、樹冠は占有半径(sc=1 で 2.3m)の内 */
+   まとまりごとの遠くの形と、全部の木で1つの近くの形(CITY.treeNear。2026-11 に木ごとの切り替えへ)。近くは樹冠の塊が3つ以上
+   (三角形が遠くの2倍以上)、季節の色(インスタンスの色)は樹冠だけ(幹 aTint=0 は暗い茶のまま)、樹冠は占有半径(sc=1 で 2.3m)の内。
+   木ごとの切り替え:カメラを木の脇に置いて treeLod を呼ぶと、カメラから 150m(TREE_NEAR)×LOD_STRUCT 以内の木(検証側で数える)だけが
+   近くの形にあり、その木は遠くの形で大きさ 0(位置はそのまま)、それより遠い木は遠くの形で大きさがある */
 {
   let bad = null, n = 0;
-  const TC = X.CITY.treeChunks;
+  const TC = X.CITY.treeChunks, NM = X.CITY.treeNear;
   for (const c of TC.values()) {
     n++;
-    if (!c.m || !c.mn) { bad = '近く/遠くの形が無い'; break; }
-    const gN = c.mn.geometry, gF = c.m.geometry, tN = gN.index.array.length / 3, tF = gF.index.array.length / 3;
+    if (!c.m || !NM) { bad = '近く/遠くの形が無い'; break; }
+    const gN = NM.geometry, gF = c.m.geometry, tN = gN.index.array.length / 3, tF = gF.index.array.length / 3;
     if (!gN.attributes.aTint || !gF.attributes.aTint) { bad = '樹冠の印(aTint)が無い'; break; }
     if (!(tF > 0) || tN < 2 * tF) { bad = '近くの形が粗い ' + tN + '/' + tF; break; }
     const P = gN.attributes.position.array, T = gN.attributes.aTint.array, C = gN.attributes.color.array;
@@ -898,6 +903,20 @@ let L2_ALL = null, P0_ALL = null;          // 4c で読んだ LOD2 の面(建物
     if (trunk) { bad = '幹の色 ' + trunk; break; }
   }
   ok('木の形(近く・遠く・樹冠)', bad === null && n > 0, '近くは遠くの2倍以上・樹冠は半径2.3m 内・幹は茶', bad || n + 'まとまり');
+  // 木ごとの近く/遠く
+  { let bad2 = null, want = 0; const R = 150 * X.LOD_STRUCT, Tr = X.CITY.trees, t0 = Tr[Math.floor(Tr.length / 2)];
+    X.camera.position.set(t0.x + 3, t0.y + 2, t0.z + 3); X.CITY.treeLod();
+    const nearP = new Set(); for (let i = 0; i < NM.count; i++) { const q = NM.mats[i]; if (q) nearP.add(q.p.x.toFixed(2) + ',' + q.p.z.toFixed(2)); }
+    for (const t of Tr) { const d = Math.hypot(t.x - X.camera.position.x, t.y - X.camera.position.y, t.z - X.camera.position.z), inN = d < R, c = TC.get(t.ci), q = c.m.mats[t.j];
+      if (inN) want++;
+      if (bad2) continue;
+      if (!q || Math.abs(q.p.x - t.x) > 1e-3 || Math.abs(q.p.z - t.z) > 1e-3) bad2 = '遠くの形の木 (' + t.x.toFixed(1) + ',' + t.z.toFixed(1) + ') の位置';
+      else if (inN && !(q.s && q.s.x === 0)) bad2 = '近い木 (' + t.x.toFixed(1) + ',' + t.z.toFixed(1) + ') が遠くの形にも残る';
+      else if (!inN && !(q.s && q.s.x > 0)) bad2 = '遠い木 (' + t.x.toFixed(1) + ',' + t.z.toFixed(1) + ') が遠くの形で大きさ 0';
+      else if (inN !== nearP.has(t.x.toFixed(2) + ',' + t.z.toFixed(2))) bad2 = '木 (' + t.x.toFixed(1) + ',' + t.z.toFixed(1) + ') の近くの形 ' + (inN ? '無し' : '有り'); }
+    if (!bad2 && NM.count !== want) bad2 = '近くの形 ' + NM.count + '本・検証側 ' + want + '本';
+    X.camera.position.set(0, 0, 0);
+    ok('木の近く/遠く(木ごと)', bad2 === null && want > 5, 'カメラから ' + R.toFixed(0) + 'm 以内の木だけ近くの形・その木は遠くの形で大きさ 0', bad2 || '近く ' + want + '本'); }
 }
 
 /* ---- 4d. 建物の色は用途で ------------------------------------------------------
@@ -1259,7 +1278,7 @@ if (TER_ON) {
     for (const t of X.CITY.trees) { nT++; const want = Math.min(tH(t.x, t.z), tH(t.x + 0.3, t.z), tH(t.x - 0.3, t.z), tH(t.x, t.z + 0.3), tH(t.x, t.z - 0.3)); if (Math.abs(want) > 0.5) nTU++;
       if (!(Math.abs((t.y === undefined ? 0 : t.y) - want) <= 0.005) && !bad) bad = '木 (' + t.x.toFixed(0) + ',' + t.z.toFixed(0) + ') 根元 ' + (t.y === undefined ? '無し' : t.y.toFixed(2)) + ' ≠ ' + want.toFixed(2); }
     const yAt = new Map(X.CITY.trees.map((t) => [t.x + ',' + t.z, t.y]));
-    for (const c of X.CITY.treeChunks.values()) for (const m of [c.m, c.mn]) if (!bad) m.mats.forEach((q) => { if (bad || !q) return; const y = yAt.get(q.p.x + ',' + q.p.z); if (y === undefined || Math.abs(q.p.y - y) > 1e-6) bad = '木の形の高さ ' + q.p.y.toFixed(2) + ' ≠ 根元 ' + (y === undefined ? '無し' : y.toFixed(2)); });
+    for (const m of [...[...X.CITY.treeChunks.values()].map((c) => c.m), X.CITY.treeNear]) if (!bad) m.mats.forEach((q) => { if (bad || !q) return; const y = yAt.get(q.p.x + ',' + q.p.z); if (y === undefined || Math.abs(q.p.y - y) > 1e-6) bad = '木の形の高さ ' + q.p.y.toFixed(2) + ' ≠ 根元 ' + (y === undefined ? '無し' : y.toFixed(2)); });
     ok('木は地表に立つ', bad === null && nTU > 300, '根元=幹の中心と 0.3m 外の4点の地表の最も低い所・起伏の上の木 300本以上', bad || nT + '本(起伏 0.5m 超の上 ' + nTU + '本)'); }
   { let bad = null, nG = 0, nGU = 0;
     const head = X.NIGHT.group.children.find((m) => m.isMesh && m.mats && m.mats.length === X.NIGHT.stat.lamp && m.geometry && m.geometry.type === 'Sph');
@@ -1749,8 +1768,166 @@ if (KARA_DATA) {
         for (const sd of [1, -1]) { const xx = q.x + sd * q.fz * (W.w / 2 + 0.6), zz = q.z - sd * q.fx * (W.w / 2 + 0.6);
           if (KV.aD(xx, zz) < -0.2 && cls(topAt(xx, zz)) === '車' && !swBad) swBad = '216 の歩道 (' + q.x.toFixed(1) + ',' + q.z.toFixed(1) + ') が車道の口をふさぐ'; } }
       ok('計画の区域:ロータリーの出入口は東の216へ', mesh !== null && bad === null && swBad === null && mouth >= M.minLen, '車道が区域の縁に出るのは補助216号線の西の縁の口(z ' + M.within.join('〜') + '・' + M.minLen + 'm 以上)と桁の縁だけ・216 の歩道は口で切れる',
-        bad || swBad || '口 ' + mouth.toFixed(1) + 'm'); } }
+        bad || swBad || '口 ' + mouth.toFixed(1) + 'm'); }
+    /* 駅前広場の人と車(2026-11 利用者指示「更なるクオリティアップ」。推定):バス 1台・タクシー 2台以上が車道の面(+0.12)の上(車の外形の
+       縁と中の 0.5m ごとの点)で互いに重ならない・人 30人以上(立つ人の足元と往復する人の道の 0.5m ごとの点が舗装(+0.27)の上)・
+       往復する人が動く・街灯の柱 10本以上が舗装の上で、8b章の灯り(ROAD_LAMPS)に入っている */
+    if (X.KPZ) { let bad = null; const Z = X.KPZ;
+      for (const v of Z.veh) { const L = v.L, wv = 1.9;
+        for (let u = -L / 2; u <= L / 2 + 1e-6 && !bad; u += 0.5) for (const s of [-wv / 2, 0, wv / 2]) { const x = v.x + v.fx * u - v.fz * s, z = v.z + v.fz * u + v.fx * s, c = cls(topAt(x, z));
+          if (c !== '車') { bad = v.kind + ' (' + v.x.toFixed(1) + ',' + v.z.toFixed(1) + ') の点 (' + x.toFixed(1) + ',' + z.toFixed(1) + ')=' + c; break; } }
+        for (const w of Z.veh) if (w !== v && Math.hypot(w.x - v.x, w.z - v.z) < (w.L + v.L) / 2 * 0.9 && Math.abs(w.fx * v.fx + w.fz * v.fz) > 0.9 && Math.abs((w.x - v.x) * -v.fz + (w.z - v.z) * v.fx) < 2.0 && !bad) bad = '車が重なる (' + v.x.toFixed(1) + ',' + v.z.toFixed(1) + ')'; }
+      const nBus = Z.veh.filter((v) => v.kind === 'bus').length, nTx = Z.veh.filter((v) => v.kind === 'car').length;
+      for (const p of Z.people) { const c = cls(topAt(p.x, p.z)); if (c !== '舗' && !bad) bad = '人 (' + p.x.toFixed(1) + ',' + p.z.toFixed(1) + ')=' + c; if (Math.abs(p.y - X.terH(p.x, p.z) - 0.27) > 0.01 && !bad) bad = '人 (' + p.x.toFixed(1) + ',' + p.z.toFixed(1) + ') の高さ'; }
+      for (const w of Z.walk) for (let u = 0; u <= w.L; u += 0.5) { const x = w.ax + w.dx * u, z = w.az + w.dz * u, c = cls(topAt(x, z)); if (c !== '舗' && !bad) bad = '往復する人の道 (' + x.toFixed(1) + ',' + z.toFixed(1) + ')=' + c; }
+      const path = Z.walk.map(() => 0); for (let k = 0; k < 20; k++) { const u0 = Z.walk.map((w) => w.u); X.plazaStep(0.1); Z.walk.forEach((w, i) => { path[i] += Math.abs(w.u - u0[i]); }); }
+      const moved = path.filter((d) => d > 1).length;   // 2秒に歩いた道のり 1m 以上(端で折り返しても)
+      const LP = X.KARA_LAMPS || [], inRL = LP.filter((q) => X.ROAD_LAMPS.some((r) => r[0] === q[0] && r[1] === q[1])).length;
+      for (const q of LP) { const c = cls(topAt(q[0], q[1])); if (c !== '舗' && !bad) bad = '街灯 (' + q[0].toFixed(1) + ',' + q[1].toFixed(1) + ')=' + c; }
+      const nP = Z.people.length + Z.walk.length;
+      ok('計画の区域:駅前広場の人と車', bad === null && nBus === 1 && nTx >= 2 && nP >= 30 && moved === Z.walk.length && LP.length >= 10 && inRL === LP.length,
+        'バス 1・タクシー 2以上が車道の上で重ならない・人 30以上が舗装の上・往復する人が動く・街灯 10本以上が舗装の上で夜の灯りに入る',
+        bad || 'バス ' + nBus + '・タクシー ' + nTx + '・人 ' + nP + '(往復 ' + Z.walk.length + '・動いた ' + moved + ')・街灯 ' + LP.length); }
+    else ok('計画の区域:駅前広場の人と車', false, 'KPZ がある', '無い'); }
 } else ok('計画の区域', !KARA_DATA, '実データが無いときは描かない', '-');
+/* ---- 4i. 路面標示と交差点の設備(2026-11 利用者指示「更なるクオリティアップ」)------------------------------------------
+   検証側で plateau_land.js を自前で読んだ道路(LAND。交差部 sec 4 も)と照合する(モデルの ROADS_PL は使わない):
+   ・路面標示(白線・中央線・横断歩道・停止線・路面の文字)の頂点がどれも道路の面の上(縁から 0.05m 以内)・高さが地表+道路の高さ+0.02(±0.01)
+   ・横断歩道の縞は交差部の外で、交差部から 6m 以内(口に置く)
+   ・中央線の点は、線と直角に道路の縁まで測った左右の距離がそろう(差が 0.8m か幅の 15% 以内。点の 90% 以上)
+   ・信号の柱は道路の面の上(縁から 0.05m 以内)・建物の足跡の外・交差部から 8m 以内。灯器は1つの時刻に3灯のうち1灯だけ点き、60秒で青・黄・赤が回る
+   ・防護柵の支柱は歩道の帯の上で、交差部から 2.5m 以上離れる
+   ・数:横断歩道の縞 1,000以上・中央線 300本以上・停止線 300以上・信号 100以上・防護柵の支柱 300以上 */
+if (LAND && X.ROAD_MARKS) {
+  const M = X.ROAD_MARKS, IG = new Map(), C4 = 20;
+  for (const R of LAND.roads) if (R.sec === 4 && R.k !== 2 && !(KARA_DATA && R.P.every((p) => KV.planD(p[0], p[1]) < 0.5)))   // 千歳烏山の計画の範囲で消えた交差部は除く
+    for (let a = Math.floor(R.bb[0] / C4); a <= Math.floor(R.bb[1] / C4); a++) for (let c = Math.floor(R.bb[2] / C4); c <= Math.floor(R.bb[3] / C4); c++) { const k = a + ',' + c; if (!IG.has(k)) IG.set(k, []); IG.get(k).push(R); }
+  const intD = (x, z) => { let d = 1e9; for (let a = Math.floor(x / C4) - 1; a <= Math.floor(x / C4) + 1; a++) for (let c = Math.floor(z / C4) - 1; c <= Math.floor(z / C4) + 1; c++)
+    for (const R of IG.get(a + ',' + c) || []) d = Math.min(d, polyDist(R.P, x, z)); return d; };   // 交差部までの距離(中は負。20m より遠くは 20m 以上)
+  // 計画の範囲に一部が掛かる交差部は、範囲の外に残る部分までの距離(範囲の中は 216 の帯と広場に置き換わった。0.25m ごとの点で見る)
+  const partK = (R) => KARA_DATA && R.P.some((p) => KV.planD(p[0], p[1]) < 0.5);
+  const intDout = (x, z, rr) => { let d = 1e9; for (let a = Math.floor(x / C4) - 1; a <= Math.floor(x / C4) + 1; a++) for (let c = Math.floor(z / C4) - 1; c <= Math.floor(z / C4) + 1; c++)
+    for (const R of IG.get(a + ',' + c) || []) { const d0 = polyDist(R.P, x, z); if (!partK(R) || d0 >= rr) { d = Math.min(d, d0); continue; }
+      for (let i = -rr; i <= rr; i += 0.25) for (let j = -rr; j <= rr; j += 0.25) { const qx = x + i, qz = z + j, dq = Math.hypot(i, j); if (dq >= d || polyDist(R.P, qx, qz) > 0 || KV.planD(qx, qz) < 0) continue; d = dq; } }
+    return d; };
+  // 路面の頂点
+  { let bad = null, n = 0;
+    X.scene.traverse((o) => { if (bad || !o.isMesh || !/^路面標示/.test(o.name)) return; const a = o.geometry.attributes.position.array;
+      for (let k = 0; k < a.length; k += 3) { const x = a[k], z = a[k + 2], h = a[k + 1] - X.terH(x, z); n++;
+        if (LAND.depth(x, z) > 0.05 && !bad) bad = o.name + ' の頂点 (' + x.toFixed(1) + ',' + z.toFixed(1) + ') が道路の外(' + LAND.depth(x, z).toFixed(2) + 'm)';
+        if ((h < 0.10 + 0.01 || h > 0.12 + 0.035) && !bad) bad = o.name + ' の頂点 (' + x.toFixed(1) + ',' + z.toFixed(1) + ') 地表+' + h.toFixed(3); } });
+    ok('路面標示:道路の上', bad === null && n > 20000, '白線・中央線・横断歩道・停止線・路面の文字の頂点が道路の面の上(縁から 0.05m・検証側の plateau_land.js)・地表+道路の高さ+0.02', bad || n + '頂点'); }
+  // 横断歩道
+  { let bad = null; for (const b of M.bars) { const d = intD(b.x, b.z); if ((d <= 0 || d > 6) && !bad) bad = '縞 (' + b.x.toFixed(1) + ',' + b.z.toFixed(1) + ') 交差部まで ' + d.toFixed(2) + 'm'; }
+    ok('路面標示:横断歩道は交差部の口', bad === null && M.bars.length >= 1000 && M.stop.length >= 300, '縞の中心が交差部(sec 4)の外で 6m 以内・縞 1,000以上・停止線 300以上', bad || '縞 ' + M.bars.length + '・停止線 ' + M.stop.length); }
+  // 中央線
+  { let n = 0, good = 0; const worst = [];
+    const reach = (x, z, dx, dz) => { let t = 0; while (t < 25 && LAND.depth(x + dx * t, z + dz * t) <= 0) t += 0.1; return t; };
+    for (const c of M.center) for (let i = 1; i + 1 < c.pts.length; i += 3) { const a = c.pts[i - 1], b = c.pts[i + 1], p = c.pts[i], L = Math.hypot(b[0] - a[0], b[1] - a[1]); if (L < 1e-6) continue;
+      const nx = -(b[1] - a[1]) / L, nz = (b[0] - a[0]) / L, dl = reach(p[0], p[1], nx, nz), dr = reach(p[0], p[1], -nx, -nz); n++;
+      if (Math.abs(dl - dr) <= Math.max(0.8, 0.15 * (dl + dr))) good++; else if (worst.length < 2) worst.push('(' + p[0].toFixed(1) + ',' + p[1].toFixed(1) + ') 左 ' + dl.toFixed(1) + '・右 ' + dr.toFixed(1)); }
+    ok('路面標示:中央線は道路の中ほど', M.center.length >= 300 && n > 500 && good >= 0.9 * n, '中央線の点から線と直角に道路の縁まで(検証側の道路)の左右の差 0.8m か幅の 15% 以内が 90% 以上・300本以上',
+      M.center.length + '本・' + good + '/' + n + '点' + (worst.length ? '(外れの例 ' + worst.join(' ') + ')' : '')); }
+  // 信号
+  { let bad = null; const BG = new Map(); for (const e of B) if (e.poly) { const k = Math.floor(e.x / 30) + ',' + Math.floor(e.z / 30); if (!BG.has(k)) BG.set(k, []); BG.get(k).push(e); }
+    const inB = (x, z) => { for (let a = Math.floor(x / 30) - 1; a <= Math.floor(x / 30) + 1; a++) for (let c = Math.floor(z / 30) - 1; c <= Math.floor(z / 30) + 1; c++) for (const e of BG.get(a + ',' + c) || []) if (polyDist(e.poly, x, z) < 0.1) return true; return false; };
+    for (const s of M.signals) { const d = intD(s.x, s.z);
+      if (LAND.depth(s.x, s.z) > 0.05 && !bad) bad = '信号の柱 (' + s.x.toFixed(1) + ',' + s.z.toFixed(1) + ') が道路の外';
+      else if (d > 8 && !bad) bad = '信号の柱 (' + s.x.toFixed(1) + ',' + s.z.toFixed(1) + ') が交差部から ' + d.toFixed(1) + 'm';
+      else if (inB(s.x, s.z) && !bad) bad = '信号の柱 (' + s.x.toFixed(1) + ',' + s.z.toFixed(1) + ') が建物の中'; }
+    // 灯:3灯で1組(G・Y・R の順に並ぶ)。1つの時刻に1灯・60秒で3色とも点く
+    const L = X.SIGNAL.lamps; let heads = 0;
+    for (let i = 0; i + 2 < L.length; i++) { if (L[i].kind !== 'G' || L[i + 1].kind !== 'Y' || L[i + 2].kind !== 'R') continue; heads++; const seen = new Set();
+      for (let t = 0; t < 60; t += 0.5) { const lit = [0, 1, 2].filter((j) => X.signalLit(L[i + j], t)); if (lit.length !== 1 && !bad) bad = '灯器 ' + i + ' の時刻 ' + t + ' に点く灯 ' + lit.length; seen.add(lit[0]); }
+      if (seen.size !== 3 && !bad) bad = '灯器 ' + i + ' の色が回らない'; }
+    ok('交差点:信号', bad === null && M.signals.length >= 100 && heads === M.signals.length, '柱は道路の面の上・建物の外・交差部から 8m 以内/灯器は1灯ずつ点き 60秒で3色が回る・100基以上',
+      bad || M.signals.length + '基・灯器 ' + heads); }
+  // 防護柵
+  { let bad = null; const onSW = (x, z) => (X.SIDEWALKS || []).some((W) => (W.seg || []).some(([u0, u1]) => { const p = W.f((u0 + u1) / 2); if (Math.hypot(p.x - x, p.z - z) > 3) return false;
+      const q = W.f(u0), r = W.f(u1), L = Math.hypot(r.x - q.x, r.z - q.z) || 1, tx = (r.x - q.x) / L, tz = (r.z - q.z) / L, u = (x - q.x) * tx + (z - q.z) * tz, v = -(x - q.x) * tz + (z - q.z) * tx;
+      return u >= -0.1 && u <= L + 0.1 && Math.abs(v) <= W.w / 2 + 0.05; }));
+    for (const g of M.guards) { if (!onSW(g.x, g.z) && !bad) bad = '支柱 (' + g.x.toFixed(1) + ',' + g.z.toFixed(1) + ') が歩道の外'; const d = intDout(g.x, g.z, 2.5); if (d < 2.5 && !bad) bad = '支柱 (' + g.x.toFixed(1) + ',' + g.z.toFixed(1) + ') が交差部から ' + d.toFixed(2) + 'm'; }
+    ok('交差点:防護柵', bad === null && M.guards.length >= 300, '支柱は幹線の歩道の帯の上・交差部(千歳烏山の計画の範囲に掛かる物は範囲の外の部分)から 2.5m 以上・300本以上', bad || M.guards.length + '本'); }
+} else ok('路面標示と交差点の設備', !LAND, '実データの道路が無いときは描かない', '-');
+
+/* ---- 4j. 電柱・電線と航空写真の木(2026-11 利用者指示「更なるクオリティアップ」)-----------------------------------------------
+   電柱(推定の配置):道路の面の上(縁から 0.05m)・一般の道路(検証側の plateau_land.js で幹線・自動車専用の面の上に無い)・建物の足跡の 0.25m 外・
+     高架の帯(桁の半幅+5.2m)の外・千歳烏山の計画の範囲から 0.9m 外・ほかの電柱から 13.9m 以上・根元が地表+道路の高さ・500本以上
+   電線:径間 45m 以下・1本の電柱に3本まで。径間の水平の線(両端の電柱を結ぶ)の 1m ごとの点が道路の面から 1.9m 以内(電線の横のずれ 0.6m を含む)・
+     幹線と自動車専用の面の 0.7m より内に入らない・建物の足跡の上なら建物の上端が電線の最も低い所(通信 7.4m−垂れ 0.0005L²)より低い。
+     描いた '電線' の線分が径間の中ほどの真上(水平 1m 以内・地表+6m 以上)を通る。描いた線の頂点はすべて地表+2.9m 以上
+   引込線:電柱から(水平 0.6m 以内)・建物の壁の 0.5m 以内の外・壁の高さの中(基部+2.5m〜上端)・長さ 12.5m 以下・300本以上
+   航空写真の木:gsi_trees.js を HTML が読み、隣にあれば、検証側で復号した写真の木の 0.06m 以内に '写真' の木があり、半径は 1m 以上で
+     min(5m, 写真の半径×1.25) 以下・3,000本以上・公園の格子の木('公園')は無い。ファイルがあるのに '写真' の木が無ければ NG */
+if (LAND && X.DENCHU) {
+  const D = X.DENCHU, W = X.DENSEN || [], H = X.HIKIKOMI || [];
+  const MJ = new Map(), C5 = 30; for (const R of LAND.roads) if (R.k !== 0) for (let a = Math.floor(R.bb[0] / C5); a <= Math.floor(R.bb[1] / C5); a++) for (let c = Math.floor(R.bb[2] / C5); c <= Math.floor(R.bb[3] / C5); c++) { const k = a + ',' + c; if (!MJ.has(k)) MJ.set(k, []); MJ.get(k).push(R); }
+  const majD = (x, z) => { let d = 1e9; for (const R of MJ.get(Math.floor(x / C5) + ',' + Math.floor(z / C5)) || []) d = Math.min(d, polyDist(R.P, x, z)); return d; };   // 幹線・自動車専用の面まで(中は負)
+  const BG = new Map(); for (const e of B) if (e.poly) { let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9; for (const v of e.poly) { x0 = Math.min(x0, v[0]); x1 = Math.max(x1, v[0]); z0 = Math.min(z0, v[1]); z1 = Math.max(z1, v[1]); }
+    for (let a = Math.floor(x0 / 20); a <= Math.floor(x1 / 20); a++) for (let c = Math.floor(z0 / 20); c <= Math.floor(z1 / 20); c++) { const k = a + ',' + c; if (!BG.has(k)) BG.set(k, []); BG.get(k).push(e); } }
+  const bldNear = (x, z) => { const o = new Set(); for (let a = -1; a <= 1; a++) for (let c = -1; c <= 1; c++) for (const e of BG.get((Math.floor(x / 20) + a) + ',' + (Math.floor(z / 20) + c)) || []) o.add(e); return o; };
+  // 電柱
+  { let bad = null; const PG = new Map();
+    for (const p of D) { const k = Math.floor(p.x / 15) + ',' + Math.floor(p.z / 15); if (!PG.has(k)) PG.set(k, []); PG.get(k).push(p); }
+    for (const p of D) { const q = X.prjXY(p.x, p.z), at = '電柱 (' + p.x.toFixed(1) + ',' + p.z.toFixed(1) + ')';
+      if (bad) break;
+      if (LAND.depth(p.x, p.z) > 0.05) bad = at + ' が道路の外';
+      else if (majD(p.x, p.z) < 0) bad = at + ' が幹線か自動車専用の道路の上';
+      else if (Math.abs(q.off) < X.deckHalf(q.s) + 5.2) bad = at + ' が高架の帯の中';
+      else if (KARA_DATA && KV.planD(p.x, p.z) < 0.9) bad = at + ' が千歳烏山の計画の範囲';
+      else if (Math.abs(p.y - X.terH(p.x, p.z) - 0.12) > 0.03) bad = at + ' の根元 地表+' + (p.y - X.terH(p.x, p.z)).toFixed(2);
+      else { for (const e of bldNear(p.x, p.z)) if (polyDist(e.poly, p.x, p.z) < 0.25) { bad = at + ' が建物の足跡の 0.25m 内'; break; }
+        for (let a = -1; a <= 1 && !bad; a++) for (let c = -1; c <= 1 && !bad; c++) for (const o of PG.get((Math.floor(p.x / 15) + a) + ',' + (Math.floor(p.z / 15) + c)) || [])
+          if (o !== p && Math.hypot(o.x - p.x, o.z - p.z) < 13.9) { bad = at + ' とほかの電柱の間 ' + Math.hypot(o.x - p.x, o.z - p.z).toFixed(1) + 'm'; break; } } }
+    ok('電柱:一般の道路の縁', bad === null && D.length >= 500, '道路の面の上・幹線/自動車専用の外・建物の足跡の 0.25m 外・高架の帯と千歳烏山の計画の外・間 13.9m 以上・500本以上', bad || D.length + '本'); }
+  // 電線
+  { let bad = null; const deg = new Map();
+    const LV = [], LS = []; X.scene.traverse((o) => { if (o.name === '電線' && o.geometry && o.geometry.attributes.position) LS.push(o.geometry.attributes.position.array); });
+    const VG = new Map(); for (const a of LS) for (let k = 0; k < a.length; k += 3) { const h = a[k + 1] - X.terH(a[k], a[k + 2]); if (h < 2.9 && !bad) bad = '電線の頂点 (' + a[k].toFixed(1) + ',' + a[k + 2].toFixed(1) + ') が地表+' + h.toFixed(2); LV.push(1);
+      if (k % 6 === 0 && k + 5 < a.length) { const sg = [a[k], a[k + 1], a[k + 2], a[k + 3], a[k + 4], a[k + 5]];   // 線分(2点ずつ)を両端の升に
+        for (const g of new Set([Math.floor(sg[0] / 4) + ',' + Math.floor(sg[2] / 4), Math.floor(sg[3] / 4) + ',' + Math.floor(sg[5] / 4)])) { if (!VG.has(g)) VG.set(g, []); VG.get(g).push(sg); } } }
+    for (const w of W) { if (bad) break; const a = w.a, b = w.b, L = Math.hypot(b.x - a.x, b.z - a.z), at = '径間 (' + a.x.toFixed(1) + ',' + a.z.toFixed(1) + ')→(' + b.x.toFixed(1) + ',' + b.z.toFixed(1) + ')';
+      deg.set(a, (deg.get(a) || 0) + 1); deg.set(b, (deg.get(b) || 0) + 1);
+      if (L > 45) { bad = at + ' が ' + L.toFixed(1) + 'm'; break; }
+      const low = Math.min(a.y, b.y) + 7.4 - 0.0005 * L * L;
+      for (let t = 1; t < L; t += 1) { const x = a.x + (b.x - a.x) * t / L, z = a.z + (b.z - a.z) * t / L;
+        if (LAND.depth(x, z) > 1.9) { bad = at + ' の (' + x.toFixed(1) + ',' + z.toFixed(1) + ') が道路から ' + LAND.depth(x, z).toFixed(1) + 'm'; break; }
+        if (majD(x, z) < -0.7) { bad = at + ' が幹線か自動車専用の道路の上を通る'; break; }
+        for (const e of bldNear(x, z)) if (polyDist(e.poly, x, z) < -0.05 && (e.base || 0) + e.h > low) { bad = at + ' が建物(上端 ' + ((e.base || 0) + e.h).toFixed(1) + 'm)を貫く'; break; }
+        if (bad) break; }
+      if (bad) break;
+      const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2; let hit = false;
+      for (let i = -2; i <= 2 && !hit; i++) for (let j = -2; j <= 2 && !hit; j++) for (const sg of VG.get((Math.floor(mx / 4) + i) + ',' + (Math.floor(mz / 4) + j)) || []) {   // 描いた線分が中ほどの 1m 内を通る
+        const ex = sg[3] - sg[0], ez = sg[5] - sg[2], l2 = ex * ex + ez * ez || 1, t = Math.max(0, Math.min(1, ((mx - sg[0]) * ex + (mz - sg[2]) * ez) / l2)), px = sg[0] + ex * t, pz = sg[2] + ez * t, py = sg[1] + (sg[4] - sg[1]) * t;
+        if (Math.hypot(px - mx, pz - mz) < 1 && py - X.terH(px, pz) > 6) { hit = true; break; } }
+      if (!hit) bad = at + ' の中ほどの真上に描いた電線が無い'; }
+    for (const [p, n] of deg) if (n > 3 && !bad) bad = '電柱 (' + p.x.toFixed(1) + ',' + p.z.toFixed(1) + ') の径間 ' + n;
+    ok('電線:道路の上・建物を貫かない', bad === null && W.length >= 300 && LS.length > 0, '径間 45m 以下・3本まで・道路の上(1.9m)・幹線の上を通らない・建物の上端が電線より低い・描いた線が径間の上・地表+2.9m 以上・300径間以上',
+      bad || W.length + '径間・線の頂点 ' + LV.length); }
+  // 引込線
+  { let bad = null;
+    for (const d of H) { const at = '引込線 (' + d.b[0].toFixed(1) + ',' + d.b[2].toFixed(1) + ')';
+      const p = D.find((o) => Math.hypot(o.x - d.a[0], o.z - d.a[2]) < 0.6); if (!p) { bad = at + ' の元に電柱が無い'; break; }
+      const L = Math.hypot(d.b[0] - d.a[0], d.b[2] - d.a[2]); if (L > 12.5) { bad = at + ' の長さ ' + L.toFixed(1); break; }
+      let wall = null; for (const e of bldNear(d.b[0], d.b[2])) { const g = polyDist(e.poly, d.b[0], d.b[2]); if (g > 0 && g <= 0.5) { wall = e; break; } }
+      if (!wall) { bad = at + ' の先が建物の壁の外 0.5m に無い'; break; }
+      const y0 = (wall.base || 0); if (d.b[1] < y0 + 2.5 || d.b[1] > y0 + wall.h) { bad = at + ' の高さ ' + (d.b[1] - y0).toFixed(1) + 'm(壁 ' + wall.h.toFixed(1) + 'm)'; break; } }
+    ok('引込線:電柱から建物の壁へ', bad === null && H.length >= 300, '元は電柱・先は壁の外 0.5m 内で壁の高さの中・12.5m 以下・300本以上', bad || H.length + '本'); }
+}
+{
+  const fs = require('fs'), pth = require('path'), f = pth.join(pth.dirname(path), 'gsi_trees.js'), html = fs.readFileSync(path, 'utf8');
+  if (LAND && html.includes('<script src="gsi_trees.js">') && fs.existsSync(f)) {
+    const g = {}; new Function('globalThis', fs.readFileSync(f, 'utf8'))(g); const GT = g.GSI_TREES;
+    const d = GT.d.split(',').map(Number), ox = (GT.o[1] - X.LON0) * X.MLON, oz = -(GT.o[0] - X.LAT0) * X.MLAT, TG = new Map(); let x = 0, z = 0, n = 0;
+    for (let k = 0; k + 2 < d.length; k += 3) { x += d[k]; z += d[k + 1]; const t = [ox + x / 10, oz + z / 10, d[k + 2] / 10], key = Math.floor(t[0] / 10) + ',' + Math.floor(t[1] / 10); if (!TG.has(key)) TG.set(key, []); TG.get(key).push(t); n++; }
+    let bad = null, nP = 0;
+    for (const t of T) { if (t.kind === '公園' && !bad) bad = '公園の格子の木 (' + t.x.toFixed(1) + ',' + t.z.toFixed(1) + ') が残る'; if (t.kind !== '写真') continue; nP++;
+      let m = null; for (let a = -1; a <= 1; a++) for (let c = -1; c <= 1; c++) for (const q of TG.get((Math.floor(t.x / 10) + a) + ',' + (Math.floor(t.z / 10) + c)) || []) if (Math.hypot(q[0] - t.x, q[1] - t.z) < 0.06) m = q;
+      if (!m) { if (!bad) bad = '写真の木 (' + t.x.toFixed(1) + ',' + t.z.toFixed(1) + ') が gsi_trees.js に無い'; continue; }
+      if ((t.r < 0.99 || t.r > Math.min(5, m[2] * 1.25) + 0.01) && !bad) bad = '写真の木 (' + t.x.toFixed(1) + ',' + t.z.toFixed(1) + ') の半径 ' + t.r.toFixed(2) + '(写真 ' + m[2].toFixed(1) + ')'; }
+    ok('航空写真の木', bad === null && nP >= 3000, '検証側で復号した gsi_trees.js の位置(0.06m)・半径 1m〜min(5, 写真×1.25)・3,000本以上・公園の格子の木は無い', bad || nP + '本(ファイル ' + n + '本)');
+  }
+}
 console.log('=== 街並みと交差鉄道の検証 ===');
 console.log('(置かれた1件ずつの世界座標を測り、道路・河川・鉄道・高架下と突き合わせ)\n');
 const w = [0, 0, 0].map((_, i) => Math.max.apply(null, rows.map((r) => [...r[i]].length).concat([8])));

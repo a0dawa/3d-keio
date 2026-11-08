@@ -272,6 +272,7 @@ Claude は地図・航空写真・自分の描画を安定して見られない�
 | `plateau_land.js` | `globalThis.PLATEAU_LAND={road64,land64,…}`。`road64`=道路区域(`PLR1`:一般/幹線/自動車専用・道路/橋梁/トンネル/交差部)、`land64`=緑・農地・山林・駐車場・水面(`PLU1`)。道路12,343面・地表2,120面、0.8MB | `tools/plateau_land.py` |
 | `plateau_tex.js` | `globalThis.PLATEAU_TEX={atlases:[{w,h,jpg}],uv64,…}`。LOD2 の面の写真の詰め合わせ(JPEG)と面ごとの u,v(`PTX1`)。描く531棟・5.5MB。`plateau_bldg.js` と建物の並び・LOD2 の面がバイト単位で一致することを道具が確かめる | `tools/plateau_tex.py`(`--used` は `tools/plateau_used.js`) |
 | `plateau_dem.js` | `globalThis.PLATEAU_DEM={x0,z0,dx,nx,nz,h0,q,r64,h64,…}`。地形モデル(dem の TIN)の 10m 格子の標高(帯の中だけ。行ごとの範囲 `r64`+uint16 `h64`)。0.4MB | `tools/plateau_dem.py` |
+| `gsi_trees.js` | `globalThis.GSI_TREES={src,o:[緯度,経度],n,d:'x,z,r,…'}`。地理院タイルの航空写真(z18)から推定した木の中心と樹冠の半径(原点からの 0.1m の差)。約2.3万本・0.2MB(2026-11) | `tools/ortho_trees.py`(帯は駅の折れ線から 480m。PLATEAU に依らないので全国で使える) |
 | `reference/plateau/bldg_ground.json` | 建物ごとの地盤の高さ(LOD1 の最も低い標高。`plateau_bldg.js` と同じ並び)。地形の検証の基準(⑦) | `tools/plateau_ground.py` |
 
 - 形式は各道具の先頭の説明に書いてある(リトルエンディアン・0.1m 単位の差分)。HTML は `plbDecode`・`plbDecodeL2`・`plrDecode` で読む
@@ -674,7 +675,7 @@ Claude は地図・航空写真・自分の描画を安定して見られない�
   (車両の外観・塗装・ロゴ・駅のデザイン=事業者と設計者)・参考にした資料
 - ライセンス(京王の例):プログラム=MIT・データと文書=CC BY 4.0・`plateau_*.js`=CC BY 4.0。事業者の社名・ロゴ・意匠は対象外と明記
 - 「非公式であること」を README と画面に書く
-- **公開フォルダに要る物**:HTML・`plateau_bldg.js`・`plateau_land.js`・`plateau_tex.js`・`plateau_dem.js`・`LICENSE`・`CREDITS.txt`(`README.md` はあれば親切)。
+- **公開フォルダに要る物**:HTML・`plateau_bldg.js`・`plateau_land.js`・`plateau_tex.js`・`plateau_dem.js`・`gsi_trees.js`・`LICENSE`・`CREDITS.txt`(`README.md` はあれば親切)。
   three.js は cdnjs から読む。`tools/`・`reference/`・`CLAUDE.md`・`TEMPLATE.md`・本書は開発用
 
 ---

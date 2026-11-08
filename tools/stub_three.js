@@ -95,11 +95,12 @@ class Renderer {
     this.info = soft({ render: soft({ calls: 0, triangles: 0 }) });
     this.domElement = anything;
     this.frames = 0;
+    this.sceneLog = [];     // render に渡された場面の記録(後処理の画面の描画と、場面そのものの描画を分けて数える)
     this.copies = [];       // copyTextureToTexture の記録
     return soft(this);
   }
   setPixelRatio() {} setSize() {} setClearColor() {} compile() {}
-  render() { this.frames++; }
+  render(sc) { this.frames++; this.sceneLog.push(sc); }
   // 画像の一部への書き込み(航空写真のタイルを枠へ書く)。どの画像のどこへ何を書いたか・縮小の段を作り直したか(mip)を残す
   copyTextureToTexture(pos, src, dst) {
     this.copies.push({ x: pos.x, y: pos.y, src: src && src.image ? (src.image.src || (src.image.data ? 'data' : '?')) : '?', dst: dst, mip: !!(dst && dst.generateMipmaps) });
@@ -356,7 +357,7 @@ module.exports = function runHtml(htmlPath, exportExpr) {
   if (!m) { console.error('NO_SCRIPT'); process.exit(1); }
   install();
   // 別ファイルの沿線の建物データ(<script src="plateau_bldg.js">)。HTML と同じ場所にあれば先に読む
-  for (const nm of ['plateau_bldg.js', 'plateau_land.js', 'plateau_tex.js', 'plateau_dem.js']) {
+  for (const nm of ['plateau_bldg.js', 'plateau_land.js', 'plateau_tex.js', 'plateau_dem.js', 'gsi_trees.js']) {
     const pl = nodePath.join(nodePath.dirname(htmlPath), nm);
     if (html.includes('<script src="' + nm + '">') && fs.existsSync(pl)) (0, eval)(fs.readFileSync(pl, 'utf8'));
   }
