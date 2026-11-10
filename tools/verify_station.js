@@ -513,7 +513,7 @@ ok('乗務員モニターを置かない', !X.STRUCT.some((q) => q.tag === '乗�
    芦花公園の相対式ホームを2m ずつ広く(4.5→6.5m) */
 {
   const RW = { QUAD: ['明大前', '桜上水', '千歳烏山'], QUAD_W: 5.0 + 1.5 + 1.4, TIP: 226.5 - 30 - 50, TIP_TOL: 3, ROKA_W: 4.5 + 2, EDGE: [1.40, 1.60], PSD_IN: 0.12,
-    SENGAWA_N: 3.4 + 5, INO_W: 3.4 + 5, INO_EDGE: 1.40 + 0.15, INO_CLEAR: 0.5, INO_FLOOR: 1.05 };   // 井の頭線:縁=車体の半幅 1.40+0.15・床はレール面+1.05
+    SENGAWA_N: 3.4 + 5, INO_W: 3.4 + 5, INO_EDGE: 1.40 + 0.15, INO_CLEAR: 0.5, INO_FLOOR: 1.15 };   // 井の頭線:縁=車体の半幅 1.40+0.15・床はレール面+1.15(京王1000系の公表の床面高さ 1,150mm。2026-11 から)
   // ホームの幅
   let bW = null;
   for (const n of RW.QUAD) {

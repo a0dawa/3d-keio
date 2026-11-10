@@ -47,6 +47,9 @@ const REF = {
   XRAIL_HALF: { 井の頭線: 13.0, 世田谷線: 3.7 },   // 井の頭線は 2026-10-27 から下の INO_CLEAR(線路から測る)。13.0 は写真の検査で近くを除く幅だけに使う
   INO_CLEAR: 3.2,           // 井の頭線:建物は実際の線路の中心から 3.2m(擁壁の外面)より外。ホームの範囲は INO_PLAT_CLEAR
   INO_PLAT_CLEAR: 1.55 + 8.4 + 0.5 + 0.3,   // ホームの縁 1.55+幅 8.4+背面の擁壁 0.5(+厚さの半分)
+  // 占有域に掛かっても描く建物(2026-11 利用者指示「フレンテ明大前…被っても表示させて」)。PLATEAU の足跡の面積の重心(reference/plateau/README.md)。
+  // ホームの範囲でも INO_CLEAR(線路から 3.2m)の外ならよい。街に有ることも見る
+  KEEP_SHOW: [{ n: 'フレンテ明大前', lat: 35.66893362, lon: 139.65020239, h: 29.6 }],
   INO_KEEP_MAX: 4.0,        // 井の頭線の脇の建物を消しすぎない:ホームの外で、線路の中心から この距離の外の建物は残る   // 世田谷線は線路の脇まで建物が建つ(架線柱の外まで。2026-10-27 利用者指示)
   SETA_TERM: { u: -48, hw: 6.6 },   // 世田谷線の終端(u=0)から 48m はホームと上屋があるので 6.6m
   SETA_KEEP_MAX: 4.5,       // 世田谷線の脇の建物を消しすぎない:終端の外では、線路の中心から この距離の内に掛かって外した建物が無い
@@ -149,7 +152,7 @@ const KV = (() => {
     ROW.push([[a[0] + oa[0], a[1] + oa[1]], [b[0] + ob[0], b[1] + ob[1]], [b[0] - ob[0], b[1] - ob[1]], [a[0] - oa[0], a[1] - oa[1]]]); }
   const ccw = (P) => { let A = 0; for (let i = 0; i < P.length; i++) { const a = P[i], b = P[(i + 1) % P.length]; A += a[0] * b[1] - b[0] * a[1]; } return A > 0 ? P : P.slice().reverse(); };
   const S = []; {
-    const [D0, D1, D2, , D4] = D, edge = (s) => { const f = X.frame(s, -X.deckHalf(s)); return [f.x, f.z]; };
+    const [D0, D1, D2, , D4] = D, edge = (s) => { const f = X.frame(s, -X.deckHalf(s, -1)); return [f.x, f.z]; };
     const onN = (s) => { const p = X.frame(s, 0), q = X.frame(s, 1), nx = q.x - p.x, nz = q.z - p.z, bx = D1[0] - D0[0], bz = D1[1] - D0[1], t = ((D0[0] - p.x) * bz - (D0[1] - p.z) * bx) / (nx * bz - nz * bx); return [p.x + nx * t, p.z + nz * t]; };
     const clip = (Q, a, b) => { const o = [], f = (q) => (b[0] - a[0]) * (q[1] - a[1]) - (b[1] - a[1]) * (q[0] - a[0]);   // 線 a→b の左を残す
       for (let i = 0; i < Q.length; i++) { const p = Q[i], q = Q[(i + 1) % Q.length], fp = f(p), fq = f(q); if (fp >= 0) o.push(p);
@@ -200,9 +203,27 @@ const MV = (() => {
   return { D: D, C: C, ROW: ROW, H: H, bb: bb, rowD: rowD, planD: planD, aD: (x, z) => polyDist(D, x, z), near: near, area: area(D), len: len, Q: Q,
     inPlan: (x, z, r) => near(x, z, r + 1) && planD(x, z) < r };
 })();
-// 計画の区域の和(千歳烏山 KV と明大前 MV)。地表の道路の深さ・地形を平らに・航空写真・交差部で、区域の別なく使う所
-const PV = { H: KV.H.concat(MV.H), near: (x, z, r) => KV.near(x, z, r) || MV.near(x, z, r), rowD: (x, z) => Math.min(KV.rowD(x, z), MV.rowD(x, z)),
-  planD: (x, z) => Math.min(KV.planD(x, z), MV.planD(x, z)), inPlan: (x, z, r) => KV.inPlan(x, z, r) || MV.inPlan(x, z, r), segOut: KV.segOut };
+/* 放射第23号線(都市計画。2026-11)の検証側の形:tools/h23_ref.js の中心線と幅から、区間ごとの四角形(継ぎ目は角の二等分線)の帯 ROW と外形 O を組む
+   (HTML の H23 は読まない)。帯は道路になり、帯の既存の道路・建物・木は無い。地形は平らにしない */
+const HR = require('./h23_ref');
+const HV = (() => {
+  const C = HR.c.map((p) => HR.toXY(X, p)), n = C.length;
+  const nr = (i) => { const a = C[i], b = C[i + 1], l = Math.hypot(b[0] - a[0], b[1] - a[1]); return [-(b[1] - a[1]) / l, (b[0] - a[0]) / l]; };
+  const of = C.map((_, i) => { const n0 = nr(Math.max(0, i - 1)), n1 = nr(Math.min(n - 2, i)), m = [n0[0] + n1[0], n0[1] + n1[1]], l = Math.hypot(m[0], m[1]), c = (m[0] * n1[0] + m[1] * n1[1]) / l, h = HR.w[i] / 2;
+    return [m[0] / l * h / c, m[1] / l * h / c]; });
+  const ccw = (P) => { let A = 0; for (let i = 0; i < P.length; i++) { const a = P[i], b = P[(i + 1) % P.length]; A += a[0] * b[1] - b[0] * a[1]; } return A > 0 ? P : P.slice().reverse(); };
+  const ROW = []; for (let i = 0; i < n - 1; i++) { const a = C[i], b = C[i + 1], oa = of[i], ob = of[i + 1];
+    ROW.push(ccw([[a[0] + oa[0], a[1] + oa[1]], [b[0] + ob[0], b[1] + ob[1]], [b[0] - ob[0], b[1] - ob[1]], [a[0] - oa[0], a[1] - oa[1]]])); }
+  const O = ccw(C.map((a, i) => [a[0] + of[i][0], a[1] + of[i][1]]).concat(C.map((a, i) => [a[0] - of[i][0], a[1] - of[i][1]]).reverse()));
+  const bb = [1e9, -1e9, 1e9, -1e9]; for (const q of O) { bb[0] = Math.min(bb[0], q[0]); bb[1] = Math.max(bb[1], q[0]); bb[2] = Math.min(bb[2], q[1]); bb[3] = Math.max(bb[3], q[1]); }
+  const near = (x, z, r) => x > bb[0] - r && x < bb[1] + r && z > bb[2] - r && z < bb[3] + r;
+  const rowD = (x, z) => near(x, z, 12) ? polyDist(O, x, z) : 12;           // 帯までの距離(中は負。12m より遠くは 12)
+  let len = 0; for (let i = 0; i + 1 < n; i++) len += Math.hypot(C[i + 1][0] - C[i][0], C[i + 1][1] - C[i][1]);
+  return { C: C, ROW: ROW, O: O, H: ROW, bb: bb, near: near, rowD: rowD, planD: rowD, len: len, inPlan: (x, z, r) => near(x, z, r + 1) && polyDist(O, x, z) < r };
+})();
+// 計画の区域の和(千歳烏山 KV・明大前 MV・放射第23号線 HV)。地表の道路の深さ・航空写真・交差部で、区域の別なく使う所(地形を平らにするのは KV・MV だけ)
+const PV = { H: KV.H.concat(MV.H, HV.H), near: (x, z, r) => KV.near(x, z, r) || MV.near(x, z, r) || HV.near(x, z, r), rowD: (x, z) => Math.min(KV.rowD(x, z), MV.rowD(x, z), HV.rowD(x, z)),
+  planD: (x, z) => Math.min(KV.planD(x, z), MV.planD(x, z), HV.planD(x, z)), inPlan: (x, z, r) => KV.inPlan(x, z, r) || MV.inPlan(x, z, r) || HV.inPlan(x, z, r), segOut: KV.segOut };
 /* 実データの道路(plateau_land.js)。検証側で独自に読む(モデルの登録簿ではなくファイルそのもの) */
 const LAND = (() => {
   const fs = require('fs'), pth = require('path');
@@ -256,7 +277,7 @@ const LAND = (() => {
      既存の道路の中の部分(0.2m ごとの点)までの距離(10m の格子で引く。10m より遠くは 10m 以上としか分からないが検査には足りる) */
   let depthP = depth;
   if (KARA_DATA) {
-    const NR = out.filter((R) => !(R.k === 2 && R.sec === 2) && [KV, MV].some((V) => R.bb[1] > V.bb[0] - 40 && R.bb[0] < V.bb[1] + 40 && R.bb[3] > V.bb[2] - 40 && R.bb[2] < V.bb[3] + 40));   // 2026-11 から明大前(MV)も
+    const NR = out.filter((R) => !(R.k === 2 && R.sec === 2) && [KV, MV, HV].some((V) => R.bb[1] > V.bb[0] - 40 && R.bb[0] < V.bb[1] + 40 && R.bb[3] > V.bb[2] - 40 && R.bb[2] < V.bb[3] + 40));   // 2026-11 から明大前(MV)も
     const G = new Map(), GC = 10, put = (x0, x1, z0, z1, o) => { for (let a = Math.floor(x0 / GC); a <= Math.floor(x1 / GC); a++) for (let c = Math.floor(z0 / GC); c <= Math.floor(z1 / GC); c++) { const k = a + ',' + c; if (!G.has(k)) G.set(k, []); G.get(k).push(o); } };
     for (const R of NR) for (let i = 0; i < R.P.length; i++) { let segs = [[R.P[i], R.P[(i + 1) % R.P.length]]];
       for (const Q of PV.H) segs = [].concat(...segs.map(([a, b]) => PV.segOut(a, b, Q)));
@@ -288,7 +309,7 @@ ok('樹木の数', T.length >= REF.MIN_TREES, '≥' + REF.MIN_TREES + '本', T.l
   for (const e of ALL) for (const q of pts(e.o)) {
     // 掘割(DECK_END より西)は側ごとの幅(仙川の北は単式ホームの分だけ広い)
     const south = q.off < 0 && q.s <= X.DECK_END && !inStaZone(q.s);
-    const lim = (q.s > X.DECK_END ? X.cutHalf(q.s, q.off < 0 ? -1 : 1) : X.deckHalf(q.s)) + (south ? REF.SOUTH_CLEAR : REF.DECK_CLEAR);
+    const lim = (q.s > X.DECK_END ? X.cutHalf(q.s, q.off < 0 ? -1 : 1) : X.deckHalf(q.s, q.off < 0 ? -1 : 1)) + (south ? REF.SOUTH_CLEAR : REF.DECK_CLEAR);
     if (Math.abs(q.off) - q.r < lim && !bad)
       bad = [e.kind, 's=' + q.s.toFixed(0), 'off=' + q.off.toFixed(1), '限界' + lim.toFixed(1)];
   }
@@ -299,11 +320,11 @@ ok('樹木の数', T.length >= REF.MIN_TREES, '≥' + REF.MIN_TREES + '本', T.l
    SOUTH_MIN_N 棟以上(以前は 4.6m より内に 0 棟。実際の建物は線路の脇の道路の外に建つ物が多く、壁の近くまで来るのは約40棟)。南へ出た構造物(登録簿 STRUCT=高欄・外装・庇)の外面から SOUTH_WALL の内に建物・木が無い */
 {
   let nNear = 0, bad = null;
-  const SB = X.STRUCT.filter((q) => q.o0 < 0 && Math.min(q.s0, q.s1) < X.DECK_END && -q.o0 > X.deckHalf((q.s0 + q.s1) / 2) - 0.5);
+  const SB = X.STRUCT.filter((q) => q.o0 < 0 && Math.min(q.s0, q.s1) < X.DECK_END && -q.o0 > X.deckHalf((q.s0 + q.s1) / 2, -1) - 0.5);
   const SG = new Map(); for (const q of SB) for (let k = Math.floor(Math.min(q.s0, q.s1) / 10); k <= Math.floor(Math.max(q.s0, q.s1) / 10); k++) { if (!SG.has(k)) SG.set(k, []); SG.get(k).push(q); }
   for (const e of ALL) { let near = false;
     for (const q of pts(e.o)) { if (q.off >= 0 || q.s > X.DECK_END) continue;
-      const d = -q.off - q.r - X.deckHalf(q.s);
+      const d = -q.off - q.r - X.deckHalf(q.s, -1);
       if (e.kind === '建物' && !inStaZone(q.s) && d >= REF.SOUTH_NEAR[0] - 0.05 && d < REF.SOUTH_NEAR[1]) near = true;
       for (const S of SG.get(Math.floor(q.s / 10)) || []) {
         if (q.s > Math.min(S.s0, S.s1) - q.r - REF.SOUTH_WALL && q.s < Math.max(S.s0, S.s1) + q.r + REF.SOUTH_WALL &&
@@ -320,17 +341,21 @@ ok('樹木の数', T.length >= REF.MIN_TREES, '≥' + REF.MIN_TREES + '本', T.l
 {
   const lines = [['井の頭線', XC.INO, X.XR.U0, X.XR.U1], ['世田谷線', XC.SETA, X.XR.SETA_U0, X.XR.SETA_U1]];
   let bad = null, worst = 1e9;
+  const SHOW = REF.KEEP_SHOW.map((q) => ({ n: q.n, h: q.h, x: (q.lon - X.LON0) * X.MLON, z: -(q.lat - X.LAT0) * X.MLAT, e: null }));
+  const cenA = (P) => { let A = 0, cx = 0, cz = 0; for (let i = 0; i < P.length; i++) { const a = P[i], c = P[(i + 1) % P.length], w = a[0] * c[1] - c[0] * a[1]; A += w; cx += (a[0] + c[0]) * w; cz += (a[1] + c[1]) * w; } return [cx / (3 * A), cz / (3 * A)]; };
+  for (const e of ALL) if (e.kind === '建物' && POLY(e.o)) { const [cx, cz] = cenA(e.o.poly); for (const q of SHOW) if (Math.hypot(cx - q.x, cz - q.z) < 2) { q.e = e; e.show = true; } }
   for (const [nm, A, u0, u1] of lines) {
     for (const e of ALL) for (const q of pts(e.o)) {
       const p = A.uv(q.x, q.z), du = p.u, dn = Math.abs(p.n);
       if (du < u0 - q.r || du > u1 + q.r) continue;      // 線路の延長の外
       let clear = dn - q.r, lim = nm === '世田谷線' && du > REF.SETA_TERM.u ? REF.SETA_TERM.hw : REF.XRAIL_HALF[nm];
-      if (nm === '井の頭線') { if (dn > 25) continue; const sd = p.n < 0 ? 0 : 1; clear = dn - Math.abs(A.trackV(sd, du)) - q.r; lim = inoPlat(sd, du, 1.5) ? REF.INO_PLAT_CLEAR : REF.INO_CLEAR; }
+      if (nm === '井の頭線') { if (dn > 25) continue; const sd = p.n < 0 ? 0 : 1; clear = dn - Math.abs(A.trackV(sd, du)) - q.r; lim = inoPlat(sd, du, 1.5) && !e.show ? REF.INO_PLAT_CLEAR : REF.INO_CLEAR; }
       if (clear - lim < worst) worst = clear - lim;
       if (clear < lim && !bad)
         bad = [nm, e.kind, 'u=' + du.toFixed(0), '離隔' + clear.toFixed(1) + 'm'];
     }
   }
+  for (const q of SHOW) ok(q.n + 'を描く', !!q.e && Math.abs(q.e.o.h - q.h) < 0.2, '交差鉄道の占有域に掛かっても街に有る(高さ ' + q.h + 'm)', q.e ? '有り・高さ ' + q.e.o.h.toFixed(1) + 'm' : '無い');
   ok('交差鉄道の上に無い', bad === null,
     '井の頭線は線路から ' + REF.INO_CLEAR + 'm(ホーム ' + REF.INO_PLAT_CLEAR.toFixed(2) + 'm)・世田谷線は中心から ' + REF.XRAIL_HALF['世田谷線'] + 'm(終端 ' + REF.SETA_TERM.hw + 'm)',
     bad ? bad.join(' ') : '余裕' + worst.toFixed(1) + 'm');
@@ -377,8 +402,9 @@ ok('樹木の数', T.length >= REF.MIN_TREES, '≥' + REF.MIN_TREES + '本', T.l
 {
   let bad = null;
   for (const c of REF.CROSS) {
-    // 実データの道路があるときは、道路は「実際の道路の上に無い」で見る。ここは模式のまま描く物(計画の放射23・玉川上水)だけ
-    if (LAND && !['放射23', '玉川上水'].includes(c[0])) continue;
+    // 実データの道路があるときは、道路は「実際の道路の上に無い」で見る。ここは模式のまま描く物(玉川上水)だけ。
+    // 計画の放射23 は 2026-11 から計画の形(4l。h23_ref.js の帯)で見る
+    if (LAND && !['玉川上水'].includes(c[0])) continue;
     const cs = X[c[1]], hw = c[2], oh = c[3] === undefined ? 1e9 : c[3];
     for (const e of ALL) for (const q of pts(e.o)) {
       if (Math.abs(q.off) > oh) continue;
@@ -386,7 +412,7 @@ ok('樹木の数', T.length >= REF.MIN_TREES, '≥' + REF.MIN_TREES + '本', T.l
         bad = [c[0], e.kind, 's=' + q.s.toFixed(0), 'off=' + q.off.toFixed(0)];
     }
   }
-  ok('交差道路の上に無い', bad === null, LAND ? '放射23・玉川上水(他は実データ)' : REF.CROSS.length + '路線すべて',
+  ok('交差道路の上に無い', bad === null, LAND ? '玉川上水(他は実データ・放射23 は 4l)' : REF.CROSS.length + '路線すべて',
     bad ? bad.join(' ') : ALL.length + '件すべて');
 
   let bp = null;
@@ -453,8 +479,7 @@ if (LAND) {
   // 京王線を横切る道路を検証側で見つける
   const xing = []; let a = null;
   for (let s = Math.floor(X.DOM.x0); s <= X.DECK_END + 1; s++) {
-    const dh = X.deckHalf(s);
-    const on = [0, -dh, dh].every((o) => { const f = X.frame(s, o); return LAND.depth(f.x, f.z) < 0; });
+    const on = [0, -X.deckHalf(s, -1), X.deckHalf(s, 1)].every((o) => { const f = X.frame(s, o); return LAND.depth(f.x, f.z) < 0; });
     if (on) { if (a === null) a = s; } else if (a !== null) { if (s - a >= REF.XING_MIN) xing.push([a, s - 1]); a = null; }
   }
   let bc = null, nc = 0;
@@ -473,8 +498,7 @@ if (LAND) {
   // 自動車道の高架
   let be = null, ne = 0;
   for (let s = Math.floor(X.DOM.x0); s <= X.DECK_END; s += 2) {
-    const dh = X.deckHalf(s);
-    for (const o of [0, -dh, dh]) {
+    for (const o of [0, -X.deckHalf(s, -1), X.deckHalf(s, 1)]) {
       const f = X.frame(s, o);
       if (!LAND.elev.some((R) => polyDist(R.P, f.x, f.z) < 0)) continue;
       ne++;
@@ -487,7 +511,7 @@ if (LAND) {
   }
   for (const pr of X.EXPY.piers) {
     const q = X.prjXY(pr[0], pr[1]);
-    if (q.s > X.DOM.x0 - 50 && q.s < X.DECK_END + 50 && Math.abs(q.off) < X.deckHalf(q.s) + REF.DECK_CLEAR + 1.0 && !be)
+    if (q.s > X.DOM.x0 - 50 && q.s < X.DECK_END + 50 && Math.abs(q.off) < X.deckHalf(q.s, q.off < 0 ? -1 : 1) + REF.DECK_CLEAR + 1.0 && !be)
       be = ['橋脚が高架下・側道に', 's=' + q.s.toFixed(0), 'off=' + q.off.toFixed(1)];
   }
   ok('自動車道の高架が京王線と当たらない', be === null && X.EXPY.deck.length === LAND.elev.filter((R) => R.P.some((v) => { const q = X.prjXY(v[0], v[1]); return q.s > X.DOM.x0 - 150 && q.s < X.DOM.x1 + 150 && Math.abs(q.off) < X.DOM.z + 60; })).length,
@@ -1543,7 +1567,7 @@ else {
           let dmin = 1e9;   // 足跡の点の (|off| − 構造物の半幅) の最小
           for (let i = 0; i < P.length; i++) { const a = P[i], c = P[(i + 1) % P.length], m = Math.max(1, Math.ceil(Math.hypot(c[0] - a[0], c[1] - a[1]) / 2));
             for (let k = 0; k < m; k++) { const pq = X.prjXY(a[0] + (c[0] - a[0]) * k / m, a[1] + (c[1] - a[1]) * k / m), sg = pq.off < 0 ? -1 : 1;
-              dmin = Math.min(dmin, Math.abs(pq.off) - (pq.s > X.DECK_END ? X.cutHalf(pq.s, sg) : X.deckHalf(pq.s))); } }
+              dmin = Math.min(dmin, Math.abs(pq.off) - (pq.s > X.DECK_END ? X.cutHalf(pq.s, sg) : X.deckHalf(pq.s, sg))); } }
           RM.push({ P: P, cx: cx, cz: cz, d: dmin });
         }
       } }
@@ -1555,7 +1579,7 @@ else {
     if (!dat || dat.length !== mw * mh || MT.magFilter !== 1006 || MT.minFilter !== 1006) bad = '帯の印の画像が無いか、双線形でない';
     else {
       for (let s = X.DOM.x0 + 1.5; s <= X.DOM.x1 - 1.5 && !bad; s += 5) for (const sg of [-1, 1]) {   // 事業区間の端ちょうどは帯の縁(0.5)
-        const hw = s > X.DECK_END ? X.cutHalf(s, sg) : X.deckHalf(s);
+        const hw = s > X.DECK_END ? X.cutHalf(s, sg) : X.deckHalf(s, sg);
         for (const o of [0, sg * hw * 0.5, sg * hw, sg * (hw + REF_OR.BAND_IN)]) { const f = X.frame(s, o), m = mwt(f.x, f.z); nIn++;
           if (m > 0.05 && !bad) bad = '帯の中 s=' + s + ' off=' + o.toFixed(1) + ' の写真の割合 ' + m.toFixed(2); }
         const f = X.frame(s, sg * (hw + REF_OR.BAND_OUT)); if (nearXR(f.x, f.z)) continue;
@@ -1583,7 +1607,7 @@ else {
         else if (r.d >= REF_OR.FAR_RM && !nearXR(r.cx, r.cz)) { fN++; if (m >= 0.95) fOK++; } }
       for (const r of KP) { if (!inP(r.P, r.cx, r.cz)) continue;
         // 高架の南で壁の 1m 付近まで建てた建物(2026-11)のうち、重心が線路の帯(写真を使わない帯)の中の物は今の色でよい
-        const pq = X.prjXY(r.cx, r.cz); if (pq.off < 0 && pq.s <= X.DECK_END && pq.s > X.DOM.x0 && -pq.off - X.deckHalf(pq.s) < REF_OR.BAND_OUT) continue;
+        const pq = X.prjXY(r.cx, r.cz); if (pq.off < 0 && pq.s <= X.DECK_END && pq.s > X.DOM.x0 && -pq.off - X.deckHalf(pq.s, -1) < REF_OR.BAND_OUT) continue;
         kN++; if (mwt(r.cx, r.cz) >= 0.95) kOK++; } }
     ok('航空写真:外した建物の足跡は今の色', rmN >= 100 && rmBad <= rmN * REF_OR.HOLE_MISS && fN >= 50 && fOK >= fN * 0.95 && kN > 9000 && kOK >= kN * REF_OR.KEEP_PHOTO,
       '線路の帯で外した実際の建物(plateau_bldg.js を検証側で読み、足跡が構造物の半幅+4.6m に掛かる物)の重心で写真 0.05 以下(' + (REF_OR.HOLE_MISS * 100) + '% まで)・' +
@@ -1600,7 +1624,12 @@ else {
       let badM = null, nM = 0;
       for (let x = MV.bb[0]; x <= MV.bb[1]; x += 3) for (let z = MV.bb[2]; z <= MV.bb[3]; z += 3) { if (!(MV.planD(x, z) < -0.6)) continue; nM++; const m = mwt(x, z);
         if (m > 0.05 && !badM) badM = '(' + x.toFixed(0) + ',' + z.toFixed(0) + ') の写真の割合 ' + m.toFixed(2); }
-      ok('航空写真:明大前の計画は今の色', badM === null && nM > 300, '明大前駅前広場と補助第154号線の帯(meida_ref.js)の縁の 0.6m 内は写真 0.05 以下', badM || nM + '点'); } }
+      ok('航空写真:明大前の計画は今の色', badM === null && nM > 300, '明大前駅前広場と補助第154号線の帯(meida_ref.js)の縁の 0.6m 内は写真 0.05 以下', badM || nM + '点');
+      // 放射第23号線の帯(h23_ref.js。2026-11)も今の色
+      let badH = null, nH = 0;
+      for (let x = HV.bb[0]; x <= HV.bb[1]; x += 3) for (let z = HV.bb[2]; z <= HV.bb[3]; z += 3) { if (!(polyDist(HV.O, x, z) < -0.6)) continue; nH++; const m = mwt(x, z);
+        if (m > 0.05 && !badH) badH = '(' + x.toFixed(0) + ',' + z.toFixed(0) + ') の写真の割合 ' + m.toFixed(2); }
+      ok('航空写真:放射第23号線の計画は今の色', badH === null && nH > 1500, '放射第23号線の帯(h23_ref.js)の縁の 0.6m 内は写真 0.05 以下', badH || nH + '点'); } }
   // (e) 貼る面
   { let bad = null; const cnt = { all: 0, top: 0, roof: 0, none: 0, photo: 0 }, seen = new Set();
     const UN = ['uOrtho0', 'uOrtho1', 'uOrtho2', 'uOrthoMask', 'uOr0', 'uOr1', 'uOr2', 'uOw0', 'uOw1', 'uOw2', 'uOq', 'uOm', 'uOf', 'uOrthoOn', 'uOrthoGain', 'uOrthoSnow', 'uOrthoBand'];
@@ -2002,6 +2031,37 @@ if (KARA_DATA) {
       'バス ' + MR.BUS + '・タクシー ' + MR.TAXI + '台以上が車道の上(中心と前後の端・両脇 0.8m)・人 ' + MR.MIN_PEOPLE + '人以上が舗装の上・街灯 ' + MR.MIN_LAMPS + '本以上が舗装の上',
       bad || 'バス ' + bus + '・タクシー ' + taxi + '・人 ' + nPp + '+往復 ' + nW + '・街灯 ' + LM.length); }
 }
+/* ---- 4l. 放射第23号線(都市計画。2026-11 利用者指示「明大前駅の東側にある放射第23号線が直線の帯のみになっているので、計画に従った幅や曲線を
+   描くようにして」)--------------------------------------------------------------------------------------------------------------
+   検証側の基準 tools/h23_ref.js(HV)で:基準の中心線の長さが公表の延長の ±5%・幅が公表の範囲/帯の中(縁から 0.6m 内)の点がモデルの幹線の面
+   (ROADS_PL の k=1)の上で、既存の道路の面の上でない/帯に既存の建物の足跡(0.3m 内)と木が無い/高架の柱が帯の縁から 1m 以上/帯の縁に公表の幅
+   4.25m の歩道/以前の模式の帯(MAT.roadPlan の面)が無い */
+if (KARA_DATA) {
+  const RP = X.ROADS_PL || [], RG = new Map(), RC = 30;
+  for (const R of RP) { if (!R.bb) continue; for (let a = Math.floor(R.bb[0] / RC); a <= Math.floor(R.bb[1] / RC); a++) for (let c = Math.floor(R.bb[2] / RC); c <= Math.floor(R.bb[3] / RC); c++) { const k = a + ',' + c; if (!RG.has(k)) RG.set(k, []); RG.get(k).push(R); } }
+  // 面の縁から 0.05m 内も面の上(区間の継ぎ目の上の点)
+  const at = (x, z) => (RG.get(Math.floor(x / RC) + ',' + Math.floor(z / RC)) || []).filter((R) => R.k !== 2 && x > R.bb[0] - 0.05 && x < R.bb[1] + 0.05 && z > R.bb[2] - 0.05 && z < R.bb[3] + 0.05 && polyDist(R.P, x, z) < 0.05);
+  let bad = null, n = 0;
+  for (let i = 0; i + 1 < HV.C.length && !bad; i++) { const a = HV.C[i], b = HV.C[i + 1], L = Math.hypot(b[0] - a[0], b[1] - a[1]), nx = -(b[1] - a[1]) / L, nz = (b[0] - a[0]) / L;
+    for (let t = i === 0 ? 0.6 : 0; t < L - (i + 2 === HV.C.length ? 0.6 : 0); t += 2) { const h = (HR.w[i] + (HR.w[i + 1] - HR.w[i]) * t / L) / 2 - 0.6;   // 幅の変わる区間は区間の中で補間
+    for (const v of [-h, -h / 2, 0, h / 2, h]) {   // 帯の両端は 0.6m 内から
+      const x = a[0] + (b[0] - a[0]) * t / L + nx * v, z = a[1] + (b[1] - a[1]) * t / L + nz * v; n++;
+      const l = at(x, z); if (!l.some((R) => R.k === 1) && !bad) bad = '(' + x.toFixed(1) + ',' + z.toFixed(1) + ') に幹線の面が無い';
+      else if (l.some((R) => R.k !== 1) && !bad) bad = '(' + x.toFixed(1) + ',' + z.toFixed(1) + ') に既存の道路の面が残る'; } } }
+  const wOK = HR.w.every((v) => v >= HR.W[0] && v <= HR.W[1]);
+  ok('放射第23号線:計画の幅と曲線の道路', bad === null && n > 1500 && Math.abs(HV.len - HR.LEN) <= 0.05 * HR.LEN && wOK,
+    '基準の中心線の長さが公表の ' + HR.LEN + 'm の ±5%・幅 ' + HR.W.join('〜') + 'm/帯の中の点が幹線の面の上(既存の道路の面は無い)', bad || n + '点・長さ ' + HV.len.toFixed(0) + 'm');
+  let bB = null, nb = 0;
+  for (const e of ALL) { const o = e.o, qs = POLY(o) ? o.poly.map((p) => ({ x: p[0], z: p[1], r: 0 })) : [{ x: o.x, z: o.z, r: o.r || 0 }];
+    if (POLY(o)) { const P = o.poly; for (let i = 0; i < P.length; i++) { const a = P[i], c = P[(i + 1) % P.length], m = Math.max(1, Math.ceil(Math.hypot(c[0] - a[0], c[1] - a[1]))); for (let k = 1; k < m; k++) qs.push({ x: a[0] + (c[0] - a[0]) * k / m, z: a[1] + (c[1] - a[1]) * k / m, r: 0 }); } }
+    for (const q of qs) { if (!HV.near(q.x, q.z, 3)) continue; nb++; if (polyDist(HV.O, q.x, q.z) < -(e.kind === '建物' ? 0.3 : 0) - q.r && !bB) bB = e.kind + ' (' + q.x.toFixed(1) + ',' + q.z.toFixed(1) + ') が帯の中'; } }
+  let bC = null; for (const c of X.VIA_COLS) for (const o of c.offs) { const f = X.frame(c.s, o); if (polyDist(HV.O, f.x, f.z) < 1.0 && !bC) bC = '柱 s=' + c.s.toFixed(0) + ' off=' + o.toFixed(1) + ' が帯の縁から ' + polyDist(HV.O, f.x, f.z).toFixed(2) + 'm'; }
+  let nSW = 0; for (const W of X.SIDEWALKS || []) if (Math.abs(W.w - HR.SW) < 0.01) for (const [u0, u1] of W.seg || []) { const q = W.f((u0 + u1) / 2), d = polyDist(HV.O, q.x, q.z); if (d < -HR.SW / 2 + 0.3 && d > -HR.SW / 2 - 0.3) nSW++; }
+  let plan = 0; X.scene.traverse((o) => { if (o.isMesh && o.material === X.MAT.roadPlan) plan++; });
+  ok('放射第23号線:帯の中の建物・木・柱・歩道', bB === null && bC === null && nSW >= 60 && plan === 0 && nb > 0,
+    '帯に建物の足跡(0.3m 内)・木が無い・柱は帯の縁から 1m 以上・縁に幅 ' + HR.SW + 'm の歩道の片 60以上(歩道は線路から 100m の内だけ)・模式の帯(MAT.roadPlan)が無い',
+    bB || bC || ('近くの点 ' + nb + '・歩道の片 ' + nSW + '・模式の帯 ' + plan)); }
+
 /* ---- 4i. 路面標示と交差点の設備(2026-11 利用者指示「更なるクオリティアップ」)------------------------------------------
    検証側で plateau_land.js を自前で読んだ道路(LAND。交差部 sec 4 も)と照合する(モデルの ROADS_PL は使わない):
    ・路面標示(白線・中央線・横断歩道・停止線・路面の文字)の頂点がどれも道路の面の上(縁から 0.05m 以内)・高さが地表+道路の高さ+0.02(±0.01)
@@ -2052,8 +2112,30 @@ if (LAND && X.ROAD_MARKS) {
     for (let i = 0; i + 2 < L.length; i++) { if (L[i].kind !== 'G' || L[i + 1].kind !== 'Y' || L[i + 2].kind !== 'R') continue; heads++; const seen = new Set();
       for (let t = 0; t < 60; t += 0.5) { const lit = [0, 1, 2].filter((j) => X.signalLit(L[i + j], t)); if (lit.length !== 1 && !bad) bad = '灯器 ' + i + ' の時刻 ' + t + ' に点く灯 ' + lit.length; seen.add(lit[0]); }
       if (seen.size !== 3 && !bad) bad = '灯器 ' + i + ' の色が回らない'; }
-    ok('交差点:信号', bad === null && M.signals.length >= 100 && heads === M.signals.length, '柱は道路の面の上・建物の外・交差部から 8m 以内/灯器は1灯ずつ点き 60秒で3色が回る・100基以上',
-      bad || M.signals.length + '基・灯器 ' + heads); }
+    const pzVeh = (M.plaza || []).reduce((a, r) => a + r.poles.filter((q) => q.k === '車').length, 0);   // 駅前広場の口の車両用(下の検査)
+    ok('交差点:信号', bad === null && M.signals.length >= 100 && heads === M.signals.length + pzVeh, '柱は道路の面の上・建物の外・交差部から 8m 以内/灯器は1灯ずつ点き 60秒で3色が回る・100基以上(灯器の数=交差部の柱+駅前広場の口の車両用)',
+      bad || M.signals.length + '基+広場の口 ' + pzVeh + '・灯器 ' + heads); }
+  /* 駅前広場の口(2026-11 利用者指示「明大前・千歳烏山駅の駅前広場にも横断歩道や自動車用信号を設置して(必要最低限)」):検証側の計画の形(kara_ref.js・
+     meida_ref.js から組んだ KV・MV)で、広場ごとに
+     ・口を渡る横断歩道の縞 8本以上:中心が計画の道路の帯の中で、広場の縁から 3.5m 以内(計画の道路の広場の側の歩道の帯)
+     ・計画の道路を渡る横断歩道の縞 6本以上:中心が帯の中
+     ・停止線 3本:計画の道路の両方向は帯の中、広場から出る車線は広場の中
+     ・信号:車両用 3基(計画の道路の2基は帯の中・広場から出る車の1基は広場の中か帯の中)と歩行者用 4基。どの柱も停止線か縞の 12m 以内 */
+  if (KARA_DATA) { let bad = null; const got = [];
+    for (const [nm, V, inA] of [['明大前', MV, (x, z) => polyDist(MV.D, x, z)], ['千歳烏山', KV, (x, z) => KV.aD(x, z)]]) {
+      const r = (M.plaza || []).find((q) => q.n === nm); if (!r) { bad = bad || nm + ' の口が無い'; continue; }
+      const nb = r.bars.filter((b) => V.rowD(b.x, b.z) < 0 && inA(b.x, b.z) <= 3.5).length, nx = r.xbars.filter((b) => V.rowD(b.x, b.z) < 0).length;
+      const sR = r.stops.filter((s) => V.rowD(s.x, s.z) < 0).length, sP = r.stops.filter((s) => inA(s.x, s.z) < 0).length;
+      const vp = r.poles.filter((q) => q.k === '車'), pp = r.poles.filter((q) => q.k === '歩');
+      const marks = r.stops.concat(r.bars, r.xbars), near = (q) => marks.some((m) => Math.hypot(m.x - q.x, m.z - q.z) < 12);
+      const vIn = vp.filter((q) => V.rowD(q.x, q.z) < 0.05 || inA(q.x, q.z) < 0).length;
+      got.push(nm + ' 縞 ' + nb + '/' + r.bars.length + '+' + nx + '・停止線 ' + sR + '+' + sP + '・信号 ' + vp.length + '+' + pp.length);
+      if (nb < 8 || nb !== r.bars.length) bad = bad || nm + ':口の縞 ' + nb + '/' + r.bars.length;
+      else if (nx < 6 || nx !== r.xbars.length) bad = bad || nm + ':計画の道路を渡る縞 ' + nx + '/' + r.xbars.length;
+      else if (r.stops.length !== 3 || sR !== 2 || sP !== 1) bad = bad || nm + ':停止線 帯 ' + sR + '・広場 ' + sP;
+      else if (vp.length !== 3 || pp.length !== 4 || vIn !== 3) bad = bad || nm + ':信号 車両 ' + vp.length + '(計画の中 ' + vIn + ')・歩行者 ' + pp.length;
+      else if (!r.poles.every(near)) bad = bad || nm + ':停止線・縞から 12m より遠い柱'; }
+    ok('駅前広場の口:横断歩道と信号', bad === null, '口を渡る縞 8本以上(帯の中・広場の縁から 3.5m)・計画の道路を渡る縞 6本以上・停止線 3本・車両用 3基と歩行者用 4基', bad || got.join(' / ')); }
   // 防護柵
   { let bad = null; const onSW = (x, z) => (X.SIDEWALKS || []).some((W) => (W.seg || []).some(([u0, u1]) => { const p = W.f((u0 + u1) / 2); if (Math.hypot(p.x - x, p.z - z) > 3) return false;
       const q = W.f(u0), r = W.f(u1), L = Math.hypot(r.x - q.x, r.z - q.z) || 1, tx = (r.x - q.x) / L, tz = (r.z - q.z) / L, u = (x - q.x) * tx + (z - q.z) * tz, v = -(x - q.x) * tz + (z - q.z) * tx;

@@ -81,6 +81,12 @@
   #tools .seg button{flex:1;min-width:26px;padding:6px 0;text-align:center}
   /* 運転モードの種別(運転モードを押したときだけ出す) */
   #tools #segRide{display:none}
+  /* 出典(2026-11 利用者指示:画面の右下からメニューの中のボタンへ) */
+  #tools #credits{display:none;max-width:236px;font:10.5px/1.55 var(--sans);color:var(--ink);background:#f6f7f9;
+    border:1px solid var(--line);border-radius:6px;padding:6px 8px;max-height:46vh;overflow:auto}
+  #tools #credits.show{display:block}
+  #tools #credits .cr{margin:0 0 4px}
+  #tools #credits .cr.fix{color:var(--dim)}
   #tools #segRide.show{display:flex}
   #tools button:focus-visible{outline:2px solid var(--keio-pink);outline-offset:1px}
   #nav{left:12px;right:196px;top:12px;padding:10px 14px 8px}   /* 上部固定・右のボタン群を回避 */
@@ -178,12 +184,17 @@ window.KEIO_LP=function(p){ var b=document.getElementById('loadPct'), i=document
   <button id="btnChase" class="ride">列車追尾 OFF</button>
   <button id="btnOrbit">自動旋回 OFF</button>
   <button id="btnTrain" class="on">列車走行 ON</button>
-  <button id="btnLabel" class="on">駅ラベル ON</button>
+  <button id="btnLabel">駅ラベル OFF</button>
   <button id="btnXing">踏切名 OFF</button>
   <button id="btnPhoto" class="on">航空写真 ON</button>
   <div class="seg" id="segTime" role="group" aria-label="時刻"><b>時刻</b><button data-k="morning">朝</button><button data-k="noon">昼</button><button data-k="evening">夕</button><button data-k="night">夜</button></div>
   <div class="seg" id="segSeason" role="group" aria-label="季節"><b>季節</b><button data-k="spring">春</button><button data-k="summer">夏</button><button data-k="autumn">秋</button><button data-k="winter">冬</button></div>
   <div class="seg" id="segWeather" role="group" aria-label="天候"><b>天候</b><button data-k="clear">晴れ</button><button data-k="cloudy">曇り</button><button data-k="rain">雨</button><button data-k="heavy">大雨</button><button data-k="thunder">雷</button><button data-k="snow">雪</button></div>
+  <button id="btnCredit" aria-expanded="false" aria-controls="credits">出典 ▸</button>
+  <div id="credits" role="region" aria-label="出典">
+    <div class="cr fix">個人の制作物で、京王電鉄・東京都・国土交通省の公式のものではありません。</div>
+    <div class="cr fix">three.js r128(MIT License)。詳しくは CREDITS.txt</div>
+  </div>
 </div>
 
 <div class="panel" id="spd">
@@ -310,7 +321,7 @@ const RAW={
         {a:[35.667947087684944,139.6303980486085], b:[35.66833090608635,139.6280396201935]}],  // 下り方(西)
  roads:{kan7:[35.671659,139.661038], nakano:[35.674998,139.670961],   // 環七・中野通り:線路の中心線と PLATEAU の道路(都道318号・都道420号)の交点
         kyuIno:[35.6696446271404,139.6549350925075],
-        h23:[35.669349191483654,139.65393270941158], h154:[35.66813316289952,139.65014168064042],
+        h23:[35.66932519,139.65402298], h154:[35.66813316289952,139.65014168064042],
         h128:[35.66611852261594,139.64296286397814], h133:[35.667406090559375,139.63295141458974],
         h215:[35.668966236088494,139.62233161039873], kan8:[35.67027345154302,139.61334488850062],
         h216:[35.66872561,139.60303086], h217:[35.66626181424797,139.59576494310343]},
@@ -338,6 +349,14 @@ const RAW={
 /* 明大前駅前広場と補助第154号線(都市計画。2026-11 利用者指示「明大前駅の駅前広場の計画を盛り込んで」):世田谷区の事業案内図の赤い線
     (駅前広場と 154 の帯)を PLATEAU の道路に合わせて読んだ緯度・経度(読み方と値は reference/meidaimae/README.md)。
     plaza=駅前広場の四隅(北西・北東・南東・南西。東の辺は 154 の西の縁)・h154=補助第154号線の中心線(北の端・曲がり・南の端) */
+/* 放射第23号線(都市計画。世田谷区大原二丁目〜杉並区和泉二丁目 1,010m・幅員 25〜33m・2車線。2026-11 利用者指示「明大前駅の東側にある放射第23号線が
+    直線の帯のみになっているので、計画に従った幅や曲線を描くようにして」):東京都建設局「令和6年度第3回 事業評価委員会 資料4-1」の平面図の事業範囲
+    (赤)を PLATEAU の道路に合わせて読んだ中心線(東の環七の側から西の甲州街道の先へ、道のり 8m ごとの緯度・経度)と幅員[m]。
+    読み方は reference/hosha23/README.md */
+ h23plan:{
+   c:[[35.66900837,139.66107908],[35.66901395,139.66099089],[35.66901964,139.66090271],[35.66902542,139.66081454],[35.66903127,139.66072637],[35.66903722,139.66063822],[35.66904323,139.66055007],[35.66904915,139.66046191],[35.66905489,139.66037373],[35.66906044,139.66028554],[35.66906570,139.66019732],[35.66907042,139.66010905],[35.66907439,139.66002073],[35.66907746,139.65993236],[35.66907920,139.65984393],[35.66907880,139.65975548],[35.66907532,139.65966713],[35.66906855,139.65957908],[35.66905869,139.65949146],[35.66904467,139.65940471],[35.66902524,139.65931955],[35.66900204,139.65923580],[35.66897796,139.65915242],[35.66895366,139.65906914],[35.66892897,139.65898603],[35.66890432,139.65890291],[35.66887996,139.65881965],[35.66885577,139.65873632],[35.66883167,139.65865295],[35.66880753,139.65856960],[35.66878323,139.65848632],[35.66875880,139.65840309],[35.66873435,139.65831988],[35.66870998,139.65823663],[35.66868576,139.65815331],[35.66866172,139.65806992],[35.66863778,139.65798648],[35.66861380,139.65790306],[35.66858970,139.65781969],[35.66856561,139.65773631],[35.66854208,139.65765270],[35.66851993,139.65756852],[35.66849953,139.65748368],[35.66848033,139.65739842],[35.66846160,139.65731300],[35.66844304,139.65722752],[35.66842459,139.65714201],[35.66840619,139.65705648],[35.66838783,139.65697094],[35.66836964,139.65688535],[35.66835205,139.65679957],[35.66833606,139.65671332],[35.66832302,139.65662633],[35.66831385,139.65653861],[35.66830839,139.65645042],[35.66830588,139.65636203],[35.66830574,139.65627357],[35.66830796,139.65618516],[35.66831265,139.65609690],[35.66831970,139.65600887],[35.66832893,139.65592115],[35.66834010,139.65583376],[35.66835326,139.65574680],[35.66836892,139.65566046],[35.66838763,139.65557505],[35.66840933,139.65549070],[35.66843353,139.65540738],[35.66845994,139.65532508],[35.66848852,139.65524387],[35.66851909,139.65516376],[35.66855136,139.65508466],[35.66858511,139.65500649],[35.66862037,139.65492934],[35.66865730,139.65485337],[35.66869613,139.65477884],[35.66873732,139.65470626],[35.66878118,139.65463606],[35.66882732,139.65456809],[35.66887520,139.65450196],[35.66892474,139.65443770],[35.66897599,139.65437548],[35.66902861,139.65431500],[35.66908228,139.65425594],[35.66913707,139.65419843],[35.66919308,139.65414274],[35.66925032,139.65408896],[35.66930870,139.65403705],[35.66936790,139.65398654],[35.66942717,139.65393618],[35.66948586,139.65388478],[35.66954407,139.65383259],[35.66960238,139.65378055],[35.66966087,139.65372883],[35.66971950,139.65367734],[35.66977853,139.65362654],[35.66983812,139.65357674],[35.66989796,139.65352738],[35.66995746,139.65347743],[35.67001625,139.65342622],[35.67007447,139.65337403],[35.67013269,139.65332185],[35.67019110,139.65326997],[35.67024926,139.65321769],[35.67030697,139.65316466],[35.67036454,139.65311141],[35.67042230,139.65305846],[35.67048023,139.65300579],[35.67053824,139.65295325],[35.67059626,139.65290074],[35.67065433,139.65284829],[35.67071263,139.65279624],[35.67077173,139.65274559],[35.67083258,139.65269815],[35.67089556,139.65265510],[35.67095968,139.65261464],[35.67102328,139.65257298],[35.67108537,139.65252801],[35.67114613,139.65248040],[35.67120634,139.65243172],[35.67126658,139.65238311],[35.67132719,139.65233520],[35.67138819,139.65228803],[35.67144945,139.65224137],[35.67151080,139.65219490],[35.67156461,139.65215413]],
+   w:[33,33,33,33,33,33,33,33,33,33,33,33,33,33,33,33,33,33,33,32.9,30.8,28.7,26.5,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25,25],
+ },
  meida:{
    plaza:[[35.66785975,139.64957825],[35.66797534,139.65012493],[35.66744262,139.65033282],[35.66741430,139.64975141]],
    h154:[[35.66869883,139.64994704],[35.66819557,139.65013007],[35.66693389,139.65062247]],
@@ -357,6 +376,15 @@ const RAW={
      trees:"2719,-7966,-1612,52,480,-17,634,-18,-1578,223,2505,-17,-2076,120,240,0,241,0,703,-17,326,-17,223,0,-1939,172,-377,223,292,120,-412,360,-103,497,-120,480,-120,481,3996,0,-4116,480,-103,480,-1595,1047,-549,343,480,171,-1046,155,480,171,-1063,137,480,189,-1029,137,8147,0,-7684,172,-1029,154,8713,223,-8302,17,-497,2264,8851,549,-8474,86,8491,480,-8113,155,8130,411,-7804,155,7804,394,-7479,189,7479,309,-7118,291,7152,343,-6809,206,360,618,274,394,481,189,960,34,738,0,-1184,86,2882,0,909,-52,-2058,172,-961,120,532,172,446,188,926,103,-343,206,1132,120,943,0,-1286,275,446,154"}}
 };
 
+/* 出典の行(2026-11 利用者指示:画面の右下ではなく、メニューの「出典」ボタンの中に出す)。key ごとに1行の div を
+   #credits の中に作って返す(無ければ body の下の見えない div。表示・非表示は行ごとの style.display) */
+function creditLine(key,text){
+  const box=document.getElementById('credits');
+  let d=box&&box.querySelector('[data-cr="'+key+'"]');
+  if(!d){ d=document.createElement('div'); d.className='cr'; d.dataset.cr=key;
+    if(box) box.insertBefore(d,box.querySelector('.cr.fix')); else { d.style.display='none'; document.body.appendChild(d); } }
+  d.textContent=text; return d;
+}
 /* ============ 2. 平面線形エンジン(駅軸直線+円弧+緩和フィレット) ============ */
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 /* ---- 前の片から呼ぶ関数(2026-11。読み込み係が本体を「//@@PART」で片に分けて実行するので、関数の巻き上げは片の中だけになる。
@@ -700,13 +728,18 @@ function platOuter(x){                     // その地点のホーム外縁(駅
   }
   return e;
 }
-function outerOff(x){   // その地点で最も外側にある軌道中心のオフセット
+function outerOff(x,sg){   // その地点で最も外側にある軌道中心のオフセット。sg=+1:北/-1:南の側だけ(省けば両側の大きい方)
   let o=mainOff(x);
   for(const c of[STA[2].x,STA[4].x,STA[8].x])o=Math.max(o,2.0+LOOP.a*plateau(x,c,LOOP.h,LOOP.t));   // 2面4線副本線
   o=Math.max(o,2.0+2.55*plateau(x,STA[6].x,118,150));                                       // 八幡山停車線
   // 桜上水留置線:線路のある範囲だけ13.3m、外側は90mで擦り付ける(桁幅を急変させない)
   const yard=(a,b)=>plateau(x,(a+b)/2,(b-a)/2+2,90);
-  o=Math.max(o, 2.0+(LOOP.a+3.2)*yard(YE0e,YW1e));   // 留置線は東端〜西端まで通し(外側は待避線の外 3.2m)
+  /* 留置線は北の側だけ(2026-11 利用者指摘「桜上水駅前後について、高架橋が広すぎる。線路のある部分だけでよい」:以前は桁の幅が左右同じで、
+     南は本線しか無いのに留置線の幅 18.65m のまま 720m 続いていた)。南は駅の大屋根と外装の範囲(中心から YARD_STA_HALF。屋根と外装は
+     左右対称に作る)だけ同じ幅にし、その外へ 60m で本線・待避線の幅へ擦り付ける */
+  let yd=yard(YE0e,YW1e);
+  if(sg!==undefined&&sg<0) yd=Math.min(yd,plateau(x,STA[4].x,YARD_STA_HALF,60));
+  o=Math.max(o, 2.0+(LOOP.a+3.2)*yd);   // 留置線は東端〜西端まで通し(外側は待避線の外 3.2m)
   return o;
 }
 // 桁半幅は「その地点に何があるか」だけで決める。幅の表は持たない。
@@ -714,8 +747,10 @@ function outerOff(x){   // その地点で最も外側にある軌道中心の�
 // のうち最大。線路もホームも無い区間は自動的に③まで細くなるので、
 // かつて桜上水の前後で幅15.8mの桁が留置線の無い区間まで続いていた種の無駄が生じない。
 const DECK_MIN=2.0+2.45;                  // 複線区間の標準半幅(≒4.45m)
-function deckHalf(x){
-  return Math.max(DECK_MIN, outerOff(x)+2.45, platOuter(x)+0.6);
+const YARD_STA_HALF=118;                  // 桜上水の駅の大屋根(中心から 108m=STD.RL)+10m。この内は桁の南の幅も留置線の側と同じ
+// sg=+1:北/-1:南の側の半幅(桜上水の留置線は北だけ)。省けば両側の大きい方(左右対称に作る駅の屋根・外装・照明の範囲など)
+function deckHalf(x,sg){
+  return Math.max(DECK_MIN, outerOff(x,sg)+2.45, platOuter(x)+0.6);
 }
 /* ---- 仙川の掘割(5c章)の寸法 ----
    幅(片側。sg=+1:北/-1:南)は桁幅と同じ決め方を側ごとに:最外軌道+2.45m・その側のホームの外縁+0.6m・複線の標準
@@ -729,7 +764,7 @@ function cutHalf(x,sg){
   for(const st of STA){ const E=PLAT_EDGE_SN[st.t]; if(!E) continue;
     const r=platRange(st), c=(r[0]+r[1])/2, h=(r[1]-r[0])/2+8;
     e=Math.max(e,E[sg>0?1:0]*plateau(x,c,h,60)); }
-  return Math.max(DECK_MIN, outerOff(x)+2.45, e+0.6);
+  return Math.max(DECK_MIN, outerOff(x,sg)+2.45, e+0.6);
 }
 const cutWallTop=x=>Math.max(CUT_W.TOP,railY(x)+2.1);       // 擁壁の上端(取付部の近くは高欄の高さから下げる)
 // (s,off) が掘割の中か。m=幅からの余裕(+:擁壁の外へ広げる/-:内へ狭める)
@@ -767,7 +802,7 @@ const BEAM_LOW=POLE_TOP-0.70;   // ビームの下弦。可動ブラケットは
 // 橋脚を省略する横断部(道路・鉄道・河川の直上に柱を立てない)
 // 井の頭線は ±20(2026-10-11 にホームを5m 広げ、擁壁が ±14.4 になった。斜めに交わるので桁の両端で s が ±4m ずれる)
 const ROAD_SKIP=[[INOKASHIRA_X,20],[SETAGAYA_X,8],[BRIDGE.s,12],[KAN7_X,16],[NAKANO_X,12],[KYU_INOKA_X,9],
-  [HOSHA23_X,11],[H154_X,10],[H128_X,9],[H133_X,9],[H215_X,9],[KANPACHI_X,18],[H216_X,11],[H217_X,10]];   // 補助216号線は斜めに横切る計画の幅 15.5m(KARA。桁の幅の柱が道路の縁から 1m 以上離れる s の範囲)
+  [HOSHA23_X,15],[H154_X,10],[H128_X,9],[H133_X,9],[H215_X,9],[KANPACHI_X,18],[H216_X,11],[H217_X,10]];   // 補助216号線は斜めに横切る計画の幅 15.5m(KARA。桁の幅の柱が道路の縁から 1m 以上離れる s の範囲)
 for(const gq of XINGS)ROAD_SKIP.push([gq[1],7]);
 const PIERS=[];   // 建てた橋脚のs座標(検証用の登録簿)
 /* 高架下駅舎の範囲にも柱の列は通す。RCラーメンの柱は桁端から2.0m内側(駅舎の壁は1.0m内側)
@@ -1551,7 +1586,30 @@ const KARA=(function(){
   // 地表の形(RAW.kara.ground):原点からの東・南の cm の差の列 → 世界座標の多角形
   { const g=R.ground, o=toXY(g.o[0],g.o[1]);
     const dec=s=>{ const v=s.split(',').map(Number), Q=[]; let x=0, z=0; for(let i=0;i+1<v.length;i+=2){ x+=v[i]; z+=v[i+1]; Q.push([o.x+x/100,o.z+z/100]); } return Q; };
-    K.pave=g.pave.map(dec).map(ccwP); K.lawn=g.lawn.map(dec).map(ccwP); K.roofG={pod:g.roof.pod.map(dec).map(ccwP), wing:g.roof.wing.map(dec).map(ccwP)}; K.trees=dec(g.trees); }
+    /* 輪郭をなめらかに(2026-11 利用者指摘「千歳烏山駅の駅前広場は道路の境界がガタガタ」):図を色で分けた輪郭は 4倍に拡大した画素の階段と
+       0.2〜3m の細かい揺れが残っていた。①Douglas-Peucker(許容 SM_TOL)で揺れを除き、②角を切る(隣の辺の 1/4 か SM_CUT の短い方。2回)。
+       計画の範囲の縁(区域+線路沿いの帯の和の縁=K.aEdges)と補助216号線の帯の縁の 0.6m 内の頂点は動かさない(角を切ると縁に車道が出る・
+       単純化の弦が範囲の外へ出る。⑦ 4h)。範囲の縁は下で作るので、なめらかにするのはその後(K.pave は下で置き換える) */
+    const SM_TOL=0.35, SM_CUT=0.8, c216=K.c216;
+    const segD=(p,a,b)=>{ const dx=b[0]-a[0], dz=b[1]-a[1], L2=dx*dx+dz*dz, u=L2?clamp(((p[0]-a[0])*dx+(p[1]-a[1])*dz)/L2,0,1):0; return Math.hypot(p[0]-a[0]-dx*u,p[1]-a[1]-dz*u); };
+    const fixedAt=p=>{ if(Math.abs(polyDist(K.dist,p[0],p[1]))<0.6) return true;
+      if(K.aEdges&&K.aEdges.some(([a,b])=>segD(p,a,b)<0.6)) return true;
+      let d=1e9; for(let i=0;i+1<c216.length;i++) d=Math.min(d,segD(p,c216[i],c216[i+1])); return Math.abs(d-K.W216/2)<0.6; };
+    const dp=(Q,a,b,keep)=>{ let m=-1, dm=SM_TOL; for(let i=a+1;i<b;i++){ const d=segD(Q[i],Q[a],Q[b]); if(d>dm||(Q[i].fx&&d>0.02)){ dm=Q[i].fx?1e9:d; m=i; if(Q[i].fx) break; } }
+      if(m<0) return; keep[m]=1; dp(Q,a,m,keep); dp(Q,m,b,keep); };
+    const smooth=P=>{ const Q=P.map(p=>{ const q=[p[0],p[1]]; q.fx=fixedAt(p); return q; }), n=Q.length; if(n<5) return P;
+      let far=0, fd=0; for(let i=1;i<n;i++){ const d=Math.hypot(Q[i][0]-Q[0][0],Q[i][1]-Q[0][1]); if(d>fd){fd=d; far=i;} }
+      const R2=Q.concat([Q[0]]), keep=new Uint8Array(n+1); keep[0]=1; keep[far]=1; keep[n]=1; dp(R2,0,far,keep); dp(R2,far,n,keep);
+      let S=[]; for(let i=0;i<n;i++) if(keep[i]) S.push(Q[i]);
+      for(let it=0;it<2;it++){ const O=[], m=S.length;
+        for(let i=0;i<m;i++){ const a=S[(i+m-1)%m], b=S[i], c=S[(i+1)%m];
+          if(b.fx){ O.push(b); continue; }
+          const la=Math.hypot(a[0]-b[0],a[1]-b[1]), lc=Math.hypot(c[0]-b[0],c[1]-b[1]), ta=Math.min(0.25,SM_CUT/Math.max(la,1e-6)), tc=Math.min(0.25,SM_CUT/Math.max(lc,1e-6));
+          O.push([b[0]+(a[0]-b[0])*ta,b[1]+(a[1]-b[1])*ta],[b[0]+(c[0]-b[0])*tc,b[1]+(c[1]-b[1])*tc]); }
+        S=O; }
+      return S.map(q=>[q[0],q[1]]); };
+    K.paveRaw=g.pave.map(dec).map(ccwP); K.lawnRaw=g.lawn.map(dec).map(ccwP);
+    K.smooth=smooth; K.pave=K.paveRaw; K.lawn=K.lawnRaw; K.roofG={pod:g.roof.pod.map(dec).map(ccwP), wing:g.roof.wing.map(dec).map(ccwP)}; K.trees=dec(g.trees); }
   /* 低層部:p.20 の低層部の斜めの辺(北西・南西)は塔の北西の角と西の辺の南の端の内側を通るので、塔の下を含むように低層部と塔の矩形の
      和にする(塔が宙に浮かない。推定)。どちらも凸なので、片方の外の頂点から辺をたどり、相手の辺と交わる所で相手へ乗り換える */
   { const A=ccwP(W(R.podium)), B=ccwP(W(R.tower)), inC=(P,p)=>P.every((a,k)=>{const b=P[(k+1)%P.length]; return (b[0]-a[0])*(p[1]-a[1])-(b[1]-a[1])*(p[0]-a[0])>=-1e-9;});
@@ -1574,7 +1632,7 @@ const KARA=(function(){
      s の 5m ごとに、桁の縁の2点と、そこから線路と直角に区域の北の辺の線へ下ろした2点の四角形を作り、区域の東の辺の線の西・西の辺の線の
      東で切る(凸の片。reference/karasuyama の作図も同じ手順) */
   { const D0=K.dist[0], D1=K.dist[1], D2=K.dist[2], D4=K.dist[4];
-    const edge=s=>{ const f=frame(s,-deckHalf(s)); return [f.x,f.z]; };
+    const edge=s=>{ const f=frame(s,-deckHalf(s,-1)); return [f.x,f.z]; };
     const onN=s=>{ const p=frame(s,0), q=frame(s,1), nx=q.x-p.x, nz=q.z-p.z, bx=D1[0]-D0[0], bz=D1[1]-D0[1], t=((D0[0]-p.x)*bz-(D0[1]-p.z)*bx)/(nx*bz-nz*bx);
       return [p.x+nx*t,p.z+nz*t]; };
     const hp=(Q,a,b)=>terClipHP(Q,-(b[1]-a[1]),b[0]-a[0],(b[1]-a[1])*a[0]-(b[0]-a[0])*a[1]);   // 線 a→b の左(外積が正)を残す
@@ -1606,6 +1664,7 @@ const KARA=(function(){
     K.aEdges=EA;
     K.sd=(x,z)=>{ let d=1e9; for(const [a,b] of E){ const dx=b[0]-a[0], dz=b[1]-a[1], L2=dx*dx+dz*dz, u=L2?clamp(((x-a[0])*dx+(z-a[1])*dz)/L2,0,1):0; d=Math.min(d,Math.hypot(x-a[0]-dx*u,z-a[1]-dz*u)); }
       return K.holes.some(P=>polyDist(P,x,z)<0)?-d:d; }; }
+  K.pave=K.paveRaw.map(K.smooth).map(ccwP); K.lawn=K.lawnRaw.map(K.smooth).map(ccwP);   // 輪郭をなめらかに(上。範囲の縁ができてから)
   K.bld=[];
   // 駅前広場の車道:計画の範囲(区域・線路沿いの帯)で、216 の帯・舗装・植え込み・再開発ビルの外から m 以上(10e章の車と灯りの置き場)
   K.roadway=(x,z,m)=>{ m=m||0; if(!K.on) return false;
@@ -1711,7 +1770,31 @@ const MEIDA=(function(){
   K.lamps=[K.at(0,9.5,3,10),K.at(0,9.5,3,30),K.at(3,1.0,0,22),K.at(3,1.0,0,40),K.at(2,0.9,3,15),K.at(2,0.9,3,37),K.at(1,5.0,0,30),K.at(1,5.0,2,13)];
   return K;
 })();
-const PLANS=[KARA,MEIDA];                          // 計画の区域(地表の面を切る・建物を置かない・平ら・航空写真は今の色)
+/* ---- 放射第23号線(都市計画。2026-11 利用者指示「明大前駅の東側にある放射第23号線が直線の帯のみになっているので、計画に従った幅や曲線を描くようにして」) ----
+   以前は線路を直角に横切る幅 18m・長さ 440m の模式の帯(MAT.roadPlan)だった。今は東京都の事業評価の資料の平面図(RAW.h23plan。読み方は
+   reference/hosha23/README.md)のとおり:環七(大原二丁目)から和田堀給水所の南を西へ、南西で曲がって北西へ京王線を斜めに(線路の中心を s 約1291・
+   直角から約13°)横切り、甲州街道を渡って北の現道(井ノ頭通り)へ。幅員は公表の 25〜33m(東の環七の側の約 100m が 33m、ほかは 25m=図の幅)、
+   断面は公表の 歩道(自転車を含む)4.25m+車道 16.5m+4.25m(2車線)。中心線の区間ごとの凸の四角形(継ぎ目は角の二等分線)を幹線として ROADS_PL へ
+   (歩道は 4.25m=R.sw、中央線は1車線ずつ=R.lanes)。帯に掛かる既存の道路・緑地は切り(karaCut)、建物・木は置かない(KEEP の 'p'=帯の外形)、
+   航空写真は今の色。地形は平らにしない(道路は地表に沿う)。描くのは実データの道路と建物があるとき(H23.on) */
+const H23=(function(){
+  const K={on:!!(PLL&&HAS_PLB), SW:4.25, LANES:1};
+  const ar=P=>{let A=0; for(let i=0;i<P.length;i++){const a=P[i], b=P[(i+1)%P.length]; A+=a[0]*b[1]-b[0]*a[1];} return A/2;}, ccwP=P=>ar(P)>0?P:P.slice().reverse();
+  K.c=RAW.h23plan.c.map(p=>{const q=toXY(p[0],p[1]); return [q.x,q.z];}); K.w=RAW.h23plan.w;
+  const C=K.c, n=C.length, nrm=i=>{const a=C[i], b=C[i+1], l=Math.hypot(b[0]-a[0],b[1]-a[1]); return [-(b[1]-a[1])/l,(b[0]-a[0])/l];};
+  const off=[]; for(let i=0;i<n;i++){ const n0=nrm(Math.max(0,i-1)), n1=nrm(Math.min(n-2,i)), m=[n0[0]+n1[0],n0[1]+n1[1]], l=Math.hypot(m[0],m[1]), c=(m[0]*n1[0]+m[1]*n1[1])/l, h=K.w[i]/2;
+    off.push([m[0]/l*h/c, m[1]/l*h/c]); }
+  K.row=[]; for(let i=0;i<n-1;i++){ const a=C[i], b=C[i+1], oa=off[i], ob=off[i+1];
+    K.row.push(ccwP([[a[0]+oa[0],a[1]+oa[1]],[b[0]+ob[0],b[1]+ob[1]],[b[0]-ob[0],b[1]-ob[1]],[a[0]-oa[0],a[1]-oa[1]]])); }
+  K.outline=ccwP(C.map((a,i)=>[a[0]+off[i][0],a[1]+off[i][1]]).concat(C.map((a,i)=>[a[0]-off[i][0],a[1]-off[i][1]]).reverse()));   // 帯の外形(凹んだ多角形)
+  K.holes=K.row; K.len=0; for(let i=0;i<n-1;i++) K.len+=Math.hypot(C[i+1][0]-C[i][0],C[i+1][1]-C[i][1]);
+  K.bb=[1e9,-1e9,1e9,-1e9]; for(const q of K.outline){ K.bb[0]=Math.min(K.bb[0],q[0]); K.bb[1]=Math.max(K.bb[1],q[0]); K.bb[2]=Math.min(K.bb[2],q[1]); K.bb[3]=Math.max(K.bb[3],q[1]); }
+  K.inPlan=(x,z,r)=>K.on&&x>K.bb[0]-r&&x<K.bb[1]+r&&z>K.bb[2]-r&&z<K.bb[3]+r&&polyDist(K.outline,x,z)<r;
+  K.sd=(x,z)=>polyDist(K.outline,x,z)-0.8;           // 帯の外形の境界まで(中は負。区間の継ぎ目は境界でない)。航空写真の今の色は帯の 0.8m 外まで(帯の端の角で写真が混ざらない)
+  K.roadway=()=>false; K.mouthHit=()=>false;
+  return K;
+})();
+const PLANS=[KARA,MEIDA,H23];                      // 計画の区域(地表の面を切る・建物を置かない・航空写真は今の色。千歳烏山と明大前は平ら)
 /* 地表に敷く多角形 P(PLATEAU の道路・緑地)から計画の区域(千歳烏山の区域と 216 の帯・明大前の広場と 154 の帯)を除く。掛からなければ null、
    掛かれば残りの凸の片(三角形を切った物)の配列 */
 function karaCut(P){
@@ -1744,7 +1827,7 @@ function karaCut(P){
    ・登録簿 TER(格子の高さ H・平らなセル flat・線路の地盤 GS・平らな所の定義 CORR/POLY) */
 const PLD=(typeof globalThis!=='undefined'&&globalThis.PLATEAU_DEM&&globalThis.PLATEAU_DEM.h64)?globalThis.PLATEAU_DEM:null;
 const TER={on:!!(PLD&&PLL&&HAS_PLB), DX:25, X0:-9100, X1:1900, Z0:-1950, Z1:3250,
-  AS:21, BL:40, FAR0:480, FAR1:600, END0:100, END1:300, CLOSE:2, BLUR:1, GS_SIG:60, GS_OFF:20,
+  AS:21, BL:40, FAR0:480, FAR1:600, END0:100, END1:300, CLOSE:2, BLUR:1, GS_SIG:60, GS_OFF:20, SHADE:5,
   GX:0, GZ:0, H:null, NN:null, flat:null, GS:null, stat:{}};
 TER.GX=Math.round((TER.X1-TER.X0)/TER.DX); TER.GZ=Math.round((TER.Z1-TER.Z0)/TER.DX);
 TER.CORR=[{A:INO, hw:17, u0:XR.U0-10, u1:XR.U1+10, bl:30, n:'井の頭線'},
@@ -1841,7 +1924,9 @@ if(TER.on){
   for(let j=0;j<=TER.GZ;j++)for(let i=0;i<=TER.GX;i++){
     const k=3*(j*W+i);
     if(flatAt(i-1,j-1)||flatAt(i,j-1)||flatAt(i-1,j)||flatAt(i,j)){NN[k]=0;NN[k+1]=1;NN[k+2]=0;continue;}
-    const nx=-(hAt(i+1,j)-hAt(i-1,j))/(2*TER.DX), nz=-(hAt(i,j+1)-hAt(i,j-1))/(2*TER.DX), l=Math.hypot(nx,1,nz);
+    /* 陰の強調(2026-11 利用者指摘「地形の凹凸が無いように感じる」):線路から 600m の内の起伏は大半が ±2m(勾配 1〜3%)で、法線のままでは
+       陰が 1% ほどしか変わらない。地図の陰影図と同じく、陰を付ける法線だけ勾配を SHADE 倍にする(高さ=形はデータのまま) */
+    const nx=-TER.SHADE*(hAt(i+1,j)-hAt(i-1,j))/(2*TER.DX), nz=-TER.SHADE*(hAt(i,j+1)-hAt(i,j-1))/(2*TER.DX), l=Math.hypot(nx,1,nz);
     NN[k]=nx/l; NN[k+1]=1/l; NN[k+2]=nz/l;
   }
   TER.H=H; TER.flat=F; TER.NN=NN;
@@ -2180,11 +2265,13 @@ if(PLL){
   if(KARA.on) for(const Q of KARA.row) addRoad({k:1,sec:0,P:Q,kara:'補助216号線'});
   // 補助第154号線(計画。MEIDA):同じく帯の区間ごとの凸の四角形を幹線として足す
   if(MEIDA.on) for(const Q of MEIDA.row) addRoad({k:1,sec:0,P:Q,kara:'補助第154号線'});
+  // 放射第23号線(計画。H23):帯の区間ごとの凸の四角形を幹線として(歩道 4.25m・1車線ずつ。中央線は描く)
+  if(H23.on) for(const Q of H23.row) addRoad({k:1,sec:0,P:Q,plan:'放射第23号線',sw:H23.SW,lanes:H23.LANES});
   /* 線路を横切る実際の道路(中心と桁の両端の3点が道路の上に3m以上続く所):高架の柱を立てない所に足す。
      道路の縁から柱の中心まで4m。模式の位置(RAW.roads・XINGS)とずれていても実際の道路に柱が立たない */
   {let a=null;
    for(let s=Math.floor(DOM.x0);s<=DECK_END+1;s++){
-     const dh=deckHalf(s), on=[0,-dh,dh].every(o=>{const f=frame(s,o);return roadHit(f.x,f.z,0);});
+     const on=[0,-deckHalf(s,-1),deckHalf(s,1)].every(o=>{const f=frame(s,o);return roadHit(f.x,f.z,0);});
      if(on){ if(a===null) a=s; }
      else if(a!==null){ if(s-a>=3){ROAD_SKIP.push([(a+s-1)/2,(s-a)/2+4]); ROAD_XING.push([a,s-1]);} a=null; }
    }}
@@ -2426,7 +2513,8 @@ if(PLL){
         if(d>=mx-0.8) RIDGE.push({x:ij[0]*2,z:ij[1]*2,D:d,E:OUTE,bot:bot,R:R}); }
     }
     // 地表の道路の交差部(sec 4)には橋脚を立てない(縁から 3m。横切る道路をまたぐ)
-    const XG=new Map(); for(const R of ROADS_PL.concat(EXPY.xing)) if(R.k!==2&&R.sec===4){ if(!R.bb){ let a=1e9,b=-1e9,c=1e9,d=-1e9; for(const v of R.P){a=Math.min(a,v[0]);b=Math.max(b,v[0]);c=Math.min(c,v[1]);d=Math.max(d,v[1]);} R.bb=[a,b,c,d]; }
+    // 計画の道路(放射第23号線。甲州街道と交わる所は計画の交差部)も橋脚を避ける
+    const XG=new Map(); for(const R of ROADS_PL.concat(EXPY.xing)) if(R.k!==2&&(R.sec===4||R.plan)){ if(!R.bb){ let a=1e9,b=-1e9,c=1e9,d=-1e9; for(const v of R.P){a=Math.min(a,v[0]);b=Math.max(b,v[0]);c=Math.min(c,v[1]);d=Math.max(d,v[1]);} R.bb=[a,b,c,d]; }
       gridPut(XG,R.bb[0],R.bb[1],R.bb[2],R.bb[3],R); }
     const onXing=(x,z)=>gridAny(XG,x,z,3,R=>x>R.bb[0]-3&&x<R.bb[1]+3&&z>R.bb[2]-3&&z<R.bb[3]+3&&polyDist(R.P,x,z)<3);
     // 接する片(頂点がほかの片の 1.5m 以内)
@@ -2439,7 +2527,7 @@ if(PLL){
     for(const [R,L] of byR){ const ax=(R.bb[1]-R.bb[0])>=(R.bb[3]-R.bb[2]); L.sort((A,B)=>ax?A.x-B.x:A.z-B.z);
       for(const r of L){
         if(onXing(r.x,r.z)) continue;
-        const q=prjXY(r.x,r.z); if(q.s>DOM.x0-80&&q.s<DOM.x1+80&&Math.abs(q.off)<(q.s>DECK_END?cutHalf(q.s,q.off<0?-1:1):deckHalf(q.s))+5.4) continue;
+        const q=prjXY(r.x,r.z); if(q.s>DOM.x0-80&&q.s<DOM.x1+80&&Math.abs(q.off)<(q.s>DECK_END?cutHalf(q.s,q.off<0?-1:1):deckHalf(q.s,q.off<0?-1:1))+5.4) continue;
         // 同じ片・接する片(1.5m 以内。出入口の車線と本線は1つの構造)の橋脚とは 33m、離れた別の片(中央道の上下線)とは 6m 離す
         if(piers.some((p,k)=>{const d=Math.hypot(p[0]-r.x,p[1]-r.z); return d<6||(d<33&&(PR[k]===R||ADJ.get(R).has(PR[k])));})) continue;
         PR.push(R);
@@ -2509,8 +2597,8 @@ function terStrip(w,d,mat,s,y0,off,ry2){
   const o={P:[],N:[],I:[]}; terDrape(Q,y0,o,null);
   const m=new THREE.Mesh(facesGeo(o.P,o.N,o.I),mat); m.userData.flat=true; return add(m);
 }
-if(TER.H) terStrip(18,440,MAT.roadPlan,HOSHA23_X,.16,0); else
-box(18,.16,440,MAT.roadPlan,HOSHA23_X,.08,0);     // 放射23号線(井ノ頭通り・計画。実データに無いので常に描く)
+if(!H23.on){ if(TER.H) terStrip(18,440,MAT.roadPlan,HOSHA23_X,.16,0); else
+box(18,.16,440,MAT.roadPlan,HOSHA23_X,.08,0); }   // 放射23号線(井ノ頭通り・計画)の模式の帯。実データの道路と建物があるときは計画の形(H23)
 // 交差道路(平面図の位置)。実データがあるときは描かない
 if(!PLL){
 box(30,.26,560,MAT.roadMajor,KAN7_X,.13,0);       // 環七通り(既存こ道橋)
@@ -2559,7 +2647,7 @@ for(const R of RANGES){
   const K=R[2],r0=R[0],r1=Math.min(R[1],DECK_END);if(r1-r0<2)continue;
   // 桁・柱は下の「高架橋(RCラーメン)」、架線柱は6b章の架線でまとめて作る。ここは高架下の陰だけ
   CUR=K?K.VGa:null;
-  strip(r0,r1,30,x=>[x,.05,-(deckHalf(x)-.5)],x=>[x,.05,deckHalf(x)-.5],MAT.ao);
+  strip(r0,r1,30,x=>[x,.05,-(deckHalf(x,-1)-.5)],x=>[x,.05,deckHalf(x,1)-.5],MAT.ao);
 }
 CUR=null;
 
@@ -2576,7 +2664,7 @@ CUR=null;
    既設区間(笹塚方の既存高架・八幡山の流用部)は同じ形で古いコンクリートの色にする。
    取付部(仙川方)で桁下が低くなる所は、縦梁を地面まで下ろして擁壁にする。
    部品は 240m ごとの区画の結合ジオメトリにまとめる(視錐台カリングと LOD の単位)。
-   桁幅は deckHalf() をそのまま使う(桁幅の決め方は変えない)。 */
+   桁幅は deckHalf(s,側) をそのまま使う(桁幅の決め方は変えない。2026-11 から側ごと=桜上水の留置線は北だけ)。 */
 const VIA={CH:240, SPAN:10, BLOCK:30, CANT:1.6, BEAM_IN:2.0, BW:0.8, COL_R:0.48,
            PAR:2.1, PAR_T:0.24, SLAB:0.40, TIP:0.25, LOW:4.4, TIE:0.625, LOD:460};
 const VIA_COLS=[];        // 柱の列の登録簿 {s, offs:[...], top}(検証用)
@@ -2596,7 +2684,7 @@ const viaBot=s=>railY(s)>VIA.LOW?railY(s)-GIRDER:-0.3;
 const VD=MAT.vdVC;
 /* 高欄(地覆+壁+笠木)の断面。sg=+1:北側/-1:南側。外へ向かって +sg */
 function parSect(s,sg){
-  const E=deckHalf(s), y=railY(s), yT=y-DECK_DROP, yP=y+VIA.PAR, t=VIA.PAR_T;
+  const E=deckHalf(s,sg), y=railY(s), yT=y-DECK_DROP, yP=y+VIA.PAR, t=VIA.PAR_T;
   const P=[[E-t,yT],[E-t,yP-0.12],[E-t-0.06,yP-0.12],[E-t-0.06,yP],[E+0.06,yP],[E+0.06,yP-0.12],
            [E+0.02,yP-0.12],[E+0.02,yT+0.25],[E+0.05,yT+0.25],[E+0.05,yT-0.30],[E-0.10,yT-0.30]];
   return P.map(q=>[sg*q[0],q[1]]);
@@ -2611,19 +2699,19 @@ function parSect(s,sg){
     for(let k=0;k<cuts.length-1;k++){
       const s0=cuts[k], s1=cuts[k+1], m=(s0+s1)/2, cc=h=>viaCol(m,h);
       // 床版:上面・張出しの下面・縦梁の間の下面
-      C.mg.loft(VD,s0,s1,s=>{const E=deckHalf(s),Eb=E-VIA.CANT,yT=railY(s)-DECK_DROP;
-        return [[-E,yT-VIA.TIP],[-Eb,yT-VIA.SLAB],[Eb,yT-VIA.SLAB],[E,yT-VIA.TIP],[E,yT],[-E,yT]];},
+      C.mg.loft(VD,s0,s1,s=>{const E=deckHalf(s,1),W=deckHalf(s,-1),yT=railY(s)-DECK_DROP;
+        return [[-W,yT-VIA.TIP],[-(W-VIA.CANT),yT-VIA.SLAB],[E-VIA.CANT,yT-VIA.SLAB],[E,yT-VIA.TIP],[E,yT],[-W,yT]];},
         {closed:true,tol:0.01,cols:[cc(0xb3b8bd),cc(0xa9aeb3),cc(0xb3b8bd),cc(0xc4c8cd),cc(0xbfc3c7),cc(0xc4c8cd)],tag:'床版'});
       // 高欄(両側)
       for(const sg of[-1,1])
         C.mg.loft(VD,s0,s1,s=>parSect(s,sg),{closed:true,tol:0.01,cols:PC.map(cc),tag:'高欄'});
       // 縦梁(両側)。上面は床版の中なので作らない
       for(const sg of[-1,1])
-        C.mg.col(cc(0xbcc1c6)).loft(VD,s0,s1,s=>{const o=sg*(deckHalf(s)-VIA.BEAM_IN),yT=railY(s)-DECK_DROP,bt=viaBot(s);
+        C.mg.col(cc(0xbcc1c6)).loft(VD,s0,s1,s=>{const o=sg*(deckHalf(s,sg)-VIA.BEAM_IN),yT=railY(s)-DECK_DROP,bt=viaBot(s);
           return [[o-VIA.BW/2,yT-VIA.SLAB],[o-VIA.BW/2,bt],[o+VIA.BW/2,bt],[o+VIA.BW/2,yT-VIA.SLAB]];},{side:1,tag:'縦梁'});
       // ケーブルトラフ(高欄の内側。蓋の目地は近くだけ)
       for(const sg of[-1,1])
-        C.md.col(cc(0xb7bbc0)).loft(VD,s0,s1,s=>{const E=deckHalf(s),yT=railY(s)-DECK_DROP,i=E-VIA.PAR_T;
+        C.md.col(cc(0xb7bbc0)).loft(VD,s0,s1,s=>{const E=deckHalf(s,sg),yT=railY(s)-DECK_DROP,i=E-VIA.PAR_T;
           return [[sg*(i-0.46),yT],[sg*(i-0.46),yT+0.26],[sg*i,yT+0.26]];},{side:sg>0?-1:1,tag:'ケーブルトラフ'});
     }
   }
@@ -2642,19 +2730,19 @@ function parSect(s,sg){
    SL.sort((p,q)=>p-q);}
   for(const s of SL){
     const C=VIA_CH.find(q=>s>=q.s0&&s<q.s1);
-    const E=deckHalf(s), Ob=E-VIA.BEAM_IN, y=railY(s), yT=y-DECK_DROP, bt=viaBot(s);
-    const n=Math.max(2,Math.ceil(2*Ob/9.0)+1), offs=[];   // 横梁の支間を9m以下に
-    for(let k=0;k<n;k++) offs.push(-Ob+2*Ob*k/(n-1));
+    const ObN=deckHalf(s,1)-VIA.BEAM_IN, ObS=deckHalf(s,-1)-VIA.BEAM_IN, y=railY(s), yT=y-DECK_DROP, bt=viaBot(s);
+    const n=Math.max(2,Math.ceil((ObN+ObS)/9.0)+1), offs=[];   // 横梁の支間を9m以下に
+    for(let k=0;k<n;k++) offs.push(-ObS+(ObN+ObS)*k/(n-1));
     for(const o of offs){
       C.mg.col(viaCol(s,0xbfc3c8)).cyl(VD,s,o,0.3,bt,VIA.COL_R,8,{tag:'柱'});
       C.mg.col(viaCol(s,0xb0b4b8)).box(VD,s,o,-0.05,0.3,1.25,1.25,{skip:'-y'});           // 根巻き
     }
-    C.mg.col(viaCol(s,0xb9bdc2)).box(VD,s,0,bt,yT-VIA.SLAB,VIA.BW,2*Ob+VIA.BW,{skip:'+y',tag:'横梁'});
+    C.mg.col(viaCol(s,0xb9bdc2)).box(VD,s,(ObN-ObS)/2,bt,yT-VIA.SLAB,VIA.BW,ObN+ObS+VIA.BW,{skip:'+y',tag:'横梁'});
     VIA_COLS.push({s:s,offs:offs,top:bt});
     PIERS.push(s);                                                     // 登録簿(検証用)
     // 排水管:3本に1本、外側の柱に沿って地上へ(張出しの下から縦梁の外面を回る)
     if(Math.round((s-5)/VIA.SPAN)%3===0) for(const sg of[-1,1]){
-      const A=C.md.axes(s+0.6,sg*(E-0.35)), B=C.md.axes(s+0.6,sg*(Ob+VIA.BW/2+0.12));
+      const E=deckHalf(s,sg), Ob=E-VIA.BEAM_IN, A=C.md.axes(s+0.6,sg*(E-0.35)), B=C.md.axes(s+0.6,sg*(Ob+VIA.BW/2+0.12));
       C.md.col(0x6b7178)
         .tube(VD,[A.f.x,yT-VIA.TIP,A.f.z],[B.f.x,yT-VIA.SLAB-0.2,B.f.z],0.08,6)
         .tube(VD,[B.f.x,yT-VIA.SLAB-0.2,B.f.z],[B.f.x,0.25,B.f.z],0.08,6);
@@ -2663,8 +2751,8 @@ function parSect(s,sg){
   // 継目(30mごと):高欄の外面と笠木・地覆に目地
   for(let s=Math.ceil(DOM.x0/VIA.BLOCK)*VIA.BLOCK;s<DECK_END;s+=VIA.BLOCK){
     const C=VIA_CH.find(q=>s>=q.s0&&s<q.s1); if(!C||railY(s)<=VIA.LOW) continue;
-    const E=deckHalf(s), y=railY(s), yT=y-DECK_DROP;
-    for(const sg of[-1,1]) C.md.col(0x5c6066).box(VD,s,sg*(E+0.055),yT-0.30,y+VIA.PAR+0.005,0.03,0.03,{skip:'-y'});
+    const y=railY(s), yT=y-DECK_DROP;
+    for(const sg of[-1,1]) C.md.col(0x5c6066).box(VD,s,sg*(deckHalf(s,sg)+0.055),yT-0.30,y+VIA.PAR+0.005,0.03,0.03,{skip:'-y'});
   }
 }
 /* ============ 5c. 仙川の掘割(利用者指示 2026-10-11) ============
@@ -3326,7 +3414,7 @@ const XT=XR.RAILTOP-0.153-0.012;                         // 交差鉄道のま�
    上面は車両の床の 5cm 下(以前は地表+1.1m で、床より 0.8m 低かった) */
 const INO_UOF=la=>INO.uAtZ(toXY(la,LON0).z);
 const INO_PLAT={up:[INO_UOF(35.6674073382136),INO_UOF(35.6674073382136)+110], dn:[INO_UOF(35.66801642659758),INO_UOF(35.66801642659758)+110],
-  edge:1.55, w:8.4, top:XR.RAILTOP+1.0};
+  edge:1.55, w:8.4, top:XR.RAILTOP+1.10};   // 上面は車両の床(公表 1,150mm。2026-11 から)の 5cm 下
 INO_PLAT.at=(k,u)=>{ const sg=k?1:-1, e=Math.abs(INO.trk(k,u))+INO_PLAT.edge; return {sg:sg, edge:sg*e, back:sg*(e+INO_PLAT.w)}; };   // 線路 k の側のホームの縁と背面の v
 /* 擁壁は線路の中心から 2.9m(ホームの範囲は背面の 0.5m 外。境は横の壁でつなぐ)。架線柱(門型)は線路の中心から 2.3m
    (ホームの上は 3.7m=縁から 2.15m)。2026-10-27 利用者指示(線路の脇の建物を消さない):実際の線路の脇には中心から 3.3m ほどまで
@@ -3382,11 +3470,9 @@ const setaXO=u=>{ const t=clamp((u-SETA_XO[0])/(SETA_XO[1]-SETA_XO[0]),0,1), f=t
    .sweep(SETA_PLAT.u[0]-2,SETA_PLAT.u[1]+1,u=>pm(u)-0.3,SETA_PLAT.w+0.4,MAT.canopy,SETA_PLAT.top+2.6,.4).flush();
 }
 // 出典の表示(線路の位置は地理院のベクトルタイルを加工した数値=RAW.rail。沿線の木の位置は地理院の航空写真から推定した数値=gsi_trees.js。
-// CREDITS.txt と同じ表記)。航空写真の出典はこの上
-try{ const d=document.createElement('div'); d.textContent='井の頭線・世田谷線の線路の位置:地理院タイル(ベクトルタイル)を加工'+
-    (PLL&&globalThis.GSI_TREES?'・沿線の木の位置:地理院タイル(全国最新写真(シームレス))から推定':'');
-  d.style.cssText='position:fixed;right:6px;bottom:22px;font:11px sans-serif;color:#334;background:rgba(255,255,255,.7);padding:1px 6px;border-radius:4px;z-index:5;pointer-events:none';
-  document.body.appendChild(d); }catch(e){}
+// CREDITS.txt と同じ表記)。メニューの「出典」の中(creditLine)
+try{ creditLine('rail','井の頭線・世田谷線の線路の位置:地理院タイル(ベクトルタイル)を加工'+
+    (PLL&&globalThis.GSI_TREES?'・沿線の木の位置:地理院タイル(全国最新写真(シームレス))から推定':'')); }catch(e){}
 //@@PART 47
 /* ============ 7. 駅・ラベル ============ */
 function roundRect(ctx,x,y,w,h,r){ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);
@@ -4168,10 +4254,10 @@ function canopy(S,x0,x1,pc,hw,y,col){
    不透明の板は厚みのある箱で作る(片面の板だとホームの内側から見て消える)。 */
 const FD=0.15, FAC_Y0=-0.6;
 const WEAVE=[];                 // 千歳烏山の格子の交点(横・縦の帯の off)。検証用
-const fO=(sg,d)=>s=>sg*(deckHalf(s)+d);
+const fO=(sg,d)=>s=>sg*(deckHalf(s,sg)+d);
 function fBand(Sx,mat,col,s0,s1,sg,d,th,y0,y1,o){        // 厚さ th の板(外面が d)
   if(col!==null) Sx.col(col);
-  Sx.loft(mat,s0,s1,s=>{const o2=sg*(deckHalf(s)+d);return [[o2-sg*th,y0],[o2,y0],[o2,y1],[o2-sg*th,y1]];},
+  Sx.loft(mat,s0,s1,s=>{const o2=sg*(deckHalf(s,sg)+d);return [[o2-sg*th,y0],[o2,y0],[o2,y1],[o2-sg*th,y1]];},
     Object.assign({closed:true,caps:true},o||{}));
 }
 function fRail(Sx,col,s0,s1,sg,d,dep,y0,y1,tag){        // 外装に沿って通る横材(曲線に追従)
@@ -4179,7 +4265,7 @@ function fRail(Sx,col,s0,s1,sg,d,dep,y0,y1,tag){        // 外装に沿って通
 }
 function fGlass(Sx,s0,s1,sg,d,y0,y1,tag){ vS(Sx,MAT.glass,s0,s1,fO(sg,d),y0,y1,sg,{tag:tag}); }
 function fFin(Sx,col,sx,sg,d,w,dep,y0,y1,tag){            // 外装の面から外へ dep 張り出す縦材
-  Sx.col(col).box(SV,sx,sg*(deckHalf(sx)+d+dep/2),y0,y1,w,dep,{skip:'-y',tag:tag});
+  Sx.col(col).box(SV,sx,sg*(deckHalf(sx,sg)+d+dep/2),y0,y1,w,dep,{skip:'-y',tag:tag});
 }
 const uvW=(su,sv)=>(s,p)=>[s/su,p[1]/sv];                  // 鉛直な面の模様の UV
 const FAC={
@@ -4278,13 +4364,13 @@ const FAC={
     for(let s=a+6;s<b;s+=15){                                  // 白い弓形の柱(15m間隔)
       const P=[];
       for(let i=0;i<=8;i++){
-        const t=i/8, yy=y0+0.2+(y+7.4-(y0+0.2))*t, o=sg*(deckHalf(s)+0.6+0.5*Math.sin(Math.PI*t*0.85));
+        const t=i/8, yy=y0+0.2+(y+7.4-(y0+0.2))*t, o=sg*(deckHalf(s,sg)+0.6+0.5*Math.sin(Math.PI*t*0.85));
         const f=frame(s,o); P.push([f.x,yy,f.z]);
       }
       S.mg.col(0xf4f5f6);
       for(let i=0;i<8;i++) S.mg.tube(SV,P[i],P[i+1],0.18,8);
-      STRUCT.push({tag:'外装:白い弓形の柱',s0:s-0.15,s1:s+0.15,o0:sg>0?deckHalf(s)+0.45:-(deckHalf(s)+1.25),
-                   o1:sg>0?deckHalf(s)+1.25:-(deckHalf(s)+0.45),y0:y0+0.2,y1:y+7.4});
+      STRUCT.push({tag:'外装:白い弓形の柱',s0:s-0.15,s1:s+0.15,o0:sg>0?deckHalf(s,sg)+0.45:-(deckHalf(s,sg)+1.25),
+                   o1:sg>0?deckHalf(s,sg)+1.25:-(deckHalf(s,sg)+0.45),y0:y0+0.2,y1:y+7.4});
     }
   },
   /* 芦花公園:木の縦格子(見付16cm・見込み55cm・50cm間隔)を連ねて書架を表す。
@@ -4313,11 +4399,11 @@ const FAC={
     fGlass(S.mg,a,b,sg,FD-0.06,y0,y1);
     for(let r=0;r<R;r++){                                            // 横の帯
       const h=hr(r);
-      S.mg.col(0xb09b82).loft(SV,a,b,s=>{const c=Math.round((s-a)/G), E=deckHalf(s), d=dep(r,c,true);
+      S.mg.col(0xb09b82).loft(SV,a,b,s=>{const c=Math.round((s-a)/G), E=deckHalf(s,sg), d=dep(r,c,true);
         return [[sg*(E+d-T/2),h-W/2],[sg*(E+d+T/2),h-W/2],[sg*(E+d+T/2),h+W/2],[sg*(E+d-T/2),h+W/2]];},
         {closed:true,step:G,tol:0.0005,maxL:1e9,tag:'外装:格子(横)'});
     }
-    const P=(s,d,yy)=>{const f=frame(s,sg*(deckHalf(s)+d));return [f.x,yy,f.z];};
+    const P=(s,d,yy)=>{const f=frame(s,sg*(deckHalf(s,sg)+d));return [f.x,yy,f.z];};
     for(let c=0;c<=n;c++){                                           // 縦の帯(交点の間ごとに斜めの面)
       const s=a+c*G, A=S.mg.axes(s,0), out=v3sc(A.n,sg);
       const pts=[[y0,dep(0,c,false)]];
@@ -4332,7 +4418,7 @@ const FAC={
           S.mg.face(SV,[P(s+sd*W/2,da-T/2,ya),P(s+sd*W/2,da+T/2,ya),P(s+sd*W/2,db+T/2,yb),P(s+sd*W/2,db-T/2,yb)],v3sc(A.t,sd));
       }
       for(let r=0;r<R;r++){
-        const h=hr(r), dv=dep(r,c,false), dh=dep(r,c,true), E=deckHalf(s);
+        const h=hr(r), dv=dep(r,c,false), dh=dep(r,c,true), E=deckHalf(s,sg);
         STRUCT.push({tag:'外装:格子(縦)',s0:s-W/2,s1:s+W/2,o0:Math.min(sg*(E+dv-T/2),sg*(E+dv+T/2)),o1:Math.max(sg*(E+dv-T/2),sg*(E+dv+T/2)),y0:h-W/2,y1:h+W/2});
         WEAVE.push({sg:sg,r:r,c:c,s:s,y:h,hor:sg*(E+dh),ver:sg*(E+dv)});
       }
@@ -4356,11 +4442,11 @@ const BLDG_FAC={
       fBand(mg,MAT_BRICK,0xa7746a,p0,p1,sg,-1.0+0.45,0.5,0,hb,{uv:uvW(0.44,0.28),tag:'駅舎:レンガ'});
     }
     for(let s=st.x-7;s<=st.x+7.01;s+=0.32){
-      const A=mg.axes(s,sg*(deckHalf(s)-1.0)), B=mg.axes(s,sg*(deckHalf(s)+2.6));
+      const A=mg.axes(s,sg*(deckHalf(s,sg)-1.0)), B=mg.axes(s,sg*(deckHalf(s,sg)+2.6));
       mg.col(0xbca37a).tube(SV,[A.f.x,4.45,A.f.z],[B.f.x,3.95,B.f.z],0.035,4);
     }
-    STRUCT.push({tag:'駅舎:格子の庇',s0:st.x-7,s1:st.x+7,o0:sg>0?deckHalf(st.x)-1.0:-(deckHalf(st.x)+2.6),
-                 o1:sg>0?deckHalf(st.x)+2.6:-(deckHalf(st.x)-1.0),y0:3.9,y1:4.5});
+    STRUCT.push({tag:'駅舎:格子の庇',s0:st.x-7,s1:st.x+7,o0:sg>0?deckHalf(st.x,sg)-1.0:-(deckHalf(st.x,sg)+2.6),
+                 o1:sg>0?deckHalf(st.x,sg)+2.6:-(deckHalf(st.x,sg)-1.0),y0:3.9,y1:4.5});
     return {noCanopy:true};
   },
   // 半透明の白いガラスの壁(細い方立)。入口の上に斜めに持ち上がる白い庇
@@ -4371,7 +4457,7 @@ const BLDG_FAC={
       for(let s=s0;s<=s1+0.01;s+=1.2) fFin(md,0xc9ced3,s,sg,-1.0+0.05,0.05,0.06,0.2,hb-1.4);
       fBand(mg,SV,0x9aa0a6,s0,s1,sg,-1.0+0.05,0.05,hb-1.4,hb-0.2);
     }
-    mg.col(0xf1f3f4).loft(SV,st.x-16,st.x+16,s=>{const i=sg*(deckHalf(s)-1.0),q=sg*(deckHalf(s)+3.0);
+    mg.col(0xf1f3f4).loft(SV,st.x-16,st.x+16,s=>{const i=sg*(deckHalf(s,sg)-1.0),q=sg*(deckHalf(s,sg)+3.0);
       return [[i,4.1],[q,4.9],[q,5.05],[i,4.3]];},{closed:true,caps:true,tag:'駅舎の庇'});
     return {noCanopy:true};
   },
@@ -4405,7 +4491,7 @@ const BLDG_FAC={
       fBand(mg,MAT_STONE,0xa9a8a3,s0,s1,sg,-1.0+0.05,0.05,3.3,hb-0.3,{uv:uvW(2.4,1.2)});
     }
     const a=bldgSpan(st)[0]-4, b=bldgSpan(st)[1]+4;
-    mg.col(0x50565d).loft(SV,a,b,s=>{const i=sg*(deckHalf(s)-1.0),q=sg*(deckHalf(s)+1.4);
+    mg.col(0x50565d).loft(SV,a,b,s=>{const i=sg*(deckHalf(s,sg)-1.0),q=sg*(deckHalf(s,sg)+1.4);
       return [[i,3.55],[q,3.2],[q,3.3],[i,3.65]];},{closed:true,caps:true,tag:'駅舎:低い庇'});
     return {noCanopy:true};
   },
@@ -4463,19 +4549,19 @@ function bldg(S,st,y){
       return 4.0+2.3*Math.pow(Math.max(0,1-u/0.38),2)+0.35*Math.pow(Math.max(0,(u-0.75)/0.25),2);};
     const dE=s=>4.6+3.4*Math.pow(Math.max(0,1-uW(s)/0.45),2);  // 桁の縁からの張出し
     for(const sg of[-1]){                                       // 南側だけ
-      mg.loft(SV,e0,e1,s=>{const i=sg*(deckHalf(s)-1.0), q=sg*(deckHalf(s)+dE(s)), h=hE(s);
+      mg.loft(SV,e0,e1,s=>{const i=sg*(deckHalf(s,sg)-1.0), q=sg*(deckHalf(s,sg)+dE(s)), h=hE(s);
         return [[i,5.0],[q,h],[q,h+0.16],[i,5.35]];},
         {closed:true,caps:true,cols:[0xc99a62,0xf4f5f6,0xe4e6e8,0xe4e6e8],tag:'大庇'});
       for(let s=e0;s<=e1+0.01;s+=4){                           // 縁の高さの登録簿(検証が反りを測る)
-        const q=deckHalf(s)+dE(s);
+        const q=deckHalf(s,sg)+dE(s);
         STRUCT.push({tag:'大庇の縁',s0:s,s1:s,o0:sg>0?q-0.05:-q,o1:sg>0?q:-(q-0.05),y0:hE(s),y1:hE(s)+0.16});
       }
       for(let s=e0+0.6;s<e1;s+=1.1){                          // 下面の木の板目
-        const A=md.axes(s,sg*(deckHalf(s)-0.98)), B=md.axes(s,sg*(deckHalf(s)+dE(s)-0.05)), h=hE(s);
+        const A=md.axes(s,sg*(deckHalf(s,sg)-0.98)), B=md.axes(s,sg*(deckHalf(s,sg)+dE(s)-0.05)), h=hE(s);
         md.col(0xa97c47).tube(SV,[A.f.x,4.985,A.f.z],[B.f.x,h-0.015,B.f.z],0.02,4);
       }
       for(let s=e0+5;s<e1-2;s+=13){
-        const o=sg*(deckHalf(s)+3.4), f=(3.4+1.0)/(dE(s)+1.0), h=5.0+(hE(s)-5.0)*f;   // 柱の頭=下面の高さ
+        const o=sg*(deckHalf(s,sg)+3.4), f=(3.4+1.0)/(dE(s)+1.0), h=5.0+(hE(s)-5.0)*f;   // 柱の頭=下面の高さ
         mg.col(0xf4f5f6).cyl(SV,s,o,0,h,0.38,12,{tag:'大庇の柱'});
         md.col(0x9aa0a6).cyl(SV,s,o,2.4,2.7,0.41,12);
       }
@@ -4792,7 +4878,7 @@ function buildCatenary(){
     const C=chunkAt(s), yr=rTop(s), roof=staRoofAt(s)||cutDeckRoof(s), P={};
     if(!roof) for(const sg of[-1,1]){                 // 柱:その側の最も外の線路から1.95m外(桁端の0.55m内まで)
       let out=0; for(const w of W) if(sg*w.zo>0) out=Math.max(out,sg*w.zo);
-      let p=s<DECK_END?Math.min(deckHalf(s)-0.50,out+1.95):Math.min(cutHalf(s,sg)-0.50,out+1.95);
+      let p=s<DECK_END?Math.min(deckHalf(s,sg)-0.50,out+1.95):Math.min(cutHalf(s,sg)-0.50,out+1.95);
       for(const pl of PLATS){                         // ホームの上なら線路側の縁から1.2m以上内へ
         if(s<pl.x0-3||s>pl.x1+3) continue;
         const lo=sg*pl.off-pl.hw, hi=sg*pl.off+pl.hw;
@@ -4926,7 +5012,7 @@ const keepPoly =(P)=>{const b=[1e9,-1e9,1e9,-1e9]; for(const p of P){b[0]=Math.m
 const keepHw=(q,u,n)=>typeof q.hw==='function'?q.hw(clamp(u,q.u0,q.u1),n):q.hw;
 // 交差道路(4章 box(w,...) の w/2 に路肩ぶんを足す)
 // 実データの道路(plateau_land.js)があるときは、模式の道路の帯ではなく道路の面そのもの(roadHit)で見る
-keepBand(HOSHA23_X,11);                         // 放射23号線(計画。実データに無い)
+if(H23.on) keepPoly(H23.outline); else keepBand(HOSHA23_X,11);   // 放射23号線(計画。実データに無い):計画の帯の外形(H23)か、模式の帯
 if(!PLL) for(const r of [[KAN7_X,17],[NAKANO_X,11],[KYU_INOKA_X,9],[H154_X,10],[H128_X,9.5],
                 [H133_X,9.5],[H215_X,9.5],[KANPACHI_X,19],[H216_X,10],[H217_X,10]])
   keepBand(r[0],r[1]);
@@ -4969,7 +5055,7 @@ function southClearAt(s){
     const ext=new Float32Array(n);
     for(const q of STRUCT){ if(!(q.o0<0)) continue;
       const a=Math.max(0,Math.floor(Math.min(q.s0,q.s1)-DOM.x0)), b=Math.min(n-1,Math.floor(Math.max(q.s0,q.s1)-DOM.x0));
-      for(let k=a;k<=b;k++){ const e=-q.o0-deckHalf(DOM.x0+k+0.5); if(e>ext[k]) ext[k]=e; } }
+      for(let k=a;k<=b;k++){ const e=-q.o0-deckHalf(DOM.x0+k+0.5,-1); if(e>ext[k]) ext[k]=e; } }
     const zones=STA.map(st=>{const r=platRange(st), B=bldgSpan(st); return [Math.min(r[0],B[0])-SOUTH_STA, Math.max(r[1],B[1])+SOUTH_STA];});
     for(let k=0;k<n;k++){ const s0=DOM.x0+k+0.5;
       SOUTH_C[k]=zones.some(z=>s0>z[0]-1&&s0<z[1]+1)?BAND_CLEAR:Math.max(ext[Math.max(0,k-1)],ext[k],ext[Math.min(n-1,k+1)])+SOUTH_CLEAR; }
@@ -4977,9 +5063,9 @@ function southClearAt(s){
   const k=Math.floor(s-DOM.x0); return (k<0||k>=SOUTH_C.length)?BAND_CLEAR:SOUTH_C[k];
 }
 // 建物・木を置かない帯の半幅(線路の中心から)。sg は側(+1=北)
-const bandHalf=(s,sg)=>s>DECK_END?cutHalf(s,sg)+BAND_CLEAR:deckHalf(s)+(sg<0?southClearAt(s):BAND_CLEAR);
+const bandHalf=(s,sg)=>s>DECK_END?cutHalf(s,sg)+BAND_CLEAR:deckHalf(s,sg)+(sg<0?southClearAt(s):BAND_CLEAR);
 /* (s,off)に半径radの物を置けるか。高架下・側道は桁半幅から求める(桁幅を変えれば追従)。 */
-function cityFree(s,off,rad,px,pz,roadIn){       // roadIn:道路の面への食い込みを許す量[m](実データの建物)
+function cityFree(s,off,rad,px,pz,roadIn,noLine){   // roadIn:道路の面への食い込みを許す量[m](実データの建物)。noLine:交差鉄道の占有域を見ない(KEEP_SHOW)
   // 高架下+側道。掘割(DECK_END より西)は側ごとの幅(仙川は北に広い単式ホームがあり、南は狭い)。高架の南は壁の 1m 付近まで(bandHalf)
   if(Math.abs(off)<bandHalf(s,off<0?-1:1)+rad) return false;
   for(const q of KEEP){
@@ -4990,6 +5076,7 @@ function cityFree(s,off,rad,px,pz,roadIn){       // roadIn:道路の面への食
     else if(q.k==='p'){ let x=px, z=pz; if(x===undefined){const f=frame(s,off); x=f.x; z=f.z;}
       if(x>q.bb[0]-rad&&x<q.bb[1]+rad&&z>q.bb[2]-rad&&z<q.bb[3]+rad&&polyDist(q.P,x,z)<rad) return false; }
     else {                                                     // 交差鉄道の中心線(世界座標の曲線)
+      if(noLine) continue;
       const p=q.A.uv(px,pz);
       if(Math.abs(p.n)<keepHw(q,p.u,p.n)+rad && p.u>q.u0-rad && p.u<q.u1+rad) return false;
     }
@@ -5031,6 +5118,12 @@ function occAdd(px,pz,r){
    ・樹木と街灯は足跡の中・縁に置かない(occFree が足跡の格子 PLB_GRID も見る) */
 const PLB=(typeof globalThis!=='undefined'&&globalThis.PLATEAU_BLDG&&globalThis.PLATEAU_BLDG.b64)?globalThis.PLATEAU_BLDG:null;
 const PLB_GRID=new Map(), PLB_CELL=26, PLB_PAD=6;
+/* 交差鉄道の占有域に掛かっても描く建物(2026-11 利用者指示「明大前駅の北にあるフレンテ明大前の建物が消えている。おそらく下り井の頭線のホームと
+   被ったからであろうが、この建物は被っても表示させて」)。PLATEAU の足跡の面積の重心の緯度・経度(地理院の航空写真に重ねて確かめた。
+   reference/plateau/README.md)。井の頭線の占有域(KEEP の 'l'。2026-10-11 に 5m 広げたホームの背面の外)だけを見ない:実際のホームは
+   幅 3.4m で建物はその背面に接して建つ。広げたホームの背面と擁壁・上屋の 約4m が建物の中に入る(建物は線路の中心から 6.4m の外) */
+const KEEP_SHOW=[{n:'フレンテ明大前', la:35.66893362, lo:139.65020239}];
+const keepShow=(cx,cz)=>KEEP_SHOW.some(k=>{ const q=toXY(k.la,k.lo); return Math.hypot(cx-q.x,cz-q.z)<2; });
 /* 写真テクスチャ(別ファイル plateau_tex.js があるとき。2026-10-25 利用者指示:駅の周りの LOD2 の建物に PLATEAU の写真を貼る)。
    tools/plateau_tex.py が LOD2 の面ごとの写真の座標と、s の並びの近い建物の写真を詰め合わせた画像(2048 画素四方の JPEG・
    0.2m/画素まで)を作る。PLATEAU の写真(航空写真から作った壁・屋根の画像)も CC BY 4.0。
@@ -5488,12 +5581,12 @@ if(PLB){
     if(s<DOM.x0||s>DOM.x1||Math.abs(off)>DOM.z) continue;
     const f0=frame(s,0), f1=frame(s+1,0), fn=frame(s,1);
     const tx=f1.x-f0.x, tz=f1.z-f0.z, nx=fn.x-f0.x, nz=fn.z-f0.z;
-    let ok=true;
+    let ok=true; const show=keepShow(cx,cz);
     for(let i=0;i<P.length&&ok;i++){                  // 頂点と辺の2mごとの点が占有域に掛からない
       const a=P[i], c=P[(i+1)%P.length], m=Math.max(1,Math.ceil(Math.hypot(c[0]-a[0],c[1]-a[1])/2));
       for(let k=0;k<m&&ok;k++){
         const x=a[0]+(c[0]-a[0])*k/m, z=a[1]+(c[1]-a[1])*k/m;
-        if(!cityFree(s+(x-cx)*tx+(z-cz)*tz, off+(x-cx)*nx+(z-cz)*nz, 0.3, x, z, 0.6)) ok=false;   // 道路の縁に接して建つ実際の建物は残す(食い込み0.3mまで)
+        if(!cityFree(s+(x-cx)*tx+(z-cz)*tz, off+(x-cx)*nx+(z-cz)*nz, 0.3, x, z, 0.6, show)) ok=false;   // 道路の縁に接して建つ実際の建物は残す(食い込み0.3mまで)
       }
     }
     if(!ok){ ORTHO_HOLES.push(P); continue; }        // 外した建物の足跡は航空写真を使わない(3章 ORTHO_HOLES)
@@ -5835,12 +5928,7 @@ if(PLB){
   }
   CITY.plateau={source:PLB.source,count:PLB.count,used:nIn,tex:N_TX?{buildings:N_TX.nb,surfaces:N_TX.ns,atlases:PTX.atlases.length}:null};
   // 出典の表示(CC BY 4.0)
-  try{
-    const d=document.createElement('div');
-    d.textContent=(PLL?'建物・道路・土地利用':'建物')+(N_TX?'・建物の写真':'')+(TER.on?'・地形':'')+':'+PLB.source+'(CC BY 4.0)を加工';   // CREDITS.txt と同じ表記
-    d.style.cssText='position:fixed;right:6px;bottom:4px;font:11px sans-serif;color:#334;background:rgba(255,255,255,.7);padding:1px 6px;border-radius:4px;z-index:5;pointer-events:none';
-    document.body.appendChild(d);
-  }catch(e){}
+  try{ creditLine('plateau',(PLL?'建物・道路・土地利用':'建物')+(N_TX?'・建物の写真':'')+(TER.on?'・地形':'')+':'+PLB.source+'(CC BY 4.0)を加工'); }catch(e){}   // CREDITS.txt と同じ表記
 }else{
 
   /* 模式の街(PLATEAU のデータが無いとき)。棟数は利用者指示で約2倍(約1万棟)。数を増やすぶん**1棟を実際の街の大きさへ
@@ -5962,7 +6050,7 @@ if(PLB){
       for(const Q of BP) rad=Math.min(rad,polyDist(Q,t[0],t[1])-0.05);
       for(const Q of KARA.row) rad=Math.min(rad,polyDist(Q,t[0],t[1])-0.1);
       const q=prjXY(t[0],t[1]);
-      if(i>=N||rad<0.8||Math.abs(q.off)<deckHalf(q.s)+5.2+rad||roadHit(t[0],t[1],rad)||plbHit(t[0],t[1],rad)) continue;
+      if(i>=N||rad<0.8||Math.abs(q.off)<deckHalf(q.s,q.off<0?-1:1)+5.2+rad||roadHit(t[0],t[1],rad)||plbHit(t[0],t[1],rad)) continue;
       const sc=rad/2.3, ty=Math.min(terH(t[0],t[1]),terH(t[0]+0.3,t[1]),terH(t[0]-0.3,t[1]),terH(t[0],t[1]+0.3),terH(t[0],t[1]-0.3));
       T.push([t[0],t[1],sc,0x6f9160,q.s,ty]); i++; occAdd(t[0],t[1],rad);
       CITY.trees.push({s:q.s,off:q.off,x:t[0],z:t[1],y:ty,r:rad,kind:'広場'});
@@ -5970,13 +6058,13 @@ if(PLB){
   /* 明大前駅前広場の木(計画。構想図からの推定の位置 MEIDA.trees):広場は占有域なので cityFree を通さずに、ほかの木より先に植える。
      車道(取付道路を含む)・154 の帯・高架の帯には掛けない */
   if(MEIDA.on) for(const t of MEIDA.trees){ const rad=t[2], q=prjXY(t[0],t[1]);
-    if(i>=N||MEIDA.roadway(t[0],t[1],-rad)||MEIDA.row.some(Q=>polyDist(Q,t[0],t[1])<rad)||Math.abs(q.off)<deckHalf(q.s)+1.0+rad) continue;
+    if(i>=N||MEIDA.roadway(t[0],t[1],-rad)||MEIDA.row.some(Q=>polyDist(Q,t[0],t[1])<rad)||Math.abs(q.off)<deckHalf(q.s,q.off<0?-1:1)+1.0+rad) continue;
     const sc=rad/2.3, ty=Math.min(terH(t[0],t[1]),terH(t[0]+0.3,t[1]),terH(t[0]-0.3,t[1]),terH(t[0],t[1]+0.3),terH(t[0],t[1]-0.3));
     T.push([t[0],t[1],sc,0x6f9160,q.s,ty]); i++; occAdd(t[0],t[1],rad);
     CITY.trees.push({s:q.s,off:q.off,x:t[0],z:t[1],y:ty,r:rad,kind:'明大前広場'}); }
   // 街路樹(高架の両側=側道の外)。占有域に当たる区間は自動的に間引かれる
   for(let x=DOM.x0+40;x<DECK_END-30;x+=26)
-    for(const sg of[-1,1])put(x,sg*(deckHalf(x)+8.2),.85,0x7fa268);
+    for(const sg of[-1,1])put(x,sg*(deckHalf(x,sg)+8.2),.85,0x7fa268);
   // 甲州街道の歩道の街路樹(車道 off 145〜171 の外側)。実データの道路があれば、幹線の縁の 2.6m 外に 23m ごと
   if(!PLL){
     for(let x=DOM.x0+20;x<DOM.x1-20;x+=23)
@@ -6176,9 +6264,9 @@ function staLitPatch(mat,car){                 // car=車両の部品:夜はど�
   mat.customProgramCacheKey=()=>'staLit|'+(car?'car|':'')+pk;
 }     // 検証用(灯りの数)
 /* 灯りの強さ。窓・街灯・ホーム照明・emissive のすべてに一律で掛ける
-   (利用者指示で2.5倍)。色はリニア値に掛けるので、トーンマッピングを通った
+   (利用者指示で2.5倍。2026-11 その3「夜をさらに明るく」で2.9倍)。色はリニア値に掛けるので、トーンマッピングを通った
    画面上では白へ寄りながら明るくなる(飽和で色が飛ぶのを ACES が和らげる) */
-const LIGHT_GAIN=2.5;
+const LIGHT_GAIN=2.9;
 /* 千歳烏山駅前広場の街灯(2026-11 利用者指示「更なるクオリティアップ」。推定):舗装の縁のうち外が車道の所に 18m おき、縁の 0.6m 内側
    (ほかの灯りから 10m)。灯具と暈けは 8b章が ROAD_LAMPS から地表+5.2m に描き、柱は 10e章 */
 const KARA_LAMPS=[];
@@ -6208,7 +6296,7 @@ const NIGHT=(function(){
   {
     const pts=[];
     for(let x=DOM.x0+30;x<DECK_END-20;x+=34)
-      for(const sg of[-1,1]) pts.push([x,sg*(deckHalf(x)+5.4)]);
+      for(const sg of[-1,1]) pts.push([x,sg*(deckHalf(x,sg)+5.4)]);
     if(!PLL) for(let x=DOM.x0-200;x<DOM.x1+200;x+=46) pts.push([x,143],[x,173]);   // 模式の甲州街道
     else for(const q of ROAD_LAMPS){const r=prjXY(q[0],q[1]); pts.push([r.s,r.off]);}  // 実データの幹線の歩道際
     // 高架の上(架線柱の灯り。6b章が柱に腕を付けた位置)。前面展望で奥へ伸びる灯りの列になる
@@ -8226,68 +8314,133 @@ function placeTrain(t){
    箱形の車体+段付きの丸屋根+窓帯+スカート+台車。線区ごとに寸法と色を変える。
    遠景の脇役なので部品点数は最小限にする(LODも持たない)。 */
 const XCAR={
-  // L=車体長 / W=車体幅 / H=屋根高 / FLOOR=床面 / GAUGE=軌間 / band=帯 / body=車体
-  ino :{L:19.5, W:2.80, H:3.55, FLOOR:1.05, GAUGE:GAUGE_INO,  band:0x1a9ed6, body:0xd8dbdf, panto:true},
-  seta:{L:13.6, W:2.50, H:3.40, FLOOR:0.95, GAUGE:GAUGE_SETA, band:0x6aa84f, body:0xe8e6df, panto:true},
+  // L=車体長 / W=車体幅 / H=屋根高 / FLOOR=床面 / GAUGE=軌間 / prof=断面 [高さ,半幅](下→上) / roof=屋根・end=妻面の色(2026-11 作り直し。下の xCarFaces)
+  ino :{L:19.5, W:2.81, H:3.66, FLOOR:1.15, GAUGE:GAUGE_INO,  roof:0xb9bdc1, end:0xc0c4c8,
+        prof:[[0.98,1.30],[1.25,1.385],[1.6,1.405],[3.1,1.405],[3.32,1.37],[3.5,1.2],[3.62,0.8],[3.66,0]]},   // 京王1000系(裾絞り)
+  seta:{L:11.6, W:2.50, H:3.40, FLOOR:0.95, GAUGE:GAUGE_SETA, roof:0xc4c8cc, end:0x3a3f45,
+        prof:[[0.62,1.20],[0.9,1.25],[2.8,1.25],[3.1,1.225],[3.28,1.05],[3.37,0.6],[3.40,0]]},                  // 東急300系(屋根へ 25mm ずつ絞る)
 };
+// 編成ごとの色(公表の色の名前。16進は推定):井の頭線 1000系の前面(下り=ブルーグリーン・上り=サーモンピンク)・世田谷線 300系の車体(アップルグリーン)
+const XCOL={ino:[0x3fb5b0,0xf2a29a], seta:0x86c540};
 /* 材質は3つ:車体・帯・屋根・床下・台車・パンタは頂点カラーで塗る1つ(XM_VC)、窓(夜に灯る。8b章)、
    車輪(⑦が頂点から軌間を測る)。以前は部品の色ごとに8材質=1両8回の描画だった */
 const XM_VC=M(0xffffff,{vertexColors:true}), XM_WIN=M(0x25333c), XM_WHL=M(0x4a4f55);
 const XC={roof:0xb4b9be, und:0x3a3f45, trk:0x33383d, pan:0x8d949b};
-/* 1両ぶんの面を材質ごとの頂点配列(buf)へ積む。x0=車体中心の局所 x
-   (編成を1つのジオメトリにまとめるときに車両ごとにずらす)。
-   箱=長さ L(x)・高さ H・幅 W(z)、中心 x,y,z、z軸まわりの傾き rz。m=色(16進。XM_VC へ)か材質(窓) */
-function xCarFaces(kind,buf,x0){
-  const S=XCAR[kind], col=new THREE.Color();
-  const put=(L,H,W,m,x,y,z,rz)=>{
-    const vc=(typeof m==='number'), q=buf(vc?XM_VC:m), c=Math.cos(rz||0), s=Math.sin(rz||0);
-    if(vc) setSrgb(col,m);
-    for(const [n,f] of boxFaces(-L/2,L/2,-H/2,H/2,-W/2,W/2,['top','bot','px','nx','pz','nz'])){
-      const o=q.P.length/3;
-      for(let j=0;j<4;j++){const p=f[j]; q.P.push(x0+x+p[0]*c-p[1]*s, y+p[0]*s+p[1]*c, z+p[2]); q.N.push(f[4][0]*c-f[4][1]*s, f[4][0]*s+f[4][1]*c, f[4][2]);
-        if(vc) q.C.push(col.r,col.g,col.b);}
-      q.I.push(o,o+1,o+2,o,o+2,o+3);
+/* 1両ぶんの面を材質ごとの頂点配列(buf)へ積む。x0=車体中心の局所 x。j=編成の中の番号・n=両数・o=編成の設定(dir=+x が前の車両が j=0 か・色)。
+   2026-11 利用者指示「井の頭線と世田谷線は前面と側面を画像検索し、京王8000系・9000系並みにリアルにして」で作り直した(以前は箱だけ):
+   ・井の頭線 京王1000系(公表:全長 20,000mm・車体基準幅 2,810mm・屋根 3,660mm・床 1,150mm・軽量ステンレス・4扉・5両・シングルアームのパンタ3基):
+     裾を絞った断面のステンレスの車体、扉の位置は 8000系と同じ ±2.35・±7.05(20m 4扉)、扉と窓、幕板に編成の色の帯(推定)、屋根の冷房(ファン2つ)、
+     中の3両にパンタ。先頭車の前面は編成ごとの色の前面(公表:パステルカラー7色)・黒の窓まわり・助士席側(右)の非常用貫通扉・上の行先表示器・
+     窓下の前照灯と表示器の脇の尾灯・スカート・連結器。中間の車端は貫通路と幌
+   ・世田谷線 東急300系(公表:2車体連接・全長 23,980mm・幅 2,500mm で屋根へ 50mm 絞る・前面は傾斜した1枚ガラスを側面へ回り込ませる・
+     車体は編成ごとの色・パンタは各車1基):車体の色・回り込む前面のガラス・行先表示器・各車2扉(推定)。台車は描画の都合で各車2台(実物は連接の3台)
+   寸法の根拠と推定の一覧は reference/xtrains/README.md。先頭でない車端の前面の部品は頂点を車端の中心へ潰す(1両あたりの頂点の数を同じにする) */
+function xCarFaces(kind,buf,x0,j,n,o){
+  const S=XCAR[kind]; o=o||{}; j=j||0; n=n||1;
+  const fwd=o.dir===undefined?1:o.dir;               // j=0 の車両の前(運転台)が局所 +x なら 1
+  const cabP=(j===0&&fwd>0)||(j===n-1&&fwd<0), cabN=(j===0&&fwd<0)||(j===n-1&&fwd>0);   // +x 端・−x 端が先頭か
+  const K={vc:meshKit(), win:meshKit()}, L=S.L, hw=S.W/2;
+  const ring=S.prof;                                  // 断面 [[y,半幅],…](下→上)
+  // 車体:断面を x に沿って押し出す(両端は蓋)。帯の範囲の面は色を変える
+  const shell=(k,col,x1,x2)=>{ const R=[]; for(const [y,w] of ring) R.push([y,w]); for(let i=ring.length-2;i>=1;i--) R.push([ring[i][0],-ring[i][1]]); R.push([ring[0][0],-ring[0][1]]);
+    const m=R.length;
+    for(let i=0;i<m;i++){ const a=R[i], b=R[(i+1)%m], dy=b[0]-a[0], dz=b[1]-a[1], l=Math.hypot(dy,dz); if(l<1e-6) continue;
+      let ny=-dz/l, nz=dy/l; const cy=(a[0]+b[0])/2, cz=(a[1]+b[1])/2; if(ny*(cy-2)+nz*cz<0){ny=-ny;nz=-nz;}
+      k.poly([[x1,a[0],a[1]],[x2,a[0],a[1]],[x2,b[0],b[1]],[x1,b[0],b[1]]],[0,ny,nz],typeof col==='function'?col((a[0]+b[0])/2):col); }
+    for(const [x,sg] of [[x1,-1],[x2,1]]) k.poly(R.map(p=>[x,p[0],p[1]]).reverse().map(v=>v),[sg,0,0],S.end); };
+  // 先頭の部品を 1 つの kit にまとめて作り、先頭でなければ車端の中心へ潰す
+  const front=(sg,isCab,build)=>{ for(const key of ['vc','win']){ const k=K[key], v0=k.P.length/3; build[key](k,sg);
+      if(!isCab) for(let i=v0;i<k.P.length/3;i++){ k.P[3*i]=sg*L/2; k.P[3*i+1]=S.FLOOR+1; k.P[3*i+2]=0; } } };
+  const sideBox=(k,xa,xb,ya,yb,d,t,hex)=>{ for(const s of[-1,1]) k.box(xa,xb,ya,yb,s>0?d:-d-t,s>0?d+t:-d,hex); };
+  if(kind==='ino'){
+    const C=o.color||0x3fb5b0, ST=0xc6cacd, DOOR=0xadb3b8;
+    shell(K.vc,y=>y>3.36?S.roof:ST,-L/2,L/2);
+    const sw=hw+0.004;                                   // 側面の外(窓・扉・帯を少し浮かせる)
+    const doors=[-7.05,-2.35,2.35,7.05];
+    for(const c of doors){ sideBox(K.vc,c-0.65,c+0.65,S.FLOOR,3.0,sw-0.002,0.006,DOOR);
+      sideBox(K.vc,c-0.004,c+0.004,S.FLOOR,3.0,sw+0.004,0.004,0x5c6166);                         // 戸の合わせ目
+      for(const e of[-1,1]) sideBox(K.win,e>0?c+0.08:c-0.56,e>0?c+0.56:c-0.08,1.95,2.86,sw+0.004,0.004); }   // 戸の窓
+    const wins=[[-1.45,-0.08],[0.08,1.45],[3.25,4.62],[4.78,6.15],[-6.15,-4.78],[-4.62,-3.25],[7.95,9.15],[-9.15,-7.95]];
+    for(const [a,b] of wins){ sideBox(K.win,a,b,1.95,2.90,sw,0.006); sideBox(K.vc,a-0.05,b+0.05,1.90,2.95,sw-0.003,0.004,0x8d9398); }   // 窓と窓枠
+    sideBox(K.vc,-L/2+0.08,L/2-0.08,3.02,3.12,sw,0.006,C);                                          // 幕板の帯(編成の色。推定)
+    sideBox(K.vc,-L/2+0.1,L/2-0.1,1.42,1.47,sw,0.004,0xa7acb1);                                     // 腰の継ぎ目
+    // 屋根の冷房(集中式)とファン
+    K.vc.box(-2.2,2.2,S.H-0.05,S.H+0.32,-0.92,0.92,0xc9ccd0); for(const x of[-1.1,1.1]) K.vc.ell(x,S.H+0.322,0,0.42,0.02,0.42,10,1,0x3a3f45,0,Math.PI/2);
+    // パンタ(中の車両。無い車両は潰す)
+    { const v0=K.vc.P.length/3, py=S.H, px=-L*0.3;
+      K.vc.box(px-0.95,px+0.95,py,py+0.1,-0.65,0.65,XC.pan);
+      K.vc.tube([[px-0.6,py+0.12,0,0.04],[px+0.15,py+0.75,0,0.035],[px+0.55,py+0.95,0,0.03]],6,XC.pan,false);
+      K.vc.box(px+0.47,px+0.63,py+0.93,py+0.99,-0.9,0.9,0x2b2f33);
+      if(!(j>0&&j<n-1)) for(let i=v0;i<K.vc.P.length/3;i++){ K.vc.P[3*i]=0; K.vc.P[3*i+1]=S.H; K.vc.P[3*i+2]=0; } }
+    // 床下機器・台車枠
+    K.vc.box(-4.6,4.6,S.FLOOR-0.85,S.FLOOR-0.12,-1.05,1.05,XC.und); K.vc.box(-1.2,1.6,S.FLOOR-0.75,S.FLOOR-0.12,-1.2,1.2,0x2f3439);
+    for(const bx of [-L*0.33,L*0.33]){ sideBox(K.vc,bx-1.35,bx+1.35,0.45,0.85,0.88,0.12,XC.trk); K.vc.box(bx-0.5,bx+0.5,0.7,0.95,-0.85,0.85,XC.trk); }
+    // 車端:先頭なら前面、そうでなければ幌(前面の部品は潰す)
+    for(const sg of[-1,1]){ const isCab=sg>0?cabP:cabN, xe=sg*L/2;
+      front(sg,isCab,{vc:(k)=>{ const X=y=>sg*(L/2+0.22-0.16*(y-1.0)/2.6);   // 前面は上ほど後ろへ傾く
+          const prof=ring.filter(p=>p[0]>=1.0); const Pm=[]; for(const [y,w] of prof) Pm.push([X(y),y,w-0.02]); for(let i=prof.length-1;i>=0;i--) Pm.push([X(prof[i][0]),prof[i][0],-(prof[i][1]-0.02)]);
+          k.poly(sg>0?Pm:Pm.slice().reverse(),[sg,0.06,0],C);                                                     // 色の前面
+          const sh=(x,y,z)=>[X(y)+sg*x,y,z];
+          k.poly([sh(0.012,1.9,-1.28),sh(0.012,1.9,1.28),sh(0.012,3.22,1.24),sh(0.012,3.22,-1.24)].map(v=>v),[sg,0.06,0],0x15181b);   // 黒の窓まわり
+          k.poly([sh(0.02,1.12,0.30),sh(0.02,1.12,0.96),sh(0.02,1.9,0.96),sh(0.02,1.9,0.30)],[sg,0.06,0],0x9a9fa4);  // 貫通扉の下
+          k.poly([sh(0.03,3.26,-0.55),sh(0.03,3.26,0.45),sh(0.03,3.45,0.45),sh(0.03,3.45,-0.55)],[sg,0.06,0],0xf29a2e);   // 行先表示器
+          for(const s of[-1,1]){ k.poly([sh(0.03,1.55,s*0.95),sh(0.03,1.55,s*1.2),sh(0.03,1.72,s*1.2),sh(0.03,1.72,s*0.95)],[sg,0.06,0],0xf2f4f0);   // 前照灯
+            k.poly([sh(0.03,3.27,s*0.62),sh(0.03,3.27,s*0.86),sh(0.03,3.44,s*0.86),sh(0.03,3.44,s*0.62)],[sg,0.06,0],0xb81c22); }   // 尾灯・標識灯
+          k.box(sg>0?xe+0.16:xe-0.25,sg>0?xe+0.25:xe-0.16,0.98,1.08,-1.15,1.15,0x3a3f45);                         // 前の補強の板
+          k.poly([[xe+sg*0.24,0.5,-1.1],[xe+sg*0.24,0.5,1.1],[xe+sg*0.18,0.98,1.2],[xe+sg*0.18,0.98,-1.2]].map(v=>v),[sg,-0.3,0],0x2b2f33);   // スカート
+          k.box(sg>0?xe+0.18:xe-0.4,sg>0?xe+0.4:xe-0.18,0.74,0.9,-0.1,0.1,0x2b2f33);                             // 連結器
+          for(const z of[-0.55,0.62]) k.box(X(2.0)+sg*0.03-0.02,X(2.0)+sg*0.03+0.02,1.95,2.6,z-0.02,z+0.02,0x111);  // ワイパー
+        }, win:(k)=>{ const X=y=>sg*(L/2+0.22-0.16*(y-1.0)/2.6), sh=(x,y,z)=>[X(y)+sg*x,y,z];
+          k.poly([sh(0.025,2.0,-1.2),sh(0.025,2.0,0.2),sh(0.025,3.12,0.2),sh(0.025,3.12,-1.17)],[sg,0.06,0]);   // 運転台の窓
+          k.poly([sh(0.025,2.05,0.36),sh(0.025,2.05,0.90),sh(0.025,3.05,0.90),sh(0.025,3.05,0.36)],[sg,0.06,0]); // 貫通扉の窓
+          k.poly([sh(0.025,2.0,1.0),sh(0.025,2.0,1.2),sh(0.025,3.12,1.17),sh(0.025,3.12,1.0)],[sg,0.06,0]); } });
+      // 幌(中間の車端。先頭の端は潰す)
+      { const v0=K.vc.P.length/3; K.vc.box(sg>0?xe:xe-0.25,sg>0?xe+0.25:xe,S.FLOOR,3.1,-0.6,0.6,0x2b2d30);
+        if(isCab) for(let i=v0;i<K.vc.P.length/3;i++){ K.vc.P[3*i]=xe; K.vc.P[3*i+1]=S.FLOOR+1; K.vc.P[3*i+2]=0; } }
     }
-  };
-  const wheel=(x,y,z,r,t)=>{                                // 車輪(軸は z)。12角の円柱と両面の蓋
-    x+=x0; const q=buf(XM_WHL), n=12, o=q.P.length/3;
-    for(let k=0;k<n;k++){const a=k/n*Math.PI*2, cx=Math.cos(a), cy=Math.sin(a);
+  }else{                                               // 世田谷線 300系
+    const C=o.color||0x86c540;
+    shell(K.vc,y=>y>3.2?S.roof:(y<1.0?0x3a3f45:C),-L/2,L/2);
+    const sw=hw+0.004;
+    for(const c of[-3.4,2.9]){ sideBox(K.vc,c-0.55,c+0.55,S.FLOOR,2.85,sw-0.002,0.006,0xd7dadc);       // 扉(推定:各車2か所)
+      for(const e of[-1,1]) sideBox(K.win,e>0?c+0.05:c-0.48,e>0?c+0.48:c-0.05,1.75,2.70,sw+0.004,0.004); }
+    for(const [a,b] of [[-2.65,-0.05],[0.05,2.15],[3.65,4.6],[-5.3,-4.15]]){ sideBox(K.win,a,b,1.65,2.75,sw,0.006); sideBox(K.vc,a-0.05,b+0.05,1.6,2.8,sw-0.003,0.004,0x2b2f33); }
+    sideBox(K.vc,-L/2+0.05,L/2-0.05,2.95,3.05,sw,0.006,0xf2f2ee);                                   // 幕板の白い線(推定)
+    K.vc.box(-1.6,1.6,S.H-0.04,S.H+0.3,-0.85,0.85,0xd2d5d8); K.vc.ell(0,S.H+0.302,0,0.4,0.02,0.4,10,1,0x3a3f45,0,Math.PI/2);   // 冷房
+    { const py=S.H, px=-L*0.25; K.vc.box(px-0.8,px+0.8,py,py+0.1,-0.6,0.6,XC.pan);
+      K.vc.tube([[px-0.5,py+0.12,0,0.035],[px+0.15,py+0.7,0,0.03],[px+0.5,py+0.88,0,0.028]],6,XC.pan,false); K.vc.box(px+0.42,px+0.58,py+0.86,py+0.92,-0.8,0.8,0x2b2f33); }
+    K.vc.box(-2.8,2.8,S.FLOOR-0.6,S.FLOOR-0.08,-0.95,0.95,XC.und);
+    for(const bx of [-L*0.33,L*0.33]){ sideBox(K.vc,bx-1.2,bx+1.2,0.42,0.8,0.82,0.1,XC.trk); }
+    for(const sg of[-1,1]){ const isCab=sg>0?cabP:cabN, xe=sg*L/2;
+      front(sg,isCab,{vc:(k)=>{
+          k.poly([[xe+sg*0.06,0.62,-1.2],[xe+sg*0.06,0.62,1.2],[xe+sg*0.1,1.55,1.22],[xe+sg*0.1,1.55,-1.22]].map(v=>v),[sg,0,0],C);   // 前の下(車体の色)
+          k.poly([[xe+sg*0.03,3.0,-1.15],[xe+sg*0.03,3.0,1.15],[xe+sg*0.0,3.32,1.0],[xe+sg*0.0,3.32,-1.0]].map(v=>v),[sg,0.3,0],0x15181b);   // 上の黒い所
+          k.poly([[xe+sg*0.05,3.06,-0.6],[xe+sg*0.05,3.06,0.6],[xe+sg*0.04,3.26,0.6],[xe+sg*0.04,3.26,-0.6]].map(v=>v),[sg,0.1,0],0xf29a2e);   // 行先
+          for(const s of[-1,1]){ k.poly([[xe+sg*0.11,1.2,s*0.75],[xe+sg*0.11,1.2,s*1.0],[xe+sg*0.11,1.38,s*1.0],[xe+sg*0.11,1.38,s*0.75]].map(v=>v),[sg,0,0],0xf2f4f0);
+            k.poly([[xe+sg*0.11,0.95,s*0.8],[xe+sg*0.11,0.95,s*1.0],[xe+sg*0.11,1.08,s*1.0],[xe+sg*0.11,1.08,s*0.8]].map(v=>v),[sg,0,0],0xb81c22); }
+          k.box(sg>0?xe:xe-0.18,sg>0?xe+0.18:xe,0.45,0.65,-1.15,1.15,0x2b2f33); },
+        win:(k)=>{ k.poly([[xe+sg*0.1,1.55,-1.18],[xe+sg*0.1,1.55,1.18],[xe+sg*0.03,3.0,1.12],[xe+sg*0.03,3.0,-1.12]].map(v=>v),[sg,0.05,0]);   // 傾いた1枚ガラス
+          for(const s of[-1,1]) k.poly([[xe-sg*0.7,1.55,s*(hw+0.008)],[xe+sg*0.05,1.55,s*(hw+0.008)],[xe+sg*0.0,3.0,s*(hw+0.008)],[xe-sg*0.7,3.0,s*(hw+0.008)]].map(v=>v),[0,0,s]); } });   // 側へ回り込む
+      { const v0=K.vc.P.length/3; K.vc.box(sg>0?xe:xe-0.2,sg>0?xe+0.2:xe,S.FLOOR-0.1,3.0,-0.7,0.7,0x2b2d30);   // 連接の幌
+        if(isCab) for(let i=v0;i<K.vc.P.length/3;i++){ K.vc.P[3*i]=xe; K.vc.P[3*i+1]=S.FLOOR+1; K.vc.P[3*i+2]=0; } }
+    }
+  }
+  // kit → buf(材質)。x を x0 だけずらす
+  for(const [key,mat] of [['vc',XM_VC],['win',XM_WIN]]){ const k=K[key]; k.fix(); const q=buf(mat), b=q.P.length/3;
+    for(let i=0;i<k.P.length;i+=3){ q.P.push(k.P[i]+x0,k.P[i+1],k.P[i+2]); q.N.push(k.N[i],k.N[i+1],k.N[i+2]); if(mat===XM_VC) q.C.push(k.C[i],k.C[i+1],k.C[i+2]); }
+    for(const v of k.I) q.I.push(v+b); }
+  // 台車の車輪(⑦が頂点から軌間を測る。以前と同じ形と位置)
+  const wheel=(x,y,z,r,t)=>{
+    x+=x0; const q=buf(XM_WHL), m=12, o=q.P.length/3;
+    for(let k=0;k<m;k++){const a=k/m*Math.PI*2, cx=Math.cos(a), cy=Math.sin(a);
       for(const sz of[-1,1]){q.P.push(x+r*cx,y+r*cy,z+sz*t/2); q.N.push(cx,cy,0);}}
-    for(let k=0;k<n;k++){const a=o+k*2, b=o+((k+1)%n)*2; q.I.push(a,b,b+1,a,b+1,a+1);}
+    for(let k=0;k<m;k++){const a=o+k*2, b=o+((k+1)%m)*2; q.I.push(a,b,b+1,a,b+1,a+1);}
     for(const sz of[-1,1]){const c0=q.P.length/3;
-      for(let k=0;k<n;k++){const a=k/n*Math.PI*2; q.P.push(x+r*Math.cos(a),y+r*Math.sin(a),z+sz*t/2); q.N.push(0,0,sz);}
-      for(let k=1;k<n-1;k++) sz>0?q.I.push(c0,c0+k,c0+k+1):q.I.push(c0,c0+k+1,c0+k);}
+      for(let k=0;k<m;k++){const a=k/m*Math.PI*2; q.P.push(x+r*Math.cos(a),y+r*Math.sin(a),z+sz*t/2); q.N.push(0,0,sz);}
+      for(let k=1;k<m-1;k++) sz>0?q.I.push(c0,c0+k,c0+k+1):q.I.push(c0,c0+k+1,c0+k);}
   };
-  const bodyH=S.H-0.30-S.FLOOR;                       // 腰板から肩まで
-  const cy=S.FLOOR+bodyH/2;
-  put(S.L,bodyH,S.W,S.body,0,cy,0);
-  // 段付きの丸屋根(2段の箱で近似。遠景では丸みの差は分からない)
-  put(S.L,0.14,S.W,XC.roof,0,S.FLOOR+bodyH+0.07,0);
-  put(S.L-0.12,0.16,S.W-0.36,XC.roof,0,S.FLOOR+bodyH+0.22,0);
-  // 窓帯(側面)と線区の帯
-  put(S.L-1.7,0.92,S.W+0.02,XM_WIN,0,S.FLOOR+bodyH*0.62,0);
-  put(S.L,0.20,S.W+0.04,S.band,0,S.FLOOR+bodyH*0.24,0);
-  // 前後の妻面:線区の帯を回した平妻+前面窓
-  for(const sg of [-1,1]){
-    put(0.10,bodyH,S.W-0.06,S.band,sg*(S.L/2+0.05),cy,0);
-    put(0.06,0.86,S.W-0.62,XM_WIN,sg*(S.L/2+0.11),S.FLOOR+bodyH*0.66,0);
-  }
-  // 床下機器とスカート
-  put(S.L*0.52,0.56,S.W-0.66,XC.und,0,S.FLOOR-0.36,0);
-  for(const sg of [-1,1]) put(0.14,0.52,S.W-0.30,XC.und,sg*(S.L/2-0.25),0.52,0);
-  // 台車(軌間は線区ごと)
   const wOff=(S.GAUGE+RAIL_W)/2;
-  for(const bx of [-S.L*0.33,S.L*0.33]){
-    put(2.60,0.46,S.W-0.60,XC.trk,bx,0.62,0);
-    for(const ax of [bx-1.05,bx+1.05]) for(const sz of [-wOff,wOff]) wheel(ax,0.43,sz,0.43,0.10);
-  }
-  if(S.panto){   // 簡易のシングルアーム(台枠・下枠・上枠・舟体)
-    const py=S.H, px=-S.L*0.28;
-    put(1.90,0.06,1.30,XC.pan,px,py+0.05,0);
-    put(1.10,0.07,0.09,XC.pan,px-0.30,py+0.35,0,0.62);
-    put(0.95,0.06,0.07,XC.pan,px+0.12,py+0.72,0,-0.55);
-    put(0.16,0.05,1.80,XC.pan,px+0.52,py+0.94,0);
-  }
+  for(const bx of [-L*0.33,L*0.33]) for(const ax of [bx-1.05,bx+1.05]) for(const sz of [-wOff,wOff]) wheel(ax,0.43,sz,0.43,0.10);
 }
 const xBufs=()=>{const B=new Map(); return {B:B, buf:mat=>{let q=B.get(mat); if(!q){q={P:[],N:[],I:[],C:[]};B.set(mat,q);} return q;}};};
 const xGeo=q=>facesGeo(q.P,q.N,q.I,q.C.length?q.C:undefined);
@@ -8295,10 +8448,10 @@ const xGeo=q=>facesGeo(q.P,q.N,q.I,q.C.length?q.C:undefined);
    毎コマ車両ごとに頂点を置き直す(1両は剛体:車両の中心=前後の台車の中心を線路の上に置いた弦の中点、向き=その弦)。
    車両 j の頂点・索引は連続して並ぶ(1両あたりの数は材質ごとに一定=userData.vPer/perCar)ので、線路の外にいる車両は
    描く範囲(drawRange)から外せる。元の形(車両の局所座標。原点=レール面の車体中心・x=前後)は userData.P0/N0 */
-function makeXTrain(kind,n){
+function makeXTrain(kind,n,o){
   const g=new THREE.Group(), X=xBufs(), per=new Map(), vper=new Map();
   for(let j=0;j<n;j++){
-    xCarFaces(kind,X.buf,0);
+    xCarFaces(kind,X.buf,0,j,n,o);
     if(j===0) for(const [mat,q] of X.B){ per.set(mat,q.I.length); vper.set(mat,q.P.length/3); }
   }
   let ext=0;                                              // 車体の半長(前面窓の出っ張りまで)
@@ -8343,7 +8496,7 @@ const INO_CARS=5, INO_PITCH=20, INO_V=16, INO_ACC=0.9, INO_DEC=1.0, INO_DWELL=20
 const INO_UL=Math.min(-XR.U0,XR.U1);                    // 線路の端(u=0 から)
 let inoShow=true;                                       // 列車走行 ON/OFF(trainsOn は10章で宣言されるのでここでは見ない)
 const inoTrains=[1,-1].map(function(dir){
-  const g=makeXTrain('ino',INO_CARS), ext=g.userData.ext, k=dir>0?0:1;
+  const g=makeXTrain('ino',INO_CARS,{dir:dir,color:XCOL.ino[dir>0?0:1]}), ext=g.userData.ext, k=dir>0?0:1;
   const pl=dir>0?INO_PLAT.dn:INO_PLAT.up;               // 停車位置:先頭の前端をホームの先の端の1m手前に
   return {g:g, dir:dir, k:k, vf:u=>INO.trk(k,u), ext:ext, uS:dir>0?pl[1]-1-ext:pl[0]+1+ext,
           u:dir>0?-150:330, v:INO_V, wait:0, served:false, poses:[]};
@@ -8366,8 +8519,8 @@ function stepIno(t,dt){
 }
 /* 世田谷線の列車(2両1本)。南の端から北行き(西の線)で入り、下高井戸の終端のホームに停まって折り返し、南行きは渡り線で
    東の線へ移って南の端へ抜ける。抜けたら SETA_AWAY 秒おいて南の端から入り直す。u=北の車両(0)の中心 */
-const SETA_CARS=2, SETA_PITCH=14, SETA_V=8, SETA_ACC=0.8, SETA_DEC=0.9, SETA_DWELL=25, SETA_AWAY=30;
-const setaTrain=(function(){ const g=makeXTrain('seta',SETA_CARS), ext=g.userData.ext;
+const SETA_CARS=2, SETA_PITCH=12, SETA_V=8, SETA_ACC=0.8, SETA_DEC=0.9, SETA_DWELL=25, SETA_AWAY=30;
+const setaTrain=(function(){ const g=makeXTrain('seta',SETA_CARS,{dir:1,color:XCOL.seta}), ext=g.userData.ext;
   return {g:g, ext:ext, uS:SETA_PLAT.u[1]-1-ext, u:-250, dir:1, v:SETA_V, wait:0, away:0, poses:[]}; })();
 const setaVf=t=>t.dir>0?(u=>SETA.trk(0,u)):setaXO;       // 北行き=西の線/南行き=渡り線で東の線へ
 function stepSeta(t,dt){
@@ -8569,34 +8722,99 @@ const PEOPLE=[];
 const PP={LEGL:0,LEGR:1,TORSO:2,ARML:3,ARMR:4,ARMUP:5,HEAD:6,HAIRS:7,HAIRL:8,SKIRT:9,TIE:10,PACK:11,SBAG:12,CASE:13,PHONE:14,SHOP:15};
 const PK={FIX:0,UP:1,LOW:2,HAIR:3,BAG:4,LEG:5};   // 色の出どころ:頂点の色・上着・下(ズボン・スカート)・髪・鞄・脚(ズボンかタイツ)
 const PEOPLE_U={uPeopleT:{value:0}};
+/* 形の道具(2026-11 利用者指示「車やトラック、人間のモデルを精密にしポリゴン数を上げて」):箱だけで作っていた人と車を、丸い断面の筒・
+   楕円体・側面の形の押し出しで作る。頂点に (位置・法線・色・追加の属性) を積み、最後に三角形の巻き順を法線に合わせてそろえる
+   (表の面だけ描く材質でも裏返らない)。hex=null の色は白(インスタンスの色を掛ける所) */
+function meshKit(){
+  const K={P:[],N:[],C:[],I:[],A:[],attr:null}, col=new THREE.Color();
+  const setC=hex=>{ if(hex===null||hex===undefined) col.setRGB(1,1,1); else setSrgb(col,hex); };
+  const vtx=(x,y,z,nx,ny,nz)=>{ const l=Math.hypot(nx,ny,nz)||1; K.P.push(x,y,z); K.N.push(nx/l,ny/l,nz/l); K.C.push(col.r,col.g,col.b); if(K.attr) K.A.push(...K.attr); return K.P.length/3-1; };
+  const tri=(a,b,c)=>K.I.push(a,b,c);
+  K.use=a=>{ K.attr=a; return K; };
+  // y に沿う楕円の断面の積み重ね rings=[[y,cx,cz,rx,rz],…](n 角。法線は断面の楕円の外向き+傾き)。cap0/cap1=下と上の蓋
+  K.lofty=(rings,n,hex,cap0,cap1)=>{ setC(hex); const base=K.P.length/3;
+    for(let r=0;r<rings.length;r++){ const [y,cx,cz,rx,rz]=rings[r], q=rings[Math.max(0,r-1)], w=rings[Math.min(rings.length-1,r+1)];
+      const dy=(w[0]-q[0])||1, drx=(w[3]-q[3])/dy, drz=(w[4]-q[4])/dy;
+      for(let k=0;k<n;k++){ const t=2*Math.PI*k/n, c=Math.cos(t), s=Math.sin(t), ex=c/Math.max(rx,1e-4), ez=s/Math.max(rz,1e-4), el=Math.hypot(ex,ez)||1;
+        vtx(cx+rx*c,y,cz+rz*s, ex/el,-(drx*c*c+drz*s*s),ez/el); } }
+    for(let r=0;r+1<rings.length;r++) for(let k=0;k<n;k++){ const a=base+r*n+k, b=base+r*n+(k+1)%n, c=a+n, d=b+n; tri(a,b,d); tri(a,d,c); }
+    for(const [use,r,sg] of [[cap0,0,-1],[cap1,rings.length-1,1]]) if(use){ const [y,cx,cz]=rings[r], m=vtx(cx,y,cz,0,sg,0), b0=K.P.length/3;
+      for(let k=0;k<n;k++){ const i=base+r*n+k; vtx(K.P[3*i],K.P[3*i+1],K.P[3*i+2],0,sg,0); }
+      for(let k=0;k<n;k++) tri(m,b0+k,b0+(k+1)%n); }
+    return K; };
+  // 点の列に沿う丸い筒 pts=[[x,y,z,r],…](端は半球に近い蓋)
+  K.tube=(pts,n,hex,caps)=>{ setC(hex); const base=K.P.length/3, F=[];
+    for(let i=0;i<pts.length;i++){ const p=pts[Math.max(0,i-1)], q=pts[Math.min(pts.length-1,i+1)]; let tx=q[0]-p[0], ty=q[1]-p[1], tz=q[2]-p[2]; const l=Math.hypot(tx,ty,tz)||1; tx/=l; ty/=l; tz/=l;
+      let ux=0,uy=0,uz=1; if(Math.abs(tz)>0.9){ux=1;uz=0;}
+      let ax=ty*uz-tz*uy, ay=tz*ux-tx*uz, az=tx*uy-ty*ux; const la=Math.hypot(ax,ay,az); ax/=la; ay/=la; az/=la;
+      const bx=ty*az-tz*ay, by=tz*ax-tx*az, bz=tx*ay-ty*ax; F.push([ax,ay,az,bx,by,bz]); }
+    for(let i=0;i<pts.length;i++){ const [x,y,z,r]=pts[i], f=F[i];
+      for(let k=0;k<n;k++){ const t=2*Math.PI*k/n, c=Math.cos(t), s=Math.sin(t), nx=f[0]*c+f[3]*s, ny=f[1]*c+f[4]*s, nz=f[2]*c+f[5]*s; vtx(x+nx*r,y+ny*r,z+nz*r,nx,ny,nz); } }
+    for(let i=0;i+1<pts.length;i++) for(let k=0;k<n;k++){ const a=base+i*n+k, b=base+i*n+(k+1)%n, c=a+n, d=b+n; tri(a,b,d); tri(a,d,c); }
+    if(caps) for(const [i,sg] of [[0,-1],[pts.length-1,1]]){ const p=pts[i], q=pts[i-sg]||pts[i]; let tx=(p[0]-q[0])*sg, ty=(p[1]-q[1])*sg, tz=(p[2]-q[2])*sg; const l=Math.hypot(tx,ty,tz)||1;
+      const m=vtx(p[0]+tx/l*p[3]*0.6,p[1]+ty/l*p[3]*0.6,p[2]+tz/l*p[3]*0.6,tx,ty,tz); for(let k=0;k<n;k++) tri(m,base+i*n+k,base+i*n+(k+1)%n); }
+    return K; };
+  // 楕円体(の一部):極角 ph0〜ph1(0=上)・方位 th0〜th1(0=+x)
+  K.ell=(cx,cy,cz,rx,ry,rz,nu,nv,hex,ph0,ph1,th0,th1)=>{ setC(hex); ph0=ph0||0; ph1=ph1===undefined?Math.PI:ph1; th0=th0||0; th1=th1===undefined?2*Math.PI:th1;
+    const full=Math.abs(th1-th0-2*Math.PI)<1e-6, nu1=full?nu:nu+1, base=K.P.length/3;
+    for(let j=0;j<=nv;j++){ const ph=ph0+(ph1-ph0)*j/nv, sp=Math.sin(ph), cp=Math.cos(ph);
+      for(let k=0;k<nu1;k++){ const th=th0+(th1-th0)*k/nu, ct=Math.cos(th), st=Math.sin(th); vtx(cx+rx*sp*ct,cy+ry*cp,cz+rz*sp*st,sp*ct/rx,cp/ry,sp*st/rz); } }
+    for(let j=0;j<nv;j++) for(let k=0;k<nu;k++){ const a=base+j*nu1+k, b=base+j*nu1+(k+1)%nu1, c=a+nu1, d=b+nu1; tri(a,b,d); tri(a,d,c); }
+    return K; };
+  // 平らな多角形(凸か単純。点は順に)と法線
+  K.poly=(V,n,hex)=>{ setC(hex); const b=K.P.length/3; for(const v of V) vtx(v[0],v[1],v[2],n[0],n[1],n[2]); for(let i=1;i+1<V.length;i++) tri(b,b+i,b+i+1); return K; };
+  // 箱(下面なし)
+  K.box=(x0,x1,y0,y1,z0,z1,hex)=>{ for(const [k,q] of boxFaces(x0,x1,y0,y1,z0,z1,['top','px','nx','pz','nz'])) K.poly([q[0],q[1],q[2],q[3]],q[4],hex); return K; };
+  // 側面の形(x,y の単純な多角形)を z0〜z1 に押し出す。面ごとの色 hexOf(辺の番号)。側の蓋は耳切り
+  K.extrude=(prof,z0,z1,hexSide,hexOf)=>{ const n=prof.length;
+    for(let i=0;i<n;i++){ const a=prof[i], b=prof[(i+1)%n], dx=b[0]-a[0], dy=b[1]-a[1], l=Math.hypot(dx,dy); if(l<1e-6) continue;
+      K.poly([[a[0],a[1],z0],[b[0],b[1],z0],[b[0],b[1],z1],[a[0],a[1],z1]],[dy/l,-dx/l,0],hexOf?hexOf(i):hexSide); }
+    const T=earTri(prof.map(p=>[p[0],p[1]]));
+    for(const [z,sg] of [[z0,-1],[z1,1]]){ setC(hexSide); const b=K.P.length/3; for(const p of prof) vtx(p[0],p[1],z,0,0,sg); for(const t of T) tri(b+t[0],b+t[1],b+t[2]); }
+    return K; };
+  // 三角形の巻き順を頂点の法線(外向き)に合わせる
+  K.fix=()=>{ const P=K.P, N=K.N, I=K.I;
+    for(let t=0;t<I.length;t+=3){ const a=I[t], b=I[t+1], c=I[t+2];
+      const ux=P[3*b]-P[3*a], uy=P[3*b+1]-P[3*a+1], uz=P[3*b+2]-P[3*a+2], vx=P[3*c]-P[3*a], vy=P[3*c+1]-P[3*a+1], vz=P[3*c+2]-P[3*a+2];
+      const gx=uy*vz-uz*vy, gy=uz*vx-ux*vz, gz=ux*vy-uy*vx, nx=N[3*a]+N[3*b]+N[3*c], ny=N[3*a+1]+N[3*b+1]+N[3*c+1], nz=N[3*a+2]+N[3*b+2]+N[3*c+2];
+      if(gx*nx+gy*ny+gz*nz<0){ I[t+1]=c; I[t+2]=b; } }
+    return K; };
+  K.geo=()=>{ K.fix(); return facesGeo(K.P,K.N,K.I,K.C); };
+  return K;
+}
+/* 近くの人の形(2026-11 作り直し。利用者指示「人間のモデルを精密にしポリゴン数を上げて」):以前は箱の組み合わせ(約 300 三角形)。
+   丸い断面の脚(太ももからふくらはぎへ細く)・靴(楕円体)・腰から肩へ形の変わる胴・肩から手首への腕と手・首・楕円体の頭・頭の形に沿う髪
+   (短い=頭頂と後ろ/長い=後ろへ肩まで)・裾の広がるスカート・丸いリュック。部品の番号・色の出どころ・振りの軸(脚=腰 0.47・腕=肩 0.79)と
+   左右(左=z<0)は以前と同じ。高さ 1・前=+x */
 const PERSON_GEO=(function(){
-  const P=[],N=[],Cc=[],I=[],AP=[],AK=[], col=new THREE.Color();
-  const box=(x0,x1,y0,y1,z0,z1,part,kind,hex)=>{ for(const [k,q] of boxFaces(x0,x1,y0,y1,z0,z1,['top','px','nx','pz','nz'])){const v=P.length/3;   // 下面は見えないので作らない
-    if(hex===undefined||hex===null) col.setRGB(1,1,1); else setSrgb(col,hex);
-    for(let i=0;i<4;i++){P.push(q[i][0],q[i][1],q[i][2]);N.push(q[4][0],q[4][1],q[4][2]);Cc.push(col.r,col.g,col.b);AP.push(part);AK.push(kind);}
-    I.push(v,v+1,v+2,v,v+2,v+3);} };
-  const SKIN=0xd9b69a, SHOE=0x1f1d1c;
-  box(-0.07,0.07,0.04,0.47,-0.13,-0.02,PP.LEGL,PK.LEG); box(-0.07,0.1,0,0.04,-0.13,-0.02,PP.LEGL,PK.FIX,SHOE);   // 脚と靴
-  box(-0.07,0.07,0.04,0.47,0.02,0.13,PP.LEGR,PK.LEG);   box(-0.07,0.1,0,0.04,0.02,0.13,PP.LEGR,PK.FIX,SHOE);
-  box(-0.1,0.1,0.47,0.80,-0.18,0.18,PP.TORSO,PK.UP);                                                             // 胴(上着)
-  box(-0.045,0.045,0.50,0.79,-0.235,-0.18,PP.ARML,PK.UP); box(-0.035,0.035,0.43,0.50,-0.23,-0.185,PP.ARML,PK.FIX,SKIN);   // 左腕と手
-  box(-0.045,0.045,0.50,0.79,0.18,0.235,PP.ARMR,PK.UP);   box(-0.035,0.035,0.43,0.50,0.185,0.23,PP.ARMR,PK.FIX,SKIN);     // 右腕(下ろす)
-  box(-0.045,0.045,0.62,0.79,0.18,0.235,PP.ARMUP,PK.UP);  box(-0.02,0.16,0.60,0.66,0.13,0.2,PP.ARMUP,PK.UP);             // 右腕(スマホを見る)
-  box(0.14,0.19,0.62,0.69,0.13,0.2,PP.ARMUP,PK.FIX,SKIN);
-  box(0.165,0.18,0.66,0.76,0.135,0.195,PP.PHONE,PK.FIX,0x111214);                                                // スマホ
-  box(-0.045,0.045,0.80,0.86,-0.045,0.045,PP.HEAD,PK.FIX,SKIN); box(-0.075,0.085,0.86,1.0,-0.07,0.07,PP.HEAD,PK.FIX,SKIN);   // 首・頭
-  box(-0.085,0.07,0.95,1.005,-0.075,0.075,PP.HAIRS,PK.HAIR); box(-0.085,-0.03,0.88,0.97,-0.075,0.075,PP.HAIRS,PK.HAIR);     // 短い髪
-  box(-0.09,0.075,0.95,1.01,-0.08,0.08,PP.HAIRL,PK.HAIR); box(-0.095,-0.02,0.74,0.97,-0.085,0.085,PP.HAIRL,PK.HAIR);         // 長い髪(肩まで)
-  box(-0.01,0.08,0.86,0.97,-0.082,-0.07,PP.HAIRL,PK.HAIR); box(-0.01,0.08,0.86,0.97,0.07,0.082,PP.HAIRL,PK.HAIR);
-  box(-0.12,0.12,0.28,0.50,-0.19,0.19,PP.SKIRT,PK.LOW);                                                          // スカート
-  box(0.1,0.108,0.60,0.79,-0.016,0.016,PP.TIE,PK.FIX,0x7a1f2a);                                                  // ネクタイ
-  box(-0.21,-0.1,0.50,0.79,-0.14,0.14,PP.PACK,PK.BAG);                                                           // リュック
-  box(-0.05,0.08,0.42,0.56,-0.27,-0.2,PP.SBAG,PK.BAG); box(-0.012,0.012,0.56,0.80,-0.215,-0.19,PP.SBAG,PK.BAG);  // 肩掛け鞄と紐
-  box(-0.07,0.09,0.28,0.42,0.215,0.25,PP.CASE,PK.BAG);                                                           // 書類鞄(右手)
-  box(-0.06,0.07,0.25,0.43,-0.285,-0.22,PP.SHOP,PK.BAG);                                                         // 買い物袋(左手)
-  const g=facesGeo(P,N,I,Cc);
-  const PK2=[]; for(let i=0;i<AP.length;i++) PK2.push(AP[i],AK[i]);
-  g.setAttribute('aPK',new THREE.Float32BufferAttribute(PK2,2));      // (部品, 色の出どころ)。頂点の属性の数を上限(16)に収めるため詰める
+  const K=meshKit(), SKIN=0xd9b69a, SHOE=0x1f1d1c, U=(part,kind)=>K.use([part,kind]);
+  for(const [part,z] of [[PP.LEGL,-0.075],[PP.LEGR,0.075]]){
+    U(part,PK.FIX).ell(0.028,0.012,z,0.085,0.05,0.045,8,3,SHOE,0,Math.PI*0.5);                       // 靴
+    U(part,PK.LEG).tube([[0.0,0.035,z,0.036],[0.006,0.25,z,0.046],[0.0,0.47,z,0.066]],8,null);          // 脚(ズボンかタイツ)
+  }
+  U(PP.TORSO,PK.UP).lofty([[0.44,0,0,0.095,0.165],[0.52,0,0,0.085,0.150],[0.61,0.004,0,0.092,0.162],[0.70,0.008,0,0.100,0.176],[0.775,0,0,0.086,0.180],[0.80,0,0,0.05,0.10]],12,null,true,true);
+  for(const [part,z] of [[PP.ARML,-0.215],[PP.ARMR,0.215]]){
+    U(part,PK.UP).tube([[0,0.785,z,0.042],[0.006,0.64,z*1.02,0.036],[0.016,0.50,z*1.03,0.031]],6,null,false);
+    U(part,PK.FIX).ell(0.02,0.465,z*1.03,0.028,0.042,0.022,6,3,SKIN);                                   // 手
+  }
+  U(PP.ARMUP,PK.UP).tube([[0,0.785,0.215,0.042],[0.0,0.635,0.21,0.036],[0.15,0.655,0.165,0.031]],6,null,false);   // 右腕(スマホを見る)
+  U(PP.ARMUP,PK.FIX).ell(0.172,0.672,0.162,0.03,0.024,0.024,6,3,SKIN);
+  U(PP.PHONE,PK.FIX).box(0.165,0.18,0.66,0.76,0.135,0.195,0x111214);                                      // スマホ
+  U(PP.HEAD,PK.FIX).tube([[0,0.79,0,0.034],[0.006,0.865,0,0.033]],6,SKIN,false);                         // 首
+  // 頭(高さの向きは身長の倍率 1.5〜1.8 が掛かるので、上下の半径は前後・左右の約 0.55 倍=頭の高さ 約0.22m)
+  U(PP.HEAD,PK.FIX).ell(0.008,0.925,0,0.074,0.066,0.068,10,6,SKIN);                                     // 頭
+  U(PP.HAIRS,PK.HAIR).ell(-0.002,0.932,0,0.08,0.068,0.074,10,4,null,0,1.2);                             // 短い髪:頭頂
+  U(PP.HAIRS,PK.HAIR).ell(-0.01,0.925,0,0.078,0.066,0.073,6,3,null,1.1,1.95,Math.PI*0.6,Math.PI*1.4);    // 後ろ
+  U(PP.HAIRL,PK.HAIR).ell(-0.002,0.934,0,0.082,0.07,0.076,10,4,null,0,1.25);                             // 長い髪:頭頂
+  U(PP.HAIRL,PK.HAIR).ell(-0.018,0.875,0,0.082,0.13,0.08,6,4,null,0.55,2.3,Math.PI*0.52,Math.PI*1.48);  // 後ろへ肩まで
+  U(PP.SKIRT,PK.LOW).lofty([[0.28,0,0,0.125,0.200],[0.50,0,0,0.098,0.168]],12,null,false,false);          // スカート
+  U(PP.TIE,PK.FIX).box(0.098,0.108,0.60,0.775,-0.016,0.016,0x7a1f2a);                                     // ネクタイ
+  U(PP.PACK,PK.BAG).lofty([[0.50,-0.155,0,0.052,0.125],[0.64,-0.168,0,0.064,0.135],[0.78,-0.155,0,0.048,0.118]],8,null,true,true);   // リュック
+  U(PP.SBAG,PK.BAG).box(-0.05,0.08,0.42,0.56,-0.27,-0.2); U(PP.SBAG,PK.BAG).box(-0.012,0.012,0.56,0.80,-0.215,-0.19);              // 肩掛け鞄と紐
+  U(PP.CASE,PK.BAG).box(-0.07,0.09,0.28,0.42,0.215,0.25); U(PP.CASE,PK.BAG).box(-0.005,0.025,0.42,0.45,0.227,0.238);              // 書類鞄と取っ手
+  U(PP.SHOP,PK.BAG).box(-0.06,0.07,0.25,0.43,-0.285,-0.22); U(PP.SHOP,PK.BAG).box(-0.03,0.04,0.43,0.47,-0.258,-0.247);            // 買い物袋と持ち手
+  const g=K.geo();
+  g.setAttribute('aPK',new THREE.Float32BufferAttribute(K.A,2));      // (部品, 色の出どころ)。頂点の属性の数を上限(16)に収めるため詰める
   return g;
 })();
 /* 遠くの人の形(PEOPLE_FAR より先):脚(左右)・胴・頭・髪・鞄だけ。部品の番号と色の出どころは近くの形と同じ(同じ材質・属性で描ける)。
@@ -9082,7 +9300,56 @@ M_ROADCAR.customProgramCacheKey=()=>'roadcar';
 const M_CARLAMP=mkMat('MeshBasicMaterial',{vertexColors:true});
 /* 車の形(前=+x。白=インスタンスの色):乗用車・軽バン・トラック・バス(2026-10-12 利用者指示:トラックやバスも)。
    長さ VEH[種類].L。灯火は長さに合わせて前後へ(灯火の形を x 方向に L/4.44 倍) */
+/* 近くの車の形(2026-11 利用者指示「車やトラックのモデルを精密にしポリゴン数を上げて」):側面の形を押し出した車体(ボンネット・屋根の傾き)、
+   ガラスの窓、丸いタイヤとホイール、前照灯・尾灯・バンパー・グリル・ミラー。トラックは運転台と荷箱の縦のリブ・後輪は2本並び、バスは
+   窓の帯・赤と紺の帯・前の窓と行先・左の扉・屋根の冷房。前=+x・白=インスタンスの色(車体)。カメラから CAR_NEAR 内だけ(外は下の簡単な形) */
 function vehGeo(kind){
+  const K=meshKit(), GL=0x27313a, TY=0x1b1d20, HUB=0x9aa0a6, BUMP=0x2b2d30;
+  const wheel=(x,r,z0,z1,hub)=>{ K.tube([[x,r,z0,r],[x,r,z1,r]],12,TY,true);
+    const zo=Math.abs(z1)>Math.abs(z0)?z1:z0, sg=Math.sign(zo)||1, ring=[]; for(let k=0;k<8;k++){ const t=2*Math.PI*k/8; ring.push([x+Math.cos(t)*r*0.58,r+Math.sin(t)*r*0.58,zo+sg*0.004]); }
+    K.poly(sg>0?ring:ring.slice().reverse(),[0,0,sg],hub); };
+  const lights=(xf,xr,yf,yr,zi,zo,wf)=>{ for(const s of[-1,1]){ K.box(xf-wf,xf+0.02,yf-0.05,yf+0.05,s>0?zi:-zo,s>0?zo:-zi,0xe8eef0); K.box(xr-0.02,xr+0.03,yr-0.05,yr+0.05,s>0?zi:-zo,s>0?zo:-zi,0xb0141c); } };
+  if(kind==='car'){
+    K.extrude([[-2.2,0.32],[2.15,0.32],[2.22,0.45],[2.2,0.66],[2.05,0.80],[1.0,0.90],[-1.55,0.92],[-2.1,0.86],[-2.22,0.66],[-2.24,0.45]],-0.85,0.85,null);
+    K.extrude([[1.0,0.895],[0.05,1.40],[-1.1,1.42],[-1.6,0.915]],-0.74,0.74,GL,i=>i===1||i===3?null:GL);
+    K.box(2.17,2.27,0.30,0.48,-0.86,0.86,BUMP); K.box(-2.29,-2.19,0.30,0.48,-0.86,0.86,BUMP); K.box(2.19,2.235,0.50,0.62,-0.42,0.42,0x202326);
+    lights(2.2,-2.24,0.68,0.72,0.48,0.78,0.06);
+    for(const s of[-1,1]) K.box(0.82,0.94,0.95,1.06,s>0?0.84:-0.97,s>0?0.97:-0.84,null);
+    for(const x of[-1.38,1.38]) for(const s of[-1,1]) wheel(x,0.31,s*0.70,s*0.905,HUB);
+  }else if(kind==='van'){
+    K.extrude([[-1.7,0.30],[1.65,0.30],[1.72,0.45],[1.70,0.80],[1.40,1.00],[-1.7,1.02]],-0.74,0.74,null);
+    K.extrude([[1.40,0.995],[1.05,1.70],[-1.62,1.80],[-1.70,1.015]],-0.725,0.725,GL,i=>i===1||i===3?null:GL);
+    K.box(1.66,1.76,0.28,0.46,-0.75,0.75,BUMP); K.box(-1.76,-1.68,0.28,0.46,-0.75,0.75,BUMP);
+    lights(1.7,-1.72,0.70,0.8,0.42,0.68,0.05);
+    for(const s of[-1,1]) K.box(1.15,1.25,1.05,1.16,s>0?0.72:-0.84,s>0?0.84:-0.72,null);
+    for(const x of[-1.12,1.12]) for(const s of[-1,1]) wheel(x,0.27,s*0.58,s*0.76,HUB);
+  }else if(kind==='truck'){
+    K.extrude([[2.0,0.45],[3.8,0.45],[3.86,1.40],[3.62,2.50],[2.0,2.56]],-1.08,1.08,null,i=>i===2?GL:null);   // 運転台(前の窓)
+    for(const s of[-1,1]) K.box(2.55,3.35,1.55,2.30,s>0?1.08:-1.088,s>0?1.088:-1.08,GL);                  // 横の窓
+    K.box(-3.8,1.9,0.55,3.1,-1.15,1.15,0xeceae4);                                                           // 荷箱
+    for(let x=-3.6;x<=1.75;x+=0.9) for(const s of[-1,1]) K.box(x-0.03,x+0.03,0.6,3.05,s>0?1.15:-1.17,s>0?1.17:-1.15,0xd8d6d0);   // 縦のリブ
+    K.box(-3.85,-3.79,0.6,3.05,-1.1,1.1,0xd8d6d0); K.box(-3.86,-3.80,0.65,3.0,-0.012,0.012,0x9a9890);          // 後ろの扉と合わせ目
+    K.box(-3.8,3.6,0.38,0.62,-0.9,0.9,BUMP); K.box(3.78,3.92,0.42,0.68,-1.08,1.08,BUMP); K.box(3.80,3.88,0.75,1.25,-0.6,0.6,0x2a2c2f);
+    lights(3.86,-3.84,0.85,0.9,0.7,1.0,0.05);
+    for(const s of[-1,1]){ K.box(3.0,3.06,1.6,2.35,s>0?1.08:-1.32,s>0?1.32:-1.08,BUMP); K.box(2.98,3.08,1.75,2.25,s>0?1.28:-1.36,s>0?1.36:-1.28,0x1f2124); }   // ミラー
+    for(const s of[-1,1]){ wheel(2.9,0.46,s*0.78,s*1.06,HUB); for(const x of[-2.4,-1.3]){ wheel(x,0.46,s*0.52,s*0.78,0x6a7076); wheel(x,0.46,s*0.80,s*1.06,HUB); } }
+  }else{                                             // 路線バス(白地に赤と紺の帯)
+    K.extrude([[-5.25,0.35],[5.25,0.35],[5.27,1.2],[5.22,2.8],[5.02,3.05],[-5.05,3.05],[-5.25,2.85]],-1.25,1.25,0xf1efe9,i=>i===2?GL:0xf1efe9);
+    for(const s of[-1,1]){ const z0=s>0?1.25:-1.258, z1=s>0?1.258:-1.25;
+      K.box(-5.0,4.9,1.55,2.45,z0,z1,0x2a3440);                                                              // 窓の帯
+      for(let x=-4.2;x<=4.2;x+=1.4) K.box(x-0.05,x+0.05,1.55,2.45,s>0?1.258:-1.262,s>0?1.262:-1.258,0xd9d7d0);   // 窓の柱
+      K.box(-5.25,5.25,0.85,1.05,s>0?1.258:-1.262,s>0?1.262:-1.258,0xc4243a); K.box(-5.25,5.25,1.05,1.15,s>0?1.258:-1.262,s>0?1.262:-1.258,0x23306a); }
+    K.box(3.9,4.85,0.4,2.62,-1.264,-1.258,0x2a3440); K.box(-0.6,0.5,0.4,2.62,-1.264,-1.258,0x2a3440);        // 左の扉(前・中)
+    K.box(5.08,5.29,2.62,2.88,-0.85,0.85,0x141414); K.box(5.285,5.29,2.66,2.84,-0.7,0.7,0xf0a030);          // 行先
+    K.box(5.2,5.33,0.35,0.6,-1.2,1.2,BUMP); K.box(-5.32,-5.2,0.35,0.6,-1.2,1.2,BUMP);
+    lights(5.27,-5.27,0.8,0.9,0.75,1.1,0.04);
+    K.box(-3.4,1.6,3.05,3.35,-0.8,0.8,0xbfc3c8);                                                            // 屋根の冷房
+    for(const s of[-1,1]) for(const x of[-3.2,3.3]) wheel(x,0.5,s*0.95,s*1.262,HUB);
+  }
+  return K.geo();
+}
+/* 遠くの車の形(以前の形。箱だけ) */
+function vehGeoFar(kind){
   const P=[],N=[],Cc=[],I=[], col=new THREE.Color();
   const box=(x0,x1,y0,y1,z0,z1,hex,top)=>{ for(const [k,q] of boxFaces(x0,x1,y0,y1,z0,z1,['top','px','nx','pz','nz'])){const v=P.length/3;
     const h=(k==='top'&&top!==undefined)?top:hex; if(h===null) col.setRGB(1,1,1); else setSrgb(col,h);
@@ -9105,7 +9372,8 @@ function vehGeo(kind){
   }
   return facesGeo(P,N,I,Cc);
 }
-const VEH={car:{L:4.4,geo:vehGeo('car')},van:{L:3.4,geo:vehGeo('van')},truck:{L:7.6,geo:vehGeo('truck')},bus:{L:10.5,geo:vehGeo('bus')}};
+const VEH={car:{L:4.4,geo:vehGeo('car'),geoFar:vehGeoFar('car')},van:{L:3.4,geo:vehGeo('van'),geoFar:vehGeoFar('van')},truck:{L:7.6,geo:vehGeo('truck'),geoFar:vehGeoFar('truck')},bus:{L:10.5,geo:vehGeo('bus'),geoFar:vehGeoFar('bus')}};
+const CAR_NEAR=90;                       // 細かい形で描く距離[m](カメラから。外は簡単な形。スマホは LOD_STRUCT で縮む)
 /* 前照灯(+x 側)・尾灯(−x 側)。夜だけ描く:灯の芯(小さな八面体)と、どの向きからも見える暈け(大きな八面体・加算) */
 function carLampGeo(r,kF,kR){
   const P=[],N=[],Cc=[],I=[], col=new THREE.Color();
@@ -9121,7 +9389,7 @@ const M_CARGLOW=mkMat('MeshBasicMaterial',{vertexColors:true,transparent:true,de
    ・車と歩く人は線路から 100m 以内だけ(それより先は描かない。ROAD_NEAR)。線路を横切る道路の車線は |off|≦100 の所まで
    ・線路に並ぶ幹線(PLATEAU の幹線の道路区域が線路から 6〜100m に 60m 以上続く所。甲州街道・井の頭通り)にも車線
    ・環七・環八・甲州街道・井の頭通りは渋滞(のろのろ進んでは止まる波。密度は車の長さ+3〜5m の2倍に1台)。トラック・バスも走る
-   ・幅 8m 以上の道は両端に歩道(縁石付き、幅は道の 18%・1.5〜3m)。車線は車道の中へ寄せる
+   ・幅 8m 以上の道は両端に歩道(縁石付き、幅は道の 18%・1.5〜3m)。車線は車道の中へ寄せる。歩道は道路の面の外周の辺に沿う(2026-11 作り直し。下)
    車線は「輪」:端で反対の端から入り直し、前の車(輪の上で次の車)との間を空けて止まる。lane.pos(u)=(位置・進行方向) */
 const SIDEWALKS=[], PEDS=[];      // 歩道の帯・歩く人(登録簿)
 const ROAD_NEAR=100;             // 車と人を描く線路からの距離[m](2026-10-12 利用者指示で 50→100m)
@@ -9129,7 +9397,6 @@ const ROAD_NEAR=100;             // 車と人を描く線路からの距離[m](2
   const CARCOL=[0xf2f2f0,0x1d1f22,0xb9bdc2,0x2b4a7a,0x8a1c22,0xf2f2f0,0x6d7378,0xe8e2d2,0x355e3b,0x1d1f22,0xf2f2f0,0xd8d8d6];
   const HEAVY_X=[KAN7_X,KANPACHI_X,KYU_INOKA_X];        // 渋滞する横切る幹線(環七・環八・井の頭通り)
   const swW=w=>w>=8?Math.min(3.0,Math.max(1.5,w*0.18)):0;   // 歩道の幅
-  const pushSW=(f,a,b,side,ws,heavy)=>{ if(b-a>8) SIDEWALKS.push({f:f,a:a,b:b,side:side,w:ws,heavy:heavy}); };
   // 横切る道路
   for(const X0 of ROAD_XING){
     const sc=(X0[0]+X0[1])/2, P0=frame(sc,0);
@@ -9155,14 +9422,9 @@ const ROAD_NEAR=100;             // 車と人を描く線路からの距離[m](2
       RD_LANES.push({kind:'横',cx:cx,cz:cz,dx:best.dx,dz:best.dz,L0:L0,L1:L1,dir:dir,off:off,w:wd,heavy:heavy,
         pos(u){const sx=this.dir*this.dx, sz=this.dir*this.dz; return {x:this.cx+this.dx*u+sz*this.off, z:this.cz+this.dz*u-sx*this.off, fx:sx, fz:sz};}});
     }
-    if(ws>0){                                        // 歩道:両端の内側 ws/2 を中心線に
-      let A=0,B=0; while(B<150&&near(B+2)&&roadHit(cx+best.dx*(B+2),cz+best.dz*(B+2),0)) B+=2; while(A>-150&&near(A-2)&&roadHit(cx+best.dx*(A-2),cz+best.dz*(A-2),0)) A-=2;
-      for(const sd of[-1,1]){ const o=sd*(wd/2-ws/2);
-        pushSW(u=>({x:cx+best.dx*u+nx*o, z:cz+best.dz*u+nz*o, fx:best.dx, fz:best.dz}),A,B,sd,ws,heavy); }
-    }
   }
   // 線路に並ぶ幹線
-  const maj=ROADS_PL.filter(R=>R.k===1&&R.sec!==2);
+  const maj=ROADS_PL.filter(R=>R.k===1&&R.sec!==2&&!R.plan);   // 計画の放射第23号線は線路を斜めに横切る(並ぶ幹線ではない)
   const MAJ_G=new Map(); for(const R of maj) gridPut(MAJ_G,R.bb[0],R.bb[1],R.bb[2],R.bb[3],R);   // 毎回全部の幹線を見ていた(約 2秒)
   const onMaj=(s,o)=>{const f=frame(s,o); return gridAny(MAJ_G,f.x,f.z,0,R=>f.x>R.bb[0]&&f.x<R.bb[1]&&f.z>R.bb[2]&&f.z<R.bb[3]&&polyDist(R.P,f.x,f.z)<0);};
   for(const sg of[-1,1]){
@@ -9201,9 +9463,70 @@ const ROAD_NEAR=100;             // 車と人を描く線路からの距離[m](2
         for(let u=L.L0;u<=L.L1+1e-6;u+=0.5){ const q=L.pos(u), okp=[-1.0,0,1.0].every(w=>roadHit(q.x+q.fz*w,q.z-q.fx*w,0))&&!expyHit(q.x,q.z,1.2)&&Math.abs(prjXY(q.x,q.z).off)<=ROAD_NEAR-1;   // 線路から ROAD_NEAR を出る所で車線を終える   // 0.5m ごと(2m ごとでは道路の面の切れ込みを見落とした)
           if(okp){ if(a===null) a=u; if(!best||u-a>best[1]-best[0]) best=[a,u]; } else a=null; }
         if(best&&best[1]-best[0]>=40){ L.L0=best[0]+1; L.L1=best[1]-1; RD_LANES.push(L); } }
-      if(ws>0){ const fsw=(oo)=>u=>{const f=frame(u,oo(u)), g=frame(u+1,oo(u+1)); const d=Math.hypot(g.x-f.x,g.z-f.z)||1; return {x:f.x,z:f.z,fx:(g.x-f.x)/d,fz:(g.z-f.z)/d};};
-        pushSW(fsw(s=>sg*(at(s,1)+ws/2)),S0,S1,-sg,ws,true);
-        if(at((S0+S1)/2,2)<=ROAD_NEAR) pushSW(fsw(s=>sg*(at(s,2)-ws/2)),S0,S1,sg,ws,true); }
+    }
+  }
+  /* 歩道(2026-11 作り直し。利用者指摘「各道路に表現している歩道が中途半端だ。ちゃんと道路の端に沿うようにしたり曲げたりして」・「京王線と環八の
+     交差部など、歩道が多くありすぎているところがある」):以前は横切る道路ごとに最も長く続く向きの直線1本と、線路に並ぶ幹線の s に沿う帯で、
+     曲がる道路の縁から外れ、交差点の中(環八の口など)にも帯が通っていた。今は道路の面(ROADS_PL のうち自動車専用・橋梁でない物)の
+     **外周の辺**(外へ SW_OUT が道路でも駅前広場の車道でもない所。面の継ぎ目は外周でない)に沿って、内へ幅 ws の帯を置く。
+     幅はその点から内へ測った道路の幅(SW_SM 区間の中央値)が 8m 以上の所だけ(ws=幅の 18%・1.5〜3m=以前と同じ)。辺の鎖ごとに、角では内の線を
+     角の二等分線で折る(道路の縁に沿って曲がる)。線路から ROAD_NEAR の内・掘割の外・取付道路の口の外だけ。
+     登録簿 SIDEWALKS:鎖ごとに f(u)=帯の中心の線の点と向き(u=道のり)・w=ws・seg=描いた区間・heavy=幹線 */
+  {
+    const SW_OUT=0.4, SEG=2, SW_SM=3, WMAX=17;
+    const isG=R=>R.k!==2&&R.sec!==2;
+    const roadG=(x,z)=>gridAny(PLR_GRID,x,z,0,R=>isG(R)&&x>R.bb[0]&&x<R.bb[1]&&z>R.bb[2]&&z<R.bb[3]&&polyDist(R.P,x,z)<0);
+    const pzR=(x,z)=>(KARA.on&&KARA.roadway(x,z,0))||(MEIDA.on&&MEIDA.roadway(x,z,0));
+    const roadAt=(x,z)=>roadG(x,z)||pzR(x,z);
+    // 駅前広場の車道の口:縁の外の点と、縁に沿って ±1.5m・外へ 1.5m の点のどれかが広場の車道なら口(歩道を口の手前で終える。⑦ 4h「216 の歩道が口をふさがない」)
+    const mouthAt=(x,z,dx,dz,nx,nz)=>pzR(x+dx*1.5,z+dz*1.5)||pzR(x-dx*1.5,z-dz*1.5)||pzR(x-nx*1.5,z-nz*1.5);
+    const widthIn=(x,z,nx,nz)=>{ let w=0.2; while(w<WMAX&&roadG(x+nx*(w+0.5),z+nz*(w+0.5))) w+=0.5; return w+0.25; };
+    for(const R of ROADS_PL){
+      if(!isG(R)) continue;
+      const P=R.P; let A=0; for(let i=0;i<P.length;i++){ const a=P[i], b=P[(i+1)%P.length]; A+=a[0]*b[1]-b[0]*a[1]; }
+      if(Math.abs(A)<2) continue;
+      // 細い道の面(外接矩形の短い辺が 7m 未満)と線路から遠い面は見ない
+      const cx=(R.bb[0]+R.bb[1])/2, cz=(R.bb[2]+R.bb[3])/2, rr=Math.hypot(R.bb[1]-R.bb[0],R.bb[3]-R.bb[2])/2;
+      if(Math.min(R.bb[1]-R.bb[0],R.bb[3]-R.bb[2])<7&&R.k!==1) continue;
+      { const q=prjXY(cx,cz); if(Math.abs(q.off)>ROAD_NEAR+rr+5||q.s<DOM.x0-rr-20||q.s>DOM.x1+rr+20) continue; }
+      const sgA=A>0?1:-1;                                   // 反時計回り(x 右・z 上)なら内は辺の左
+      const S=[];                                           // 辺を 2m 以下に分けた片 {a,b,nx,nz(内向き),bd(外周),w}
+      for(let i=0;i<P.length;i++){
+        const a=P[i], b=P[(i+1)%P.length], L=Math.hypot(b[0]-a[0],b[1]-a[1]); if(L<0.05) continue;
+        const dx=(b[0]-a[0])/L, dz=(b[1]-a[1])/L, nx=-dz*sgA, nz=dx*sgA, n=Math.max(1,Math.ceil(L/SEG));
+        for(let k=0;k<n;k++){ const p0=[a[0]+(b[0]-a[0])*k/n,a[1]+(b[1]-a[1])*k/n], p1=[a[0]+(b[0]-a[0])*(k+1)/n,a[1]+(b[1]-a[1])*(k+1)/n];
+          const mx=(p0[0]+p1[0])/2, mz=(p0[1]+p1[1])/2, ox=mx-nx*SW_OUT, oz=mz-nz*SW_OUT, bd=!roadAt(ox,oz)&&!mouthAt(ox,oz,dx,dz,nx,nz);
+          S.push({a:p0,b:p1,nx:nx,nz:nz,bd:bd,w:bd?widthIn(mx,mz,nx,nz):0}); } }
+      if(!S.some(q=>q.bd)) continue;
+      // 外周の片が続く所を鎖に(輪の途中から始める)
+      let st=S.findIndex(q=>!q.bd); const CH=[];
+      if(st<0){ CH.push(S.slice()); } else { let cur=null;
+        for(let k=1;k<=S.length;k++){ const q=S[(st+k)%S.length]; if(q.bd){ if(!cur){cur=[];CH.push(cur);} cur.push(q); } else cur=null; } }
+      for(const C of CH){
+        // 幅をならして(前後 SW_SM 片の中央値)8m 以上の所を帯にする
+        const wm=C.map((_,k)=>{ const v=[]; for(let j=Math.max(0,k-SW_SM);j<=Math.min(C.length-1,k+SW_SM);j++) v.push(C[j].w); v.sort((x,y)=>x-y); return v[v.length>>1]; });
+        let k=0;
+        while(k<C.length){
+          if(wm[k]<8){ k++; continue; }
+          let e=k; while(e+1<C.length&&wm[e+1]>=8) e++;
+          const Q=C.slice(k,e+1), wv=wm.slice(k,e+1).sort((x,y)=>x-y), ws=R.sw||swW(wv[wv.length>>1]);   // 計画の道路は公表の歩道の幅(R.sw)
+          k=e+1;
+          if(Q.length<2||ws<=0) continue;
+          // 内の線:頂点の内向き=前後の片の内向きの和(二等分線)。長さは ws/cos(半角)(3倍まで)
+          const V=[Q[0].a].concat(Q.map(q=>q.b)), M=V.map((v,i)=>{
+            const A0=Q[Math.max(0,i-1)], B0=Q[Math.min(Q.length-1,i)], mx=A0.nx+B0.nx, mz=A0.nz+B0.nz, l=Math.hypot(mx,mz)||1;
+            const c=Math.max(1/3,(mx*B0.nx+mz*B0.nz)/l); return [mx/l/c,mz/l/c]; });
+          const cl=V.map((v,i)=>[v[0]+M[i][0]*(0.05+ws/2),v[1]+M[i][1]*(0.05+ws/2)]);   // 帯の中心の線(縁から 0.05m 内)
+          const U=[0]; for(let i=1;i<cl.length;i++) U.push(U[i-1]+Math.hypot(cl[i][0]-cl[i-1][0],cl[i][1]-cl[i-1][1]));
+          const W={a:0,b:U[U.length-1],side:1,w:ws,heavy:R.k===1,V:V,M:M,cl:cl,U:U,
+            f(u){ const U=this.U, n=U.length; let i=0, lo=0, hi=n-1; u=clamp(u,0,U[n-1]);
+              while(hi-lo>1){ const m=(lo+hi)>>1; if(U[m]<=u) lo=m; else hi=m; } i=lo;
+              const a=this.cl[i], b=this.cl[Math.min(n-1,i+1)], L=Math.max(1e-6,U[Math.min(n-1,i+1)]-U[i]), t=clamp((u-U[i])/L,0,1);
+              const d=Math.hypot(b[0]-a[0],b[1]-a[1])||1;
+              return {x:a[0]+(b[0]-a[0])*t, z:a[1]+(b[1]-a[1])*t, fx:(b[0]-a[0])/d, fz:(b[1]-a[1])/d}; }};
+          if(W.b>8) SIDEWALKS.push(W);
+        }
+      }
     }
   }
   // 車を置く:渋滞の車線は車間 2〜4m で詰める。ほかは約80m(1車線の道は160m)に1台。トラック・バスは幹線に多い
@@ -9218,11 +9541,15 @@ const ROAD_NEAR=100;             // 車と人を描く線路からの距離[m](2
   }
   for(const c of RD_CARS){ c.L=VEH[c.kind].L*c.k; c.v0=c.lane.heavy?3.0:(7+Math.random()*4); c.ph=Math.random()*6.28; }
   // 種類ごとのインスタンス(車体)と、灯火(全台で1つ。長さに合わせて伸ばす)
-  RD_CARS.meshes={};
+  /* 種類ごとに遠く(簡単な形)と近く(細かい形)の2つ。遠くの方に描く車の全部を書き(遠い車を先に・count は遠い車の数)、近い車は近くの方にも書く
+     (c.mi は遠くの方の番号。検証が位置を読む) */
+  RD_CARS.meshes={}; RD_CARS.meshesNear={};
   for(const k in VEH){ const list=RD_CARS.filter(c=>c.kind===k); if(!list.length) continue;
-    const im=new THREE.InstancedMesh(VEH[k].geo,M_ROADCAR,list.length); im.frustumCulled=false; im.name='自動車('+k+')';
-    const C=new THREE.Color(); list.forEach((c,i)=>{ c.mi=i; setSrgb(C,k==='bus'?0xffffff:c.c); im.setColorAt(i,C); });
-    if(im.instanceColor) im.instanceColor.needsUpdate=true; scene.add(im); RD_CARS.meshes[k]=im; }
+    const im=new THREE.InstancedMesh(VEH[k].geoFar,M_ROADCAR,list.length), imN=new THREE.InstancedMesh(VEH[k].geo,M_ROADCAR,list.length);
+    im.frustumCulled=false; im.name='自動車('+k+')'; imN.frustumCulled=false; imN.name='自動車('+k+'・近く)';
+    const C=new THREE.Color(); list.forEach((c,i)=>{ c.mi=i; setSrgb(C,k==='bus'?0xffffff:c.c); im.setColorAt(i,C); imN.setColorAt(i,C); });
+    for(const m of [im,imN]){ if(m.instanceColor) m.instanceColor.needsUpdate=true; scene.add(m); }
+    imN.count=0; RD_CARS.meshes[k]=im; RD_CARS.meshesNear[k]=imN; }
   const im=RD_CARS.meshes.car||Object.values(RD_CARS.meshes)[0];
   const lm=new THREE.InstancedMesh(CARLAMP_GEO,M_CARLAMP,Math.max(1,RD_CARS.length)), gm=new THREE.InstancedMesh(CARGLOW_GEO,M_CARGLOW,Math.max(1,RD_CARS.length));
   lm.frustumCulled=false; gm.frustumCulled=false; lm.name='自動車の灯火'; gm.name='自動車の灯火の暈け';
@@ -9263,22 +9590,28 @@ function carsDraw(all){                       // all:距離によらず全台(�
   const cp=camera.position, n={}; let nl=0;
   // カメラが描く距離より高い(全体俯瞰など)なら1台も描かない。位置の計算と行列の書き込みを省く
   if(!all&&cp.y>CAR_DRAW*LOD_STRUCT+ROAD_Y[1]){
-    if(RD_CARS.drawn){ for(const k in RD_CARS.meshes) RD_CARS.meshes[k].count=0; lm.count=0; gm.count=0; RD_CARS.drawn=false; }
+    if(RD_CARS.drawn){ for(const k in RD_CARS.meshes){ RD_CARS.meshes[k].count=0; RD_CARS.meshesNear[k].count=0; } lm.count=0; gm.count=0; RD_CARS.drawn=false; }
     for(const c of RD_CARS) c.mi=-1;
     return;
   }
   RD_CARS.drawn=true;
-  for(const k in RD_CARS.meshes) n[k]=0;
+  const nN={}, DL=[]; for(const k in RD_CARS.meshes){ n[k]=0; nN[k]=0; }
   for(let i=0;i<RD_CARS.length;i++){
-    const c=RD_CARS[i], p=roadCarPos(c);
-    if(!all&&Math.hypot(p.x-cp.x,p.z-cp.z)>CAR_DRAW*LOD_STRUCT){ c.mi=-1; continue; }
+    const c=RD_CARS[i], p=roadCarPos(c), d=Math.hypot(p.x-cp.x,p.z-cp.z);
+    if(!all&&d>CAR_DRAW*LOD_STRUCT){ c.mi=-1; continue; }
+    DL.push([c,p,d<=CAR_NEAR*LOD_STRUCT]); }
+  DL.sort((a,b)=>(a[2]?1:0)-(b[2]?1:0));            // 遠い車を先に(遠くの形の count は遠い車の数)
+  const far={}; for(const k in RD_CARS.meshes) far[k]=0; for(const e of DL) if(!e[2]) far[e[0].kind]++;
+  for(const [c,p,near] of DL){
     const im=RD_CARS.meshes[c.kind], j=n[c.kind]++; c.mi=j;
     const hb=terH(p.x-p.fx*c.L/2,p.z-p.fz*c.L/2), hf=terH(p.x+p.fx*c.L/2,p.z+p.fz*c.L/2);   // 車の後端・前端の路面(地形)
     _cE.set(0,Math.atan2(-p.fz,p.fx),Math.atan2(hf-hb,c.L),'YZX'); _cQ.setFromEuler(_cE); _cV.set(p.x,(hf+hb)/2+ROAD_Y[1]+0.01,p.z); _cS.set(c.k,1,1);
     _cM.compose(_cV,_cQ,_cS); im.setMatrixAt(j,_cM); im.setColorAt(j,setSrgb(_cC,c.kind==='bus'?0xffffff:c.c));
+    if(near){ const iN=RD_CARS.meshesNear[c.kind], jn=nN[c.kind]++; iN.setMatrixAt(jn,_cM); iN.setColorAt(jn,_cC); }
     _cS.set(c.L/4.44,1,1); _cM.compose(_cV,_cQ,_cS); lm.setMatrixAt(nl,_cM); gm.setMatrixAt(nl,_cM); nl++;
   }
-  for(const k in RD_CARS.meshes){ const im=RD_CARS.meshes[k]; im.count=n[k]; im.instanceMatrix.needsUpdate=true; if(im.instanceColor) im.instanceColor.needsUpdate=true; }
+  for(const k in RD_CARS.meshes){ const im=RD_CARS.meshes[k]; im.count=far[k]; im.instanceMatrix.needsUpdate=true; if(im.instanceColor) im.instanceColor.needsUpdate=true;
+    const iN=RD_CARS.meshesNear[k]; iN.count=nN[k]; iN.instanceMatrix.needsUpdate=true; if(iN.instanceColor) iN.instanceColor.needsUpdate=true; }
   lm.count=nl; gm.count=nl; lm.instanceMatrix.needsUpdate=true; gm.instanceMatrix.needsUpdate=true;
 }
 stepRoadCars(0);
@@ -9293,20 +9626,23 @@ const PED_NEAR=70, PED_FAR=250;
   const use=(x,z)=>{const k=Math.floor(prjXY(x,z).s/480); let q=CH.get(k); if(!q){q={P:[],N:[],I:[],C:[]};CH.set(k,q);} P=q.P;N=q.N;I=q.I;Cc=q.C;};
   const quad=(a,b,cc,d,n,hex)=>{const o=P.length/3; setSrgb(c,hex); for(const q of [a,b,cc,d]){P.push(q[0],q[1],q[2]);N.push(n[0],n[1],n[2]);Cc.push(c.r,c.g,c.b);} I.push(o,o+1,o+2,o,o+2,o+3);};
   for(const W of SIDEWALKS){
-    W.seg=[];                                        // 道路の面の上・掘割の外の区間だけ
-    for(let u=W.a;u<W.b-0.01;u+=2){
-      const u1=Math.min(W.b,u+2), p0=W.f(u), p1=W.f(u1);
-      if(!roadHit(p0.x,p0.z,0)||!roadHit(p1.x,p1.z,0)||cutHit(p0.x,p0.z,1)||cutHit(p1.x,p1.z,1)) continue;
-      if([p0,p1].some(q=>MEIDA.mouthHit(q.x,q.z,W.w/2))) continue;                // 明大前駅前広場の取付道路の口(154 の西の歩道を切る)
-      if([[p0,1],[p0,-1],[p1,1],[p1,-1]].some(([q,sd])=>!roadHit(q.x+sd*q.fz*W.w/2,q.z-sd*q.fx*W.w/2,0.3))) continue;   // 帯の両縁も道路の面の上(直線の歩道が折れた道路の外へ出ない)
-      if([p0,p1].some(q=>Math.abs(prjXY(q.x,q.z).off)>ROAD_NEAR-W.w/2-0.5)) continue;     // 帯の外の縁まで線路から ROAD_NEAR 以内
-      W.seg.push([u,u1]); use(p0.x,p0.z);
-      const h=W.w/2, n0=[p0.fz,-p0.fx], n1=[p1.fz,-p1.fx];
-      const tp=(x,y,z)=>[x,y+terH(x,z),z];                                     // 地形の上(2m の区間なので面の折れの差は 1cm 以下)
-      const A=tp(p0.x+n0[0]*h,yT,p0.z+n0[1]*h), B=tp(p1.x+n1[0]*h,yT,p1.z+n1[1]*h), C2=tp(p1.x-n1[0]*h,yT,p1.z-n1[1]*h), D=tp(p0.x-n0[0]*h,yT,p0.z-n0[1]*h);
-      quad(D,C2,B,A,[0,1,0],0xc9c6be);                                         // 上面
-      for(const sd of[-1,1]){ const e0=[p0.x+sd*n0[0]*h,0,p0.z+sd*n0[1]*h], e1=[p1.x+sd*n1[0]*h,0,p1.z+sd*n1[1]*h];   // 縁石の面
-        quad(tp(e0[0],ROAD_Y[1],e0[2]),tp(e1[0],ROAD_Y[1],e1[2]),tp(e1[0],yT,e1[2]),tp(e0[0],yT,e0[2]),[sd*n0[0],0,sd*n0[1]],0xa8a6a0); }
+    W.seg=[];                                        // 線路から ROAD_NEAR の内・掘割の外・取付道路の口の外の片だけ(帯は道路の外周の辺に沿う。上)
+    const h=W.w/2, n=W.cl.length;
+    for(let i=0;i<n-1;i++){
+      const o0=[W.V[i][0]+W.M[i][0]*0.05,W.V[i][1]+W.M[i][1]*0.05], o1=[W.V[i+1][0]+W.M[i+1][0]*0.05,W.V[i+1][1]+W.M[i+1][1]*0.05];   // 外の縁(道路の縁の 0.05m 内)
+      const i0=[W.V[i][0]+W.M[i][0]*(0.05+W.w),W.V[i][1]+W.M[i][1]*(0.05+W.w)], i1=[W.V[i+1][0]+W.M[i+1][0]*(0.05+W.w),W.V[i+1][1]+W.M[i+1][1]*(0.05+W.w)];   // 車道の側の縁
+      const c0=W.cl[i], c1=W.cl[i+1];
+      if(cutHit(c0[0],c0[1],1)||cutHit(c1[0],c1[1],1)) continue;
+      if([c0,c1].some(q=>MEIDA.mouthHit(q[0],q[1],h))) continue;                // 明大前駅前広場の取付道路の口(154 の西の歩道を切る)
+      if([o0,o1,i0,i1].some(q=>Math.abs(prjXY(q[0],q[1]).off)>ROAD_NEAR)) continue;   // 帯の縁まで線路から ROAD_NEAR 以内
+      W.seg.push([W.U[i],W.U[i+1]]); use(c0[0],c0[1]);
+      const tp=(q,y)=>[q[0],y+terH(q[0],q[1]),q[1]];                            // 地形の上(2m の片なので面の折れの差は 1cm 以下)
+      const nA=[i0[0]-o0[0],i0[1]-o0[1]], la=Math.hypot(nA[0],nA[1])||1;
+      // 上面(外の縁 o → 車道の側 i)。巻き順は上向きになる向きに
+      const cr=(o1[0]-o0[0])*(i0[1]-o0[1])-(o1[1]-o0[1])*(i0[0]-o0[0]);
+      if(cr<0) quad(tp(o0,yT),tp(o1,yT),tp(i1,yT),tp(i0,yT),[0,1,0],0xc9c6be); else quad(tp(i0,yT),tp(i1,yT),tp(o1,yT),tp(o0,yT),[0,1,0],0xc9c6be);
+      quad(tp(i0,ROAD_Y[1]),tp(i1,ROAD_Y[1]),tp(i1,yT),tp(i0,yT),[nA[0]/la,0,nA[1]/la],0xa8a6a0);          // 縁石(車道の側)
+      quad(tp(o1,ROAD_Y[1]),tp(o0,ROAD_Y[1]),tp(o0,yT),tp(o1,yT),[-nA[0]/la,0,-nA[1]/la],0xa8a6a0);         // 外の縁の面
     }
   }
   const MS=orthoPatch(mkMat('MeshLambertMaterial',{vertexColors:true,side:THREE.DoubleSide}),true);   // 上面だけ航空写真(3章)。縁石の側面は今の色
@@ -9318,7 +9654,7 @@ const PED_NEAR=70, PED_FAR=250;
   for(const W of SIDEWALKS){                      // 続いている区間をつないだ帯ごと
     W.runs=[]; for(const q of W.seg||[]){ const r=W.runs[W.runs.length-1]; if(r&&Math.abs(r[1]-q[0])<1e-6) r[1]=q[1]; else W.runs.push([q[0],q[1]]); } }
   for(const W of SIDEWALKS) for(const q of W.runs) {
-    if(q[1]-q[0]<6) continue;
+    if(q[1]-q[0]<20) continue;                    // 短い片(交差点の角など)には置かない(行き来するだけで歩いて見えない)
     const n=Math.floor((q[1]-q[0])/(W.heavy?9:16)+Math.random());
     for(let k=0;k<n;k++) PEDS.push({sw:W,a:q[0],b:q[1],u:q[0]+Math.random()*(q[1]-q[0]),dir:Math.random()<0.5?1:-1,
       lat:(Math.random()-0.5)*Math.max(0,W.w-1.0),v:1.0+Math.random()*0.5,ph:Math.random()*6.28,look:personLook()});
@@ -9436,7 +9772,7 @@ if(PLL&&ROADS_PL.length){
   const SEG=ROADS_PL.filter(R=>(R.sec===1||R.sec===0)&&R.k!==2&&inBand(R));
   for(const R of SEG){
     const I=inf(R); if(I.W<4||I.L<4) continue;
-    const P=I.P, n=P.length, d=I.W<8?0.75:swW(I.W)+0.25;
+    const P=I.P, n=P.length, d=I.W<8?0.75:(R.sw||swW(I.W))+0.25;
     const bnd=P.map((a,i)=>{ const b=P[(i+1)%n], L=Math.hypot(b[0]-a[0],b[1]-a[1]); if(L<1e-6) return false;
       const ox=(b[1]-a[1])/L, oz=-(b[0]-a[0])/L, mx=(a[0]+b[0])/2+ox*0.5, mz=(a[1]+b[1])/2+oz*0.5;      // 外向き=右の法線(反時計回り)
       return !roadsAt(mx,mz).length; });
@@ -9472,7 +9808,7 @@ if(PLL&&ROADS_PL.length){
       if(W<9){ for(const d of dashed(center,5,5)) markLine(R,d,0.15,WHITE); }
       else markLine(R,center,0.15,W>=12?YELLOW:WHITE);
       ROAD_MARKS.center.push({R:R,pts:center,w:W});
-      if(W>=12){ const cw=W-2*swW(W), nl=Math.max(1,Math.round(cw/2/3.3));
+      if(W>=12&&R.lanes!==1){ const cw=W-2*swW(W), nl=Math.max(1,Math.round(cw/2/3.3));
         for(let j=1;j<nl;j++) for(const sg of[-1,1]){ const L=line(sg*j*cw/2/nl); for(const d of dashed(L,5,5)) markLine(R,d,0.15,WHITE); ROAD_MARKS.lane.push({R:R,pts:L}); } }
     }
   }
@@ -9572,6 +9908,77 @@ if(PLL&&ROADS_PL.length){
       }
     }
   }
+  /* ---- 3b. 駅前広場の口(2026-11 利用者指示「明大前・千歳烏山駅の駅前広場にも横断歩道や自動車用信号を設置して。(適切と思われるところを想定し、
+     必要最低限設置する)」。配置は推定):広場の車道が計画の道路(補助第154号線・補助216号線)へ出る T 字の口に
+     ・口を渡る横断歩道:計画の道路の広場の側の歩道の線の上(歩道が口で切れる所。縞は口の車道の向き)
+     ・計画の道路を渡る横断歩道1本:口の駅の側(北)の端から 1.5m 先(幅 4m)
+     ・停止線:計画の道路の両方向(横断歩道の 1.5m 手前/横断歩道の無い側は口の 1.5m 手前)と広場から出る車線(口の横断歩道の 0.8m 手前=広場の面の上)
+     ・信号:計画の道路の両方向と広場から出る車の3基(近づく車の左の角。柱 5.6m・腕・3灯)と、2本の横断歩道の両端の歩行者用(柱 2.9m)
+     灯る組:計画の道路=0・広場から出る車=1。口を渡る人は広場の車が赤のとき(組1の歩行者)、計画の道路を渡る人は計画の道路が赤のとき(組0)。
+     縞・停止線・柱は登録簿 ROAD_MARKS.plaza(交差部の口の検査とは別に ⑦ 4h・4k が見る)。広場の面の上の停止線は '駅前広場の路面標示' */
+  ROAD_MARKS.plaza=[];
+  const PZM={P:[],N:[],I:[],C:[]}, PZB=[1e9,-1e9,1e9,-1e9,1e9,-1e9];
+  const plazaQuad=(Q,hex)=>{ const o=PZM.P.length/3; setSrgb(cM,hex);
+    for(const p of Q){ const y=terH(p[0],p[1])+ROAD_Y[1]+0.02; PZM.P.push(p[0],y,p[1]); PZM.N.push(0,1,0); PZM.C.push(cM.r,cM.g,cM.b); grow(PZB,p[0],y,p[1]); }
+    const a=Q[0], b=Q[1], c=Q[2]; if((b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0])<0) PZM.I.push(o,o+1,o+2,o,o+2,o+3); else PZM.I.push(o,o+2,o+1,o,o+3,o+2); };
+  const plazaX=(nm,C,Wd,ws,roadway,inPlaza)=>{
+    // 口:計画の道路の区間ごとに広場の側の縁をたどり、縁の 0.6m 内が広場の車道の所の最も長い続き
+    let best=null;
+    for(let i=0;i+1<C.length;i++){ const a=C[i], b=C[i+1], len=Math.hypot(b[0]-a[0],b[1]-a[1]), t=[(b[0]-a[0])/len,(b[1]-a[1])/len], nl=[-t[1],t[0]];
+      const mid=[(a[0]+b[0])/2,(a[1]+b[1])/2], sg=inPlaza(mid[0]+nl[0]*(Wd/2+3),mid[1]+nl[1]*(Wd/2+3))?1:-1, nP=[nl[0]*sg,nl[1]*sg];
+      const E=(u,d)=>[a[0]+t[0]*u+nP[0]*(Wd/2+d), a[1]+t[1]*u+nP[1]*(Wd/2+d)];
+      let r0=null;
+      for(let u=0;u<=len+1e-6;u+=0.25){ const q=E(u,0.6), on=roadway(q[0],q[1],0);
+        if(on){ if(r0===null) r0=u; if(!best||u-r0>best.u1-best.u0) best={u0:r0,u1:u,a:a,t:t,nP:nP,E:E,len:len}; } else r0=null; } }
+    if(!best||best.u1-best.u0<6) return;
+    const {u0,u1,t,nP,E}=best, R0={k:1}, rec={n:nm,bars:[],xbars:[],stops:[],poles:[],u0:u0,u1:u1};
+    const left=f=>[f[1],-f[0]], dot=(p,q)=>p[0]*q[0]+p[1]*q[1];
+    // 口を渡る横断歩道(計画の道路の広場の側の歩道の帯の上。縞は口の車道の向き)
+    for(let x=u0+0.3;x+0.45<=u1-0.3+1e-6;x+=0.9){ const Q=[E(x,-ws+0.25),E(x+0.45,-ws+0.25),E(x+0.45,-0.25),E(x,-0.25)];
+      markQuad(R0,Q,WHITE); rec.bars.push({x:(Q[0][0]+Q[2][0])/2,z:(Q[0][1]+Q[2][1])/2}); }
+    // 計画の道路を渡る横断歩道:口の北(z の小さい)の端から 1.5m 先
+    const zN=E(u0,-Wd/2)[1]<E(u1,-Wd/2)[1], uN=zN?u0:u1, sN=zN?-1:1, uc=uN+sN*3.5;
+    for(let v=-ws-0.3;v-0.45>=-(Wd-ws)+0.3-1e-6;v-=0.9){ const Q=[E(uc-2,v),E(uc+2,v),E(uc+2,v-0.45),E(uc-2,v-0.45)];
+      if(!Q.every(q=>roadHit(q[0],q[1],-0.05))) continue; markQuad(R0,Q,WHITE); rec.xbars.push({x:(Q[0][0]+Q[2][0])/2,z:(Q[0][1]+Q[2][1])/2}); }
+    // 停止線(0.45m)と信号
+    const f1=[-sN*t[0],-sN*t[1]], f2=[-f1[0],-f1[1]], fx=[-nP[0],-nP[1]];       // 横断歩道の側から来る車・反対から来る車・広場から出る車の進む向き
+    const half=f=>dot(left(f),nP)>0?[-Wd/2+0.15,-ws-0.15]:[-(Wd-ws)+0.15,-Wd/2-0.15];   // その車の車線(広場の側の半分か向こうの半分)
+    const stopAcross=(u,f,tag)=>{ const h=half(f), Q=[E(u,h[0]),E(u+sN*0.45*(f===f1?1:-1),h[0]),E(u+sN*0.45*(f===f1?1:-1),h[1]),E(u,h[1])];
+      if(Q.every(q=>roadHit(q[0],q[1],-0.02))){ markQuad(R0,Q,WHITE); rec.stops.push({x:(Q[0][0]+Q[2][0])/2,z:(Q[0][1]+Q[2][1])/2,k:tag}); } };
+    const us1=uc+sN*3.5, uO=zN?u1:u0, us2=uO-sN*1.5;
+    stopAcross(us1,f1,'計画の道路(横断歩道の側)'); stopAcross(us2,f2,'計画の道路(反対の側)');
+    const exitHi=dot(left(fx),t)>0, ea=exitHi?(u0+u1)/2+0.1:u0+0.3, eb=exitHi?u1-0.3:(u0+u1)/2-0.1;
+    { const Q=[E(ea,0.8),E(eb,0.8),E(eb,1.25),E(ea,1.25)]; plazaQuad(Q,WHITE); rec.stops.push({x:(Q[0][0]+Q[2][0])/2,z:(Q[0][1]+Q[2][1])/2,k:'広場から出る車'}); }
+    const ph=Math.random()*60;
+    const lamp=(x,y,z,f,kind,g)=>SIGNAL.lamps.push({x:x,y:y,z:z,fx:f[0],fz:f[1],kind:kind,g:g,ph:ph});
+    // 車両用:base=[x,z]・腕の向き・近づく車の進む向き f・組
+    const vehSig=(base,arm,f,g,tag)=>{ const q=chunkOf(base[0],base[1]), y0=terH(base[0],base[1])+ROAD_Y[1], L=3.2, ax=arm[0], az=arm[1], fc=[-f[0],-f[1]], cl=left(f);
+      boxA(q,base[0],y0,base[1],ax,az,0.26,0.26,5.6,0x8a8f93);
+      boxA(q,base[0]+ax*L/2,y0+5.25,base[1]+az*L/2,ax,az,L,0.14,0.14,0x8a8f93);
+      const hx=base[0]+ax*(L-0.2), hz=base[1]+az*(L-0.2);
+      boxA(q,hx,y0+5.0,hz,ax,az,1.25,0.32,0.42,0x2c3034); boxA(q,hx+fc[0]*0.18,y0+5.36,hz+fc[1]*0.18,ax,az,1.3,0.05,0.04,0x2c3034);
+      for(const [k,o] of [['G',-0.4],['Y',0],['R',0.4]]){ const dd=o*(dot(cl,arm)>0?-1:1); lamp(hx+ax*dd+fc[0]*0.17,y0+5.21,hz+az*dd+fc[1]*0.17,fc,k,g); }
+      rec.poles.push({x:base[0],z:base[1],k:'車',tag:tag,g:g}); };
+    // 歩行者用:base・向く向き(横断歩道の向こうの人へ)・組
+    const pedSig=(base,face,g)=>{ const q=chunkOf(base[0],base[1]), y0=terH(base[0],base[1])+ROAD_Y[1];
+      boxA(q,base[0],y0,base[1],face[0],face[1],0.12,0.12,2.9,0x8a8f93);
+      boxA(q,base[0]+face[0]*0.12,y0+2.2,base[1]+face[1]*0.12,face[0],face[1],0.22,0.36,0.75,0x2c3034);
+      lamp(base[0]+face[0]*0.24,y0+2.75,base[1]+face[1]*0.24,face,'PR',g); lamp(base[0]+face[0]*0.24,y0+2.4,base[1]+face[1]*0.24,face,'PG',g);
+      rec.poles.push({x:base[0],z:base[1],k:'歩',g:g}); };
+    const sideD=f=>dot(left(f),nP)>0?-ws/2:-(Wd-ws/2), armOf=f=>dot(left(f),nP)>0?[-nP[0],-nP[1]]:[nP[0],nP[1]];
+    vehSig(E(us1+sN*1.0,sideD(f1)),armOf(f1),f1,0,'計画の道路(横断歩道の側)');
+    vehSig(E(us2-sN*1.0,sideD(f2)),armOf(f2),f2,0,'計画の道路(反対の側)');
+    { const ue=exitHi?u1+0.9:u0-0.9; vehSig(E(ue,0.9),exitHi?[-t[0],-t[1]]:[t[0],t[1]],fx,1,'広場から出る車'); }
+    pedSig(E(u0-0.5,-ws/2),[t[0],t[1]],1); pedSig(E(u1+0.5,-ws/2),[-t[0],-t[1]],1);                     // 口を渡る人(広場の車が赤のとき)
+    pedSig(E(uc+sN*2.4,-ws/2),[-nP[0],-nP[1]],0); pedSig(E(uc+sN*2.4,-(Wd-ws/2)),[nP[0],nP[1]],0);        // 計画の道路を渡る人
+    ROAD_MARKS.plaza.push(rec);
+  };
+  if(MEIDA.on) plazaX('明大前',MEIDA.c154,MEIDA.W154,MEIDA.SW154,MEIDA.roadway,(x,z)=>polyDist(MEIDA.plaza,x,z)<0);
+  if(KARA.on) plazaX('千歳烏山',KARA.c216,KARA.W216,swW(KARA.W216),KARA.roadway,(x,z)=>polyDist(KARA.dist,x,z)<0);
+  if(PZM.I.length){ const g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.Float32BufferAttribute(PZM.P,3)); g.setAttribute('normal',new THREE.Float32BufferAttribute(PZM.N,3));
+    g.setAttribute('color',new THREE.Float32BufferAttribute(PZM.C,3)); g.setIndex(PZM.I);
+    const m=new THREE.Mesh(g,mkMat('MeshLambertMaterial',{vertexColors:true,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2}));
+    m.name='駅前広場の路面標示'; m.userData.decal=true; m.receiveShadow=true; scene.add(m); }
   // ---- 面と柱をまとまりごとの Mesh に ----
   const MAT_MARK=mkMat('MeshLambertMaterial',{vertexColors:true,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2});
   const MAT_PAINT=mkMat('MeshLambertMaterial',{map:TEX,transparent:true,alphaTest:0.4,depthWrite:false,side:THREE.DoubleSide,polygonOffset:true,polygonOffsetFactor:-3,polygonOffsetUnits:-3});
@@ -10023,7 +10430,7 @@ function goStation(s){setRide(false);setChase(false);setAuto(false);
   flyTo({tx:p.x,ty:8,tz:p.z,r:470,th:Math.PI/2-.4,ph:.95},1500);}   // 南側やや斜めから北向きに駅を見る
 
 // --- 運転モード(笹塚→仙川・下り前面展望+ワンハンドルマスコン) ---
-let labelPrev=true, xingPrev=false;   // スマホの運転モード中は強制OFFにするため直前の状態を保持
+let labelPrev=false, xingPrev=false;   // スマホの運転モード中は強制OFFにするため直前の状態を保持
 function setLabelsShown(v){
   staLabels.concat(tagLabels).forEach(s=>s.visible=v);
   const b=$('btnLabel');b.classList.toggle('on',v);b.textContent='駅ラベル '+(v?'ON':'OFF');
@@ -10206,6 +10613,9 @@ $('btnLabel').onclick=e=>{const v=!staLabels[0].visible;
   staLabels.concat(tagLabels).forEach(s=>s.visible=v);
   e.target.classList.toggle('on',v);e.target.textContent='駅ラベル '+(v?'ON':'OFF');};
 $('btnXing').onclick=()=>{const v=!xingLabels[0].visible;xingPrev=v;setXingShown(v);};
+labelPrev=false; setLabelsShown(false);   // 駅名ラベルは既定で OFF(2026-11 利用者指示)
+$('btnCredit').onclick=e=>{const c=$('credits'), v=!c.classList.contains('show');
+  c.classList.toggle('show',v); e.target.classList.toggle('on',v); e.target.textContent='出典 '+(v?'▾':'▸'); e.target.setAttribute('aria-expanded',v);};
 
 function resize(){
   const w=innerWidth,h=innerHeight;
@@ -10492,9 +10902,11 @@ const CINE=(function(){
     // 2026-10-12 利用者指示「夜が暗すぎる。もう少しだけ明るく」:環境光 0.26→0.34・露出 1.26→1.34・空を少し明るく
     // 2026-10-13 同じく「もう少しだけ明るく」:環境光 0.34→0.40・露出 1.34→1.40・空をもう少し明るく
     // 2026-11 同じく「明るさを少しだけ上げて」:環境光 0.40→0.44(⑨の「夜は最も明るい時刻の6割未満」の内)・露出 1.40→1.46・空を少し明るく(地表と緑は 55%→58%)
-    night  :{n:'夜',  az:115, el:48, sun:0xa8bcdc, si:0.10, lights:true,
-             hs:0x3e4b6b, hg:0x1c2333, hi:0.44, expo:1.46,
-             sky:{top:0x22304f, hor:0x56678a, bot:0x343e51, glow:0x7c8eb4}, fog:[1800,8200]},
+    // 2026-11(その3)「夜の表現をさらに明るくして」:環境光は ⑨ の上限のまま、月明かり 0.10→0.17(昼の半分未満の内)・露出 1.46→1.72・
+    //   灯りの倍率 2.5→2.9(LIGHT_GAIN)・空をもう一段明るく
+    night  :{n:'夜',  az:115, el:48, sun:0xa8bcdc, si:0.17, lights:true,
+             hs:0x44527a, hg:0x20283a, hi:0.44, expo:1.72,
+             sky:{top:0x283860, hor:0x60739a, bot:0x3b4659, glow:0x8a9cc2}, fog:[1800,8200]},
   };
   /* ---- 季節(樹木と地表の色。いずれも"見せたい色"ではなく直接の着色) ---- */
   const SEASON={
@@ -10980,7 +11392,7 @@ ORTHO_MGR=(function(){
      その帯に掛かって街から外した実際の建物の足跡+1m(ORTHO_HOLES のうち帯の縁から ORTHO_HOLE_NEAR 以内の物) */
   const MC=4, MW=Math.ceil((TER.X1-TER.X0)/MC), MH=Math.ceil((TER.Z1-TER.Z0)/MC), MD=new Uint8Array(MW*MH).fill(255);
   const XL=KEEP.filter(q=>q.k==='l');
-  const half=(s,sg)=>(s>DECK_END?cutHalf(s,sg):deckHalf(s))+5.2;
+  const half=(s,sg)=>(s>DECK_END?cutHalf(s,sg):deckHalf(s,sg))+5.2;
   function bandDist(x,z){
     const q=prjXY(x,z), sc=clamp(q.s,DOM.x0,DOM.x1);
     let d=Math.max(Math.abs(q.off)-half(sc,q.off<0?-1:1),DOM.x0-q.s,q.s-DOM.x1);
@@ -11094,10 +11506,7 @@ ORTHO_MGR=(function(){
   }
   function credit(){
     try{
-      if(!cred){ cred=document.createElement('div');
-        cred.textContent='航空写真:地理院タイル(全国最新写真(シームレス))を加工';   // CREDITS.txt と同じ表記
-        cred.style.cssText='position:fixed;right:6px;bottom:40px;font:11px sans-serif;color:#334;background:rgba(255,255,255,.7);padding:1px 6px;border-radius:4px;z-index:5;pointer-events:none';
-        document.body.appendChild(cred); }
+      if(!cred) cred=creditLine('ortho','航空写真:地理院タイル(全国最新写真(シームレス))を加工');   // CREDITS.txt と同じ表記
       cred.style.display=on?'':'none';
     }catch(e){}
   }

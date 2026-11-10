@@ -95,7 +95,8 @@ const STATION_VIEW = async (R) => {
   const stat = await ORTHO_MGR.settle(90000);
   const gl = renderer.getContext();
   const grab = () => { CINE.render(); const px = new Uint8Array(800 * 450 * 4); gl.readPixels(0, 0, 800, 450, gl.RGBA, gl.UNSIGNED_BYTE, px); return px; };
-  const credit = () => [...document.querySelectorAll('div')].some((d) => d.textContent.includes(R.CREDIT) && d.style.display !== 'none' && d.isConnected);
+  // 出典の行(2026-11 からメニューの「出典」の中の行。行を包む #credits の文字も含むので、子の無い行の div で見る)
+  const credit = () => [...document.querySelectorAll('div')].some((d) => d.children.length === 0 && d.textContent.includes(R.CREDIT) && d.style.display !== 'none' && d.isConnected);
   const water = () => (LU.waterMesh ? LU.waterMesh.visible : null);
   ORTHO_MGR.setOn(true);
   const on = grab(), cOn = credit(), wOn = water();
@@ -208,7 +209,7 @@ const STATION_VIEW = async (R) => {
         const pb = draw(QB, null), eb = await expect(QB, R.Z[0]);
         let nIn = 0, inBad = 0, inMax = 0, nOut = 0, outSum = 0;
         for (let r = 0; r < N; r++) for (let i = 0; i < N; i++) {
-          const q = prjXY(wx(QB, i), wz(QB, r)), sg = q.off < 0 ? -1 : 1, hw = q.s > DECK_END ? cutHalf(q.s, sg) : deckHalf(q.s), a = Math.abs(q.off), k = (r * N + i) * 4, e = (r * N + i) * 3;
+          const q = prjXY(wx(QB, i), wz(QB, r)), sg = q.off < 0 ? -1 : 1, hw = q.s > DECK_END ? cutHalf(q.s, sg) : deckHalf(q.s, sg), a = Math.abs(q.off), k = (r * N + i) * 4, e = (r * N + i) * 3;
           if (a <= hw + R.BAND_IN) { nIn++; const v = Math.max(pb[k], pb[k + 1], pb[k + 2]); inMax = Math.max(inMax, v); if (v > 3) inBad++; }
           else if (a >= hw + R.BAND_OUT) { nOut++; for (let c = 0; c < 3; c++) outSum += Math.abs(pb[k + c] - eb[e + c]); }
         }

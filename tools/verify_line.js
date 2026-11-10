@@ -35,6 +35,10 @@ const REQ = {
   SLACK: 0.05,       // 必要幅に対して許容する余剰[m]
   GRAD: 1.30,        // 桁幅の変化率の上限[m / 5m]
   STEP: 5,
+  // 側ごとの幅(2026-11 利用者指摘「桜上水駅前後について、高架橋が広すぎる。線路のある部分だけでよい」):その側に敷いた線路(登録簿 TRACKS)と
+  // ホームの縁から求めた必要幅を、前後 TAPER m の内の最大まで許す(幅の擦り付け)。大屋根の駅の中心から ROOF_SYM m の内は左右の大きい方まで
+  // (屋根と外装を左右対称に作る)
+  TAPER: 95, ROOF_SYM: 120,
 };
 
 /* ---- インテグレート架線の基準(検証側が独立して持つ) ---------------------------- */
@@ -86,10 +90,33 @@ const need = (s) => Math.max(REQ.DECK_MIN, X.outerOff(s) + REQ.CLEAR, X.platOute
   let n = 0;
   for (const q of X.PLATS) for (let s = q.x0; s <= q.x1 + 1e-6; s += 5) {
     if (s > X.DECK_END) continue;                       // 仙川は地上区間
-    const e = Math.max(...[-1, 1].map((sg) => Math.abs(q.edge ? q.edge(s, sg) : q.off + sg * q.hw))), h = X.deckHalf(s); n++;
-    if (h < e + REQ.PLAT_MARGIN - 1e-9 && !bad) bad = ['s=' + s.toFixed(0), (h - e).toFixed(2)];
+    for (const sg of [-1, 1]) { const e = sg * (q.edge ? q.edge(s, sg) : q.off + sg * q.hw); if (!(e > 0)) continue;
+      const h = X.deckHalf(s, sg); n++;
+      if (h < e + REQ.PLAT_MARGIN - 1e-9 && !bad) bad = ['s=' + s.toFixed(0), (sg > 0 ? '北 ' : '南 ') + (h - e).toFixed(2)]; }
   }
-  ok('全駅でホームが桁に載る', bad === null && n > 300, '違反なし(5m ごと)', bad ? bad.join(' ') + 'm' : n + '点とも');
+  ok('全駅でホームが桁に載る', bad === null && n > 300, '違反なし(5m ごと・側ごと)', bad ? bad.join(' ') + 'm' : n + '点とも');
+}
+// 側ごとの桁の幅:その側の線路(TRACKS の最も外)とホームの縁から求めた必要幅に対して、狭すぎず、前後 TAPER m の必要幅の最大より広くない
+{
+  const S0 = X.DOM.x0, N = Math.floor((X.DECK_END - S0) / REQ.STEP);
+  const needS = (s, sg) => { let o = 0;
+    for (const t of X.TRACKS) if (s >= t.x0 && s <= t.x1) { const v = sg * t.zf(s); if (v > o) o = v; }
+    let e = 0; for (const q of X.PLATS) if (s >= q.x0 && s <= q.x1) { const v = sg * (q.edge ? q.edge(s, sg) : q.off + sg * q.hw); if (v > e) e = v; }
+    return Math.max(REQ.DECK_MIN, o > 0 ? o + REQ.CLEAR : 0, e > 0 ? e + REQ.PLAT_MARGIN : 0); };
+  const NS = { '-1': [], '1': [] }; for (const sg of [-1, 1]) for (let i = 0; i <= N; i++) NS[sg].push(needS(S0 + i * REQ.STEP, sg));
+  const roofs = X.STA.filter((st) => st.x < X.DECK_END && ['quad', 'isl', 'hachi', 'side', 'ctx'].includes(st.t)).map((st) => st.x);
+  const symAt = (k) => roofs.some((c) => Math.abs(S0 + k * REQ.STEP - c) < REQ.ROOF_SYM);
+  // 前後 TAPER m の内の必要幅の最大(大屋根の駅の範囲の点は左右の大きい方を必要幅とする)
+  const K = Math.round(REQ.TAPER / REQ.STEP), env = (i, sg) => { let m = 0; for (let k = Math.max(0, i - K); k <= Math.min(N, i + K); k++) m = Math.max(m, symAt(k) ? Math.max(NS[1][k], NS[-1][k]) : NS[sg][k]); return m; };
+  let narrow = null, wide = null, nSak = 0, sakS = null;
+  for (let i = 0; i <= N; i++) { const s = S0 + i * REQ.STEP;
+    for (const sg of [-1, 1]) { const h = X.deckHalf(s, sg), lim = env(i, sg);
+      if (h < NS[sg][i] - 1e-6 && !narrow) narrow = 's=' + s.toFixed(0) + (sg > 0 ? ' 北 ' : ' 南 ') + h.toFixed(2) + '<' + NS[sg][i].toFixed(2);
+      if (h > lim + REQ.SLACK && (!wide || h - lim > wide[1])) wide = ['s=' + s.toFixed(0) + (sg > 0 ? ' 北' : ' 南'), h - lim]; }
+    if (Math.abs(s - X.STA[4].x) > 200 && Math.abs(s - X.STA[4].x) < 330) { nSak++; const h = X.deckHalf(s, -1); if (!sakS || h > sakS) sakS = h; } }
+  ok('桁の幅は側ごとに線路のある所だけ', narrow === null && wide === null, '側の必要幅以上・前後 ' + REQ.TAPER + 'm の必要幅の最大+' + REQ.SLACK + 'm 以下(大屋根の駅の ±' + REQ.ROOF_SYM + 'm は左右の大きい方)',
+    narrow || (wide ? wide[0] + ' +' + wide[1].toFixed(2) + 'm' : '違反なし'));
+  ok('桜上水の前後の南の桁は複線の幅', nSak > 20 && sakS !== null && sakS < REQ.DECK_MIN + 1.0, '駅の中心から 200〜330m の南の半幅 < ' + (REQ.DECK_MIN + 1.0) + 'm(留置線は北だけ)', nSak + '点・最大 ' + (sakS === null ? '-' : sakS.toFixed(2)) + 'm');
 }
 
 /* ---- 2. 架線:線路の上にあるか / 吊り点が柱の真下か ------------------------ */
@@ -552,9 +579,9 @@ if (X.TRACKS && X.WIRES) {
   ok('柱の列がある', C.length > 300, '300列以上', C.length + '列');
   let bIn = null, bGap = null, bSpan = null, bTop = null;
   for (let i = 0; i < C.length; i++) {
-    const c = C[i], h = X.deckHalf(c.s);
+    const c = C[i];
     if (c.offs.length < 2 && !bIn) bIn = ['s=' + c.s.toFixed(0), c.offs.length + '本'];
-    for (const o of c.offs) if (Math.abs(o) > h - V.COL_IN + 1e-6 && !bIn) bIn = ['s=' + c.s.toFixed(0), 'off=' + o.toFixed(2), '桁端' + h.toFixed(2)];
+    for (const o of c.offs) { const h = X.deckHalf(c.s, o < 0 ? -1 : 1); if (Math.abs(o) > h - V.COL_IN + 1e-6 && !bIn) bIn = ['s=' + c.s.toFixed(0), 'off=' + o.toFixed(2), '桁端' + h.toFixed(2)]; }
     for (let k = 1; k < c.offs.length; k++) {
       const g = c.offs[k] - c.offs[k - 1];
       if (g > V.COL_GAP && !bGap) bGap = ['s=' + c.s.toFixed(0), g.toFixed(2) + 'm'];
@@ -586,7 +613,7 @@ if (X.TRACKS && X.WIRES) {
   for (const q of X.STRUCT) {
     if (q.tag !== '高欄') continue;
     const s = (q.s0 + q.s1) / 2, top = q.y1 - Math.max(X.railY(q.s0), X.railY(q.s1));
-    const h = Math.max(X.deckHalf(q.s0), X.deckHalf(q.s1)) + 0.06;   // 笠木は外へ6cm張り出す
+    const sd = q.o0 + q.o1 < 0 ? -1 : 1, h = Math.max(X.deckHalf(q.s0, sd), X.deckHalf(q.s1, sd)) + 0.06;   // 笠木は外へ6cm張り出す(側ごと)
     if (Math.abs(top - V.PAR_H) > 0.05 && !bP) bP = ['s=' + s.toFixed(0), '高さ' + top.toFixed(2)];
     const outer = Math.max(Math.abs(q.o0), Math.abs(q.o1));
     // 掃引は2m標本・誤差2cmで間引くので、標本の間の曲がり(幅のなめらかな変化)ぶんを8cmまで許す
