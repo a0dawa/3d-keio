@@ -186,7 +186,7 @@ Claude は地図・航空写真・自分の描画を安定して見られない�
 | 9. 8000系 | 1,034 | **形式** | `K8`・`K8_ROWS`・`k8nose`・`k8SideWindows`・`K8_FRAG_MAIN`・`K8GEO`・共有の生成器 `carShellGeo`/`k8InteriorGeos`/`k8SideFitGeo`/`k8PantoGeos`… |
 | 9b. 9000系・組立 | 420+191 | **形式** | `K9`…`K9GEO`・`carBodyMat`・`k8Merge`・`CAR_INST`・`k8Sheet`・`makeCar` |
 | 運行 | 258 | 表は全部/仕組みは無し | `TRAIN_DEF`・`TRAIN_KIND`・`DWELL_OF`・`HEAD`/`gapAhead`・`expressBehind`・`SWITCHES`/`stepSwitches` |
-| 交差鉄道の車両・留置 | 193 | **全部** | `XCAR`・`makeXTrain`・`INO_*`・`SETA_*`・`PARKS`(`parkSet`/`standSet`) |
+| 交差鉄道の車両・留置 | 193 | **全部** | `K10`・`K30`・`makeXCar`(9c章)・`INO_*`・`SETA_*`・`PARKS`(`parkSet`/`standSet`) |
 | ホームドア | 115 | 無し(4扉・10両の前提) | `PSD`・`PSD_DEF`・`stepPSD`・`trainPSD` |
 | ホームの人・乗り降り | 507 | ほぼ無し(`busy` の駅名) | `PEOPLE`・`PEOPLE_TYPES`・`personLook`・`FLOW`・`stepFlow`・`flowWell` |
 | 道路の車・歩く人 | 312 | ほぼ無し(`HEAVY_X`) | `RD_LANES`・`RD_CARS`・`VEH`・`SIDEWALKS`・`PEDS`・`ROAD_NEAR` |
@@ -603,7 +603,7 @@ Claude は地図・航空写真・自分の描画を安定して見られない�
 ## 10. 交差物・道路の車と歩く人
 
 - **交差鉄道**(未一般化。手本):`RAW.rail.<名>`(交点と軸の2点)→`axisOf`→軸の向き。線路・擁壁・架線・柱は `xGroup`/`xKit`
-  (箱を材質ごとにまとめ、電線は線、まくらぎはインスタンス)で線区ごとに1つのブロック。車両は `XCAR`(簡易モデル)・`makeXTrain`
+  (箱を材質ごとにまとめ、電線は線、まくらぎはインスタンス)で線区ごとに1つのブロック。車両は 9c章の `makeXCar`(2026-11 その4 から 8000・9000系と同じ作り。以前は `XCAR`(簡易モデル)・`makeXTrain`
   (材質ごとに編成を1つの形にし、線路の外の車両は `drawRange` で外す)。複線は**上下で線を分け、線を移るのは見えない所だけ**(左側通行)。
   軌間も線区ごと(`GAUGE_INO`・`GAUGE_SETA`)。建物を避ける範囲は**世界座標の直線からの距離**(s 一定の帯では斜めの線を覆えない)
 - **横切る道路**:PLATEAU の道路から自動(`ROAD_XING`)。車線は道路の面が続く向きと幅から(`RD_LANES`。幅5.5m 以上は2車線で左側通行)

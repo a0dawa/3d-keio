@@ -154,6 +154,10 @@ Copyright (c) 2026 a0とnonkyuruの駅攻略
 - 井の頭線・世田谷線:線路の位置は地理院のベクトルタイル(上の1c)、明大前の井の頭線のホームの位置は利用者が地図から測った緯度。
   車両(京王1000系・東急300系)の寸法・前面の構成・編成の色の名前は Wikipedia「京王1000系電車 (2代)」(出典は鉄道ジャーナル 1996年4月号)・
   「東急300系電車」・京王電鉄の会社要覧の公表の値(reference/xtrains/README.md)。形の細部と色の16進は推定。車両の意匠は京王電鉄・東急電鉄に帰属
+  2026-11(その4)から 1751F・304F の形は Wikimedia Commons の写真を画素で測った値(写真は同梱しない。測った値と測り方は
+  reference/xtrains/measured_1000.md・measured_300.md):「1751 seinoukakuninshiunten.jpg」「Keio Series1000-1751.jpg」「TKK_Wakabayashi_Crossing.JPG」
+  「Model_300-304_of_Tokyo_Kyuko_Kabushikigaisha.JPG」「Tokyu-EC300-3.jpg」「Jacobs_bogie_of_TKK_300.jpg」(各ファイルのページの作者・ライセンスに従う)
+- 架線柱の形(2026-11 その4):Wikimedia Commons の駅の写真(八幡山・明大前・松原・下高井戸 など。同梱しない)を見て形を決めた(寸法は推定)
 - 千歳烏山駅前広場南側地区:上の6b(区域・駅前広場・補助216号線・再開発ビルの位置と高さ)
 - 明大前駅前広場と補助第154号線:上の6c(広場と道路の位置・公表の幅員と延長・面積)
 

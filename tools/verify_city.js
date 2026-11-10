@@ -17,7 +17,7 @@ const X = require('./stub_three')(path,
   'PLAZA_S:PLAZA_S,PLAZA_OFF:PLAZA_OFF,SUBK:SUBK,SUBC:SUBC,' +
   'stepXRail:stepXRail,inoTrains:inoTrains,setaTrain:setaTrain,LAT0:LAT0,MLAT:MLAT,RAW:RAW,' +
   'SETA_CARS:SETA_CARS,' +
-  'XCAR:XCAR,K8GEO:K8GEO,XM_WHL:XM_WHL,' +
+  'K8GEO:K8GEO,XM_WHL:XM_WHL,K10:K10,K30:K30,' +
   'GAUGE_INO:GAUGE_INO,GAUGE_SETA:GAUGE_SETA,RAIL_W:RAIL_W,prjXY:prjXY,frame:frame,' +
   'VIA_COLS:VIA_COLS,EXPY:EXPY,railY:railY,DECK_END:DECK_END,ROADS_PL:ROADS_PL,CITY_LODS:CITY_LODS,' +
   'RD_CARS:(typeof RD_CARS!=="undefined"?RD_CARS:[]),RD_LANES:(typeof RD_LANES!=="undefined"?RD_LANES:[]),' +
@@ -82,6 +82,7 @@ const REF = {
   XR_ON_TRACK: 0.02,        // 台車の中心と線路の中心線の差[m]
   XR_RAIL_TOL: 0.08,        // レールの頂点と(軌間+頭部の幅)/2 の差[m](頭部・腹・底部の幅の内)
   SETA_XO_ZONE: [-100, -30],// 世田谷線の渡り線を探してよい u の範囲(終端から)。台車はこの外では線路の上、これより南では左側通行の線
+  SETA_BOGIES: 3,          // 世田谷線 300系は2車体3台車の連接車(公表)
   SETA_END: 12,             // 世田谷線の終端に停まるとき、北の端が終端(u=0)から何m 以内か
   SIM: [0.25, 1600],        // 走らせる刻み[秒]・回数(400秒=上下とも1往復以上)
 };
@@ -1126,31 +1127,31 @@ let L2_ALL = null, P0_ALL = null;          // 4c で読んだ LOD2 の面(建物
   X.stepXRail(3.0);                                // 実際に走らせてから測る
   const inoG = X.inoTrains.map((t) => t.g), setaG = X.setaTrain.g, allG = inoG.concat([setaG]);
   const kind = { 井の頭線: { A: XC.INO, gauge: X.GAUGE_INO, u0: X.XR.U0, u1: X.XR.U1 }, 世田谷線: { A: XC.SETA, gauge: X.GAUGE_SETA, u0: X.XR.SETA_U0, u1: X.XR.SETA_U1 } };
-  // 描いている(drawRange の)頂点の世界座標
-  const drawn = (o) => { const out = []; if (!o.geometry || !o.geometry.index) return out;
-    const P = o.geometry.attributes.position.array, I = o.geometry.index.array, r = o.geometry.drawRange, e = Math.min(I.length, r.start + r.count), seen = new Set();
-    for (let i = r.start; i < e; i++) { const k = I[i]; if (seen.has(k)) continue; seen.add(k); out.push([P[3 * k], P[3 * k + 1], P[3 * k + 2]]); }
-    return out; };
-  const wheels = (g) => { let w = []; if (!g.visible) return w; g.traverse((o) => { if (o.material === X.XM_WHL) w = w.concat(drawn(o)); }); return w; };
-  // 車輪の頂点を、中心線に沿う u で 0.6m より大きい切れ目ごとの塊(=車軸)に分け、4軸ずつ車両に。車両の台車=前2軸・後2軸の頂点の平均
-  const cars = (g, A) => { const w = wheels(g).map((p) => ({ p: p, u: A.uv(p[0], p[2]).u })).sort((a, b) => a.u - b.u);
+  /* 2026-11 から車両は1両ずつの群(makeXCar。8000系と同じ作り)。描いた位置=群の位置と y 回りの回転(局所 x → (cosθ, −sinθ)、局所 z → (sinθ, cosθ))で
+     車輪の形(材質 XM_WHL)の頂点を世界へ写す(検証側で計算。モデルの pose は読まない) */
+  const toW = (c, x, y, z) => { const th = c.rotation.y, cs = Math.cos(th), sn = Math.sin(th); return [c.position.x + x * cs + z * sn, c.position.y + y, c.position.z - x * sn + z * cs]; };
+  const carsOf = (g) => g.children.filter((c) => c.userData && c.userData.xcar && c.visible);
+  const carWheels = (c) => { let w = []; c.traverse((o) => { if (o.isMesh && o.material === X.XM_WHL) { const P = o.geometry.attributes.position.array; for (let i = 0; i < P.length; i += 3) w.push(toW(c, P[i], P[i + 1], P[i + 2])); } }); return w; };
+  const carEnds = (c) => { const b = c.userData.body.geometry.attributes.position.array; let x0 = 1e9, x1 = -1e9; for (let i = 0; i < b.length; i += 3) { x0 = Math.min(x0, b[i]); x1 = Math.max(x1, b[i]); } return [toW(c, x0, 0, 0), toW(c, x1, 0, 0)]; };
+  // 1両の車輪の頂点を、中心線に沿う u で 0.6m より大きい切れ目ごとの塊(=車軸)に分け、2軸ずつ台車に(300系のA車は端の台車と連接台車の2台、B車は端の台車1台)
+  const bogiesOf = (c, A) => { const w = carWheels(c).map((p) => ({ p: p, u: A.uv(p[0], p[2]).u })).sort((a, b) => a.u - b.u);
     const ax = []; let last = -1e9; for (const q of w) { if (q.u - last > 0.6) ax.push([]); ax[ax.length - 1].push(q.p); last = q.u; }
-    const avg = (L) => { const c = [0, 0, 0]; for (const p of L) { c[0] += p[0]; c[1] += p[1]; c[2] += p[2]; } return c.map((v) => v / L.length); };
-    const out = []; for (let i = 0; i + 3 < ax.length; i += 4) out.push({ b: [avg(ax[i].concat(ax[i + 1])), avg(ax[i + 2].concat(ax[i + 3]))], ax: ax.slice(i, i + 4), w: [].concat(...ax.slice(i, i + 4)) });
-    return { cars: out, axles: ax.length, w: w }; };
-  // 車両数(明大前に停まって全車が線路の上にいる間に数える)と、交差鉄道は専用モデル
+    const avg = (L) => { const s = [0, 0, 0]; for (const p of L) { s[0] += p[0]; s[1] += p[1]; s[2] += p[2]; } return s.map((v) => v / L.length); };
+    const out = []; for (let i = 0; i + 1 < ax.length; i += 2) out.push({ b: avg(ax[i].concat(ax[i + 1])), ax: [ax[i], ax[i + 1]], w: ax[i].concat(ax[i + 1]) });
+    return { bogies: out, axles: ax.length, w: w }; };
+  // 交差鉄道は専用モデル(8000系の形を共有しない)
   {
     const keio = new Set();
     const walk = (o) => { if (!o || typeof o !== 'object') return; if (o.attributes) { keio.add(o); return; } for (const k in o) walk(o[k]); };
     walk(X.K8GEO);
     let bad = null;
-    for (const c of allG) {
-      if (!c.userData || !c.userData.xcar) { bad = bad || ['専用モデルでない']; continue; }
-      c.traverse((o) => { if (o.geometry && keio.has(o.geometry) && !bad) bad = ['8000系のジオメトリを共有']; });
+    for (const g of allG) {
+      if (!g.userData || !g.userData.xcar) { bad = bad || ['専用モデルでない']; continue; }
+      g.traverse((o) => { if (o.geometry && keio.has(o.geometry) && !bad) bad = ['8000系のジオメトリを共有']; });
     }
     ok('交差鉄道は専用モデル', bad === null, '8000系と別', bad ? bad[0] : '井の頭線/世田谷線とも専用');
   }
-  // 敷いたレール:交差鉄道の範囲(中心線から 8m 以内・高さ 0〜1.2m・u が線路の範囲)の頂点は、最も近い線路の中心線から (軌間+頭部の幅)/2±許容
+  // 敷いたレール
   {
     const res = [];
     for (const [nm, K] of Object.entries(kind)) {
@@ -1172,50 +1173,47 @@ let L2_ALL = null, P0_ALL = null;          // 4c で読んだ LOD2 の面(建物
     ok('交差鉄道のレールが実際の線路の位置', res.every((r) => r[1] > 1000 && !r[2]), '中心線から(軌間+頭部)/2±' + REF.XR_RAIL_TOL + 'm',
       res.map((r) => r[0] + (r[2] ? ' ' + r[2].join(' ') : (r[1] > 1000 ? ' 最大差' + r[3].toFixed(3) + 'm(' + r[1] + '点)' : ' 頂点' + r[1]))).join('・'));
   }
-  /* 走らせて測る:各コマ、描いた車両ごとに台車の中心が線路の上か・左側通行か・車輪の下端・左右の間隔・描いた頂点の範囲。
+  /* 走らせて測る:各コマ、描いた車両ごとに台車の中心が線路の上か・左側通行か・車輪の下端・左右の間隔・車体の端が線路の範囲の上。
      停車中(台車が動かない)は、井の頭線=その側のホーム(緯度の実測・110m)に収まる、世田谷線=北の端が終端の近く */
   {
     const plat = REF.INO_PLAT.map((q) => { const u0 = XC.INO.uAtZ(-(q.lat - X.LAT0) * X.MLAT); return { n: q.n, side: q.side, u0: u0, u1: u0 + REF.INO_PLAT_LEN }; });
-    const st = { 井の頭線: { badT: null, badL: null, badY: null, badG: null, badOut: null, badStop: null, nObs: 0, dirs: new Set(), worst: 0, gw: 0, nCars: 0 },
-                 世田谷線: { badT: null, badL: null, badY: null, badG: null, badOut: null, badStop: null, nObs: 0, dirs: new Set(), worst: 0, gw: 0, nCars: 0, xo: 0 } };
+    const st = { 井の頭線: { badT: null, badL: null, badY: null, badG: null, badOut: null, badStop: null, nObs: 0, dirs: new Set(), worst: 0, gw: 0, nCars: 0, nBog: 0 },
+                 世田谷線: { badT: null, badL: null, badY: null, badG: null, badOut: null, badStop: null, nObs: 0, dirs: new Set(), worst: 0, gw: 0, nCars: 0, nBog: 0, xo: 0 } };
     const items = inoG.map((g) => ['井の頭線', g]).concat([['世田谷線', setaG]]);
     const prev = items.map(() => null), stopT = items.map(() => 0), maxStop = items.map(() => 0);
     for (let k = 0; k < REF.SIM[1]; k++) {
       X.stepXRail(REF.SIM[0]);
       items.forEach(([nm, g], i) => {
-        const K = kind[nm], S = st[nm], C = cars(g, K.A);
-        if (!C.cars.length) { prev[i] = null; stopT[i] = 0; return; }
-        if (C.axles % 4 && !S.badG) S.badG = ['車軸 ' + C.axles];
-        S.nCars = Math.max(S.nCars, C.cars.length);
-        // 描いた頂点の u の範囲
-        let lo = 1e9, hi = -1e9; g.traverse((o) => { if (!o.isMesh) return; for (const p of drawn(o)) { const u = K.A.uv(p[0], p[2]).u; lo = Math.min(lo, u); hi = Math.max(hi, u); } });
+        const K = kind[nm], S = st[nm];
+        const cars = g.visible ? carsOf(g) : [];
+        if (!cars.length) { prev[i] = null; stopT[i] = 0; return; }
+        const B = cars.map((c) => bogiesOf(c, K.A));
+        for (const C of B) if (C.axles % 2 && !S.badG) S.badG = ['車軸 ' + C.axles];
+        S.nCars = Math.max(S.nCars, cars.length); S.nBog = Math.max(S.nBog, B.reduce((a, C) => a + C.bogies.length, 0));
+        let lo = 1e9, hi = -1e9; for (const c of cars) for (const e of carEnds(c)) { const u = K.A.uv(e[0], e[2]).u; lo = Math.min(lo, u); hi = Math.max(hi, u); }
         if ((lo < K.u0 - 1e-3 || hi > K.u1 + 1e-3) && !S.badOut) S.badOut = [lo.toFixed(1) + '〜' + hi.toFixed(1)];
-        // 列車の中心(全台車の平均)と進行方向
-        const all = [].concat(...C.cars.map((c) => c.b)), cx = all.reduce((a, p) => a + p[0], 0) / all.length, cz = all.reduce((a, p) => a + p[2], 0) / all.length;
-        const pv = prev[i]; prev[i] = { x: cx, z: cz, n: C.cars.length };
-        const mv = pv && pv.n === C.cars.length ? Math.hypot(cx - pv.x, cz - pv.z) : -1;
-        for (const c of C.cars) {
-          for (const b of c.b) {
-            const pu = K.A.uv(b[0], b[2]).u, inXO = nm === '世田谷線' && pu > REF.SETA_XO_ZONE[0] && pu < REF.SETA_XO_ZONE[1];
-            const d0 = K.A.dTrack(0, b[0], b[2]), d1 = K.A.dTrack(1, b[0], b[2]), d = Math.min(d0, d1);
-            if (inXO) { if (d0 > REF.XR_ON_TRACK && d1 > REF.XR_ON_TRACK) S.xo++; continue; }
+        const all = [].concat(...B.map((C) => C.bogies.map((q) => q.b))), cx = all.reduce((a, p) => a + p[0], 0) / all.length, cz = all.reduce((a, p) => a + p[2], 0) / all.length;
+        const pv = prev[i]; prev[i] = { x: cx, z: cz, n: all.length };
+        const mv = pv && pv.n === all.length ? Math.hypot(cx - pv.x, cz - pv.z) : -1;
+        for (const C of B) for (const q of C.bogies) {
+          const b = q.b, pu = K.A.uv(b[0], b[2]).u, inXO = nm === '世田谷線' && pu > REF.SETA_XO_ZONE[0] && pu < REF.SETA_XO_ZONE[1];
+          const d0 = K.A.dTrack(0, b[0], b[2]), d1 = K.A.dTrack(1, b[0], b[2]), d = Math.min(d0, d1);
+          if (!inXO) {
             S.worst = Math.max(S.worst, d);
             if (d > REF.XR_ON_TRACK && !S.badT) S.badT = ['u=' + pu.toFixed(1), '線路から ' + d.toFixed(3) + 'm'];
-            const term = nm === '世田谷線' && pu >= REF.SETA_XO_ZONE[0];   // 世田谷線の終端の側(渡り線より北)はどちらの線も上下に使う
-            if (mv > 1e-4 && mv < 50 && !term) {               // 走っている:もう一方の線路が進行方向の右(上×進行方向=(dz,-dx) が左)
+            const term = nm === '世田谷線' && pu >= REF.SETA_XO_ZONE[0];
+            if (mv > 1e-4 && mv < 50 && !term) {
               const dx = (cx - pv.x) / mv, dz = (cz - pv.z) / mv, other = d0 < d1 ? 1 : 0;
-              // もう一方の線路の最も近い点の向き:その線路までの距離が、左へ 1m ずらした点で増える=右にある
               const lx = b[0] + dz, lz = b[2] - dx, dl = K.A.dTrack(other, lx, lz), dc = K.A.dTrack(other, b[0], b[2]);
               if (!(dl > dc) && !S.badL) S.badL = ['u=' + pu.toFixed(1), '進行方向の右を走る'];
             }
-          }
-          // 車輪:下端=レール頭頂面、左右の間隔(車両の横の向きに、台車の中心からの距離の平均)=(軌間+頭部の幅)/2
-          let ymin = 1e9; for (const p of c.w) ymin = Math.min(ymin, p[1]);
+          } else if (d0 > REF.XR_ON_TRACK && d1 > REF.XR_ON_TRACK) S.xo++;
+          // 車輪:下端=レール頭頂面、左右の間隔(線路の横の向きに、台車の中心からの距離の平均)=(軌間+頭部の幅)/2
+          let ymin = 1e9; for (const p of q.w) ymin = Math.min(ymin, p[1]);
           if (Math.abs(ymin - railTop) > 1e-4 && !S.badY) S.badY = [ymin.toFixed(4)];
-          const hx = c.b[1][0] - c.b[0][0], hz = c.b[1][2] - c.b[0][2], hl = Math.hypot(hx, hz);
-          for (let j = 0; j < 2; j++) { const L = c.ax[2 * j].concat(c.ax[2 * j + 1]), b = c.b[j];
-            const m = L.reduce((a, p) => a + Math.abs(((p[0] - b[0]) * (-hz) + (p[2] - b[2]) * hx) / hl), 0) / L.length, want = (K.gauge + X.RAIL_W) / 2;
-            S.gw = Math.max(S.gw, Math.abs(m - want)); if (Math.abs(m - want) > 1e-3 && !S.badG) S.badG = ['左右 ' + m.toFixed(4)]; }
+          const a = K.A.uv(b[0], b[2]), t0 = K.A.pos(a.u - 1, a.n), t1 = K.A.pos(a.u + 1, a.n), hx = t1.x - t0.x, hz = t1.z - t0.z, hl = Math.hypot(hx, hz);
+          const m = q.w.reduce((s, p) => s + Math.abs(((p[0] - b[0]) * (-hz) + (p[2] - b[2]) * hx) / hl), 0) / q.w.length, want = (K.gauge + X.RAIL_W) / 2;
+          if (!inXO) { S.gw = Math.max(S.gw, Math.abs(m - want)); if (Math.abs(m - want) > 0.01 && !S.badG) S.badG = ['左右 ' + m.toFixed(4)]; }
         }
         if (mv > 1e-4 && mv < 50) {
           S.nObs++; const pu0 = K.A.uv(pv.x, pv.z).u, pu1 = K.A.uv(cx, cz).u; S.dirs.add(Math.sign(pu1 - pu0)); stopT[i] = 0;
@@ -1229,13 +1227,13 @@ let L2_ALL = null, P0_ALL = null;          // 4c で読んだ LOD2 の面(建物
       });
     }
     const I = st['井の頭線'], Z = st['世田谷線'];
-    ok('井の頭線の車両数', I.nCars === REF.INO_CARS && !I.badG, REF.INO_CARS + '両(4軸ずつ)', I.nCars + '両' + (I.badG ? ' ' + I.badG.join(' ') : ''));
-    ok('世田谷線の車両数', Z.nCars === X.SETA_CARS, X.SETA_CARS + '両', Z.nCars + '両');
+    ok('井の頭線の車両数', I.nCars === REF.INO_CARS && I.nBog === 2 * REF.INO_CARS && !I.badG, REF.INO_CARS + '両(台車 ' + 2 * REF.INO_CARS + ')', I.nCars + '両・台車 ' + I.nBog + (I.badG ? ' ' + I.badG.join(' ') : ''));
+    ok('世田谷線の車両数', Z.nCars === X.SETA_CARS && Z.nBog === REF.SETA_BOGIES, X.SETA_CARS + '車体・台車 ' + REF.SETA_BOGIES + '(2車体3台車の連接。公表)', Z.nCars + '車体・台車 ' + Z.nBog);
     for (const [nm, S] of [['井の頭線', I], ['世田谷線', Z]]) {
       ok(nm + 'の台車が線路の上', S.badT === null && S.nObs > 50, '線路の中心線から ' + REF.XR_ON_TRACK + 'm 以内', S.badT ? S.badT.join(' ') : '最大 ' + S.worst.toFixed(3) + 'm(' + S.nObs + 'コマ)');
       ok(nm + 'は左側通行', S.badL === null && S.dirs.size === 2, '上下とも進行方向の左の線', S.badL ? S.badL.join(' ') : (S.dirs.size === 2 ? '上下とも左' : '片方向のみ'));
       ok(nm + 'の車輪', S.badY === null && S.badG === null, '下端=' + railTop.toFixed(3) + '・左右=(軌間+頭部)/2', (S.badY || S.badG || ['一致(左右の差 ' + S.gw.toFixed(4) + 'm)']).join(' '));
-      ok(nm + 'の編成が線路内', S.badOut === null, '描いた頂点が線路の範囲', S.badOut ? S.badOut.join(' ') : '全て');
+      ok(nm + 'の編成が線路内', S.badOut === null, '車体の端が線路の範囲', S.badOut ? S.badOut.join(' ') : '全て');
     }
     ok('世田谷線は渡り線を通る', Z.xo > 0, '渡り線の範囲で2本の線路の間を通る', Z.xo + '台車・コマ');
     const iS = maxStop.slice(0, inoG.length), zS = maxStop[inoG.length];
@@ -1721,7 +1719,7 @@ if (X.ROADS_PL.length) {
   X.carsDraw(true);
   const posOf = (c) => { const q = M[c.kind] && M[c.kind].mats && M[c.kind].mats[c.mi]; if (!q) return null; const Q = q.q;   // 向き=インスタンスの回転の +x
     return { x: q.p.x, z: q.p.z, hx: Q ? 1 - 2 * (Q.y * Q.y + Q.z * Q.z) : NaN, hz: Q ? 2 * (Q.x * Q.z - Q.w * Q.y) : NaN }; };
-  let bad = null, left = 0, right = 0, moved = 0, far = 0, ovl = null, hd = { n: 0, worst: 0, at: null, yaw: 0, yat: null };
+  let bad = null, left = 0, right = 0, moved = 0, far = 0, ovl = null, hd = { n: 0, worst: 0, at: null, yaw: 0, yat: null }, h23n = 0, h23bad = null;
   const prev = C.map(posOf);
   const vs = { h: [0, 0], f: [0, 0] };
   for (let k = 0; k < 240 && !bad; k++) {
@@ -1733,7 +1731,8 @@ if (X.ROADS_PL.length) {
       if (!onRoad(x, z)) bad = '道路の外 x=' + x.toFixed(0) + ' z=' + z.toFixed(0);
       else if (cols.some((p) => Math.hypot(p[0] - x, p[1] - z) < 2.5)) bad = '高架の柱に近い x=' + x.toFixed(0);
       else if (X.EXPY.piers.some((p) => Math.hypot(p[0] - x, p[1] - z) < 2.0)) bad = '自動車道の橋脚に近い';
-      if (Math.abs(X.prjXY(x, z).off) > REF_RD.NEAR + 0.5) far++;
+      if (Math.abs(X.prjXY(x, z).off) > REF_RD.NEAR + 0.5 && c.lane.kind !== '放23') far++;   // 放射第23号線は全区間を走る(2026-11 利用者指示)
+      if (c.lane.kind === '放23') { h23n++; if (!HV.inPlan(x, z, 0.3) && !h23bad) h23bad = '放射第23号線の帯の外 x=' + x.toFixed(0) + ' z=' + z.toFixed(0); }
       const pv = prev[i], dx = x - pv.x, dz = z - pv.z, d = Math.hypot(dx, dz);
       const heavyRoad = c.lane.kind === '並' || REF_RD.HEAVY_X.some((h) => Math.abs(X.prjXY(c.lane.cx || x, c.lane.cz || z).s - h) < 40);
       if (d < 20) { const g = heavyRoad ? vs.h : vs.f; g[0] += d / 0.5; g[1]++; }
@@ -1747,6 +1746,7 @@ if (X.ROADS_PL.length) {
         // 車の位置から道路の中心線への横の向き。中心線:横切る道は (cx,cz)+(dx,dz)t、並ぶ道は線路の s での中心 oc(s)
         let px, pz;
         if (c.lane.kind === '並') { const s = X.prjXY(x, z).s, f = X.frame(s, c.lane.oc(s)); px = x - f.x; pz = z - f.z; }
+        else if (c.lane.kind === '放23') { let bd = 1e9; for (let i = 0; i + 1 < HV.C.length; i++) { const a = HV.C[i], b = HV.C[i + 1], ex = b[0] - a[0], ez = b[1] - a[1], L2 = ex * ex + ez * ez, u = Math.max(0, Math.min(1, ((x - a[0]) * ex + (z - a[1]) * ez) / L2)), qx = a[0] + ex * u, qz = a[1] + ez * u, dd = Math.hypot(x - qx, z - qz); if (dd < bd) { bd = dd; px = x - qx; pz = z - qz; } } }   // 検証側の中心線(h23_ref.js)
         else { const L = c.lane, t = (x - L.cx) * L.dx + (z - L.cz) * L.dz; px = x - (L.cx + L.dx * t); pz = z - (L.cz + L.dz * t); }
         if (px * (dz / d) + pz * (-dx / d) > 0) left++; else right++;
       }
@@ -1767,6 +1767,11 @@ if (X.ROADS_PL.length) {
     '進んだ向きとの差 ' + REF_RD.HEAD_DEG + '° 以内・向きの変わり方 ' + REF_RD.YAW_DEG_M + '°/m 以内(2026-10-27 曲がるときに斜めに進んでいた)',
     '最大 ' + hd.worst.toFixed(1) + '°(' + hd.at + ')・' + hd.yaw.toFixed(2) + '°/m(' + hd.yat + ')・' + hd.n + '標本');
   ok('自動車は線路から100m 以内', far === 0, '|off|≦' + REF_RD.NEAR + 'm', far + '回はみ出し');
+  { const nL = X.RD_LANES.filter((L) => L.kind === '放23').length, pd = (X.PEDS || []).filter((m) => m.sw && m.sw.h23);
+    const pOut = pd.filter((m) => { const q = X.pedPos(m); return !HV.inPlan(q.x, q.z, 0.5); }).length;
+    ok('放射第23号線に車と人(2026-11 利用者指示)', nL === 2 && h23n >= 240 * 20 && h23bad === null && pd.length >= 20 && pOut === 0,
+      '上下の車線・車 20台以上が帯の上を走る・歩く人 20人以上が帯の上(検証側の h23_ref.js の帯)',
+      nL + '車線・' + (h23n / 240).toFixed(0) + '台・人 ' + pd.length + (h23bad ? '・' + h23bad : '') + (pOut ? '・帯の外の人 ' + pOut : '')); }
   // 渋滞:幹線(環七・環八・線路に並ぶ幹線)の車線の密度と速さ
   const hl = X.RD_LANES.filter((L) => L.kind === '並' || REF_RD.HEAVY_X.some((h) => Math.abs(X.prjXY(L.cx, L.cz).s - h) < 40));
   const hlen = hl.reduce((a, L) => a + (L.L1 - L.L0), 0), hn = C.filter((c) => hl.indexOf(c.lane) >= 0).length;
@@ -1785,7 +1790,7 @@ if (X.ROADS_PL.length) {
     for (const m of PD) {
       const q = X.pedPos(m), W = m.sw, f = W.f(m.u), lat = (q.x - f.x) * f.fz - (q.z - f.z) * f.fx;
       if (Math.abs(lat) > W.w / 2 + 1e-3 || !(m.u >= W.a && m.u <= W.b) || !(W.seg || []).some((s) => m.u >= s[0] - 0.01 && m.u <= s[1] + 0.01)) { bP = '歩道の外 u=' + m.u.toFixed(1); break; }
-      if (Math.abs(X.prjXY(q.x, q.z).off) > REF_RD.NEAR + 3.5) { bP = '線路から ' + X.prjXY(q.x, q.z).off.toFixed(0) + 'm'; break; }
+      if (Math.abs(X.prjXY(q.x, q.z).off) > REF_RD.NEAR + 3.5 && !W.h23) { bP = '線路から ' + X.prjXY(q.x, q.z).off.toFixed(0) + 'm'; break; }
     }
   }
   PD.forEach((m, i) => { const q = X.pedPos(m); if (Math.hypot(q.x - p0[i].x, q.z - p0[i].z) > 1) mv++; });
