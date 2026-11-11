@@ -14,8 +14,8 @@ const X = require('./stub_three')(path,
 const R10 = {
   HWB: 1.405, CROWN: 3.66, LEN: 19.5, BOT: 0.98, FLR: 1.15,          // 公表(車体基準幅2,810・屋根3,660・床1,150)と写真(すそ)
   SUSO_HW_MAX: 1.38,                                                 // 裾絞り:すそ(z<1.05)の半幅はこれより狭い(公表「裾絞り」)
-  DOORX: [-7.05, -2.35, 2.35, 7.05], DWIN: [0.10, 0.43], DWZ: [1.97, 2.86],   // 扉の中心(写真の実測を20m4扉の並びに)・扉の窓
-  WIN_C: [-4.70, 0, 4.70], WIN_HW: 0.80, WZ: [1.984, 2.886],          // 扉間の窓
+  DOORX: [-7.05, -2.35, 2.35, 7.05], DWIN: [0.16, 0.49], DWZ: [1.97, 2.86],   // 扉の中心(写真の実測を20m4扉の並びに)・扉の窓
+  WIN_C: [-4.70, 0, 4.70], WIN_HW: 0.90, WZ: [1.984, 2.886],          // 扉間の窓
   F_HL: [1.00, 1.47], F_MARK: [0.995, 3.365], F_LED_W: 0.84, F_LOGO: [0.15, 0.78], F_NUM: [0.80, 1.21],   // 前面(写真の実測)
   FORM: { '1751F': ['1751', '1101', '1551', '1001', '1701'] }, PANTO: [2, 3, 4],   // 公表の編成表(渋谷方から)・パンタ(写真:2〜4両目)
   GAUGE: 1.067, WHEEL_R: 0.43,
@@ -50,7 +50,7 @@ const bb = (g) => { const v = verts(g); const b = [1e9, -1e9, 1e9, -1e9, 1e9, -1
   for (const d of R10.DOORX) for (const s of [-1, 1]) { const a = d + s * R10.DWIN[0], b = d + s * R10.DWIN[1];
     if (!dw.some((w) => Math.abs(Math.min(w.x, w.y) - Math.min(a, b)) < 0.01 && Math.abs(Math.max(w.x, w.y) - Math.max(a, b)) < 0.01 && Math.abs(w.z - R10.DWZ[0]) < 0.01 && Math.abs(w.w - R10.DWZ[1]) < 0.01) && !bd) bd = '扉 ' + d + ' の窓が無い'; }
   for (const c of R10.WIN_C) if (!sw.some((w) => Math.abs((w.x + w.y) / 2 - c) < 0.01 && Math.abs((w.y - w.x) / 2 - R10.WIN_HW) < 0.01 && Math.abs(w.z - R10.WZ[0]) < 0.01) && !bd) bd = '扉間の窓 ' + c + ' が無い';
-  ok('1000系:扉と窓の並び', bd === null && dw.length === 8, '扉 ±2.35・±7.05(扉の窓 0.10〜0.43)・扉間の窓 ±0.80', bd || '扉の窓 ' + dw.length + '・扉間の窓 ' + sw.length);
+  ok('1000系:扉と窓の並び', bd === null && dw.length === 8, '扉 ±2.35・±7.05(扉の窓 0.16〜0.49=戸の中央)・扉間の窓 ±0.90', bd || '扉の窓 ' + dw.length + '・扉間の窓 ' + sw.length);
   // 前面の部品(写真の実測):v4 の y = −(三.js の z)
   const F = G.front, c = (g) => { const b = bb(g); return { y: (-b[5] - b[4]) / 2, ay: Math.max(Math.abs(b[4]), Math.abs(b[5])), z: (b[2] + b[3]) / 2, w: b[5] - b[4], b: b }; };
   const hl = c(F.hl), mk = c(F.tl), led = c(F.dest), lg = bb(F.logo), nm = bb(F.num);
