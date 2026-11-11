@@ -1134,7 +1134,9 @@ let L2_ALL = null, P0_ALL = null;          // 4c で読んだ LOD2 の面(建物
   const carWheels = (c) => { let w = []; c.traverse((o) => { if (o.isMesh && o.material === X.XM_WHL) { const P = o.geometry.attributes.position.array; for (let i = 0; i < P.length; i += 3) w.push(toW(c, P[i], P[i + 1], P[i + 2])); } }); return w; };
   const carEnds = (c) => { const b = c.userData.body.geometry.attributes.position.array; let x0 = 1e9, x1 = -1e9; for (let i = 0; i < b.length; i += 3) { x0 = Math.min(x0, b[i]); x1 = Math.max(x1, b[i]); } return [toW(c, x0, 0, 0), toW(c, x1, 0, 0)]; };
   // 1両の車輪の頂点を、中心線に沿う u で 0.6m より大きい切れ目ごとの塊(=車軸)に分け、2軸ずつ台車に(300系のA車は端の台車と連接台車の2台、B車は端の台車1台)
-  const bogiesOf = (c, A) => { const w = carWheels(c).map((p) => ({ p: p, u: A.uv(p[0], p[2]).u })).sort((a, b) => a.u - b.u);
+  // 車軸は描いた車輪の頂点を車両の局所 x で分ける(曲線の u に写してからでは縮んで見える所がある)
+  const carWheelsL = (c) => { let w = []; c.traverse((o) => { if (o.isMesh && o.material === X.XM_WHL) { const P = o.geometry.attributes.position.array; for (let i = 0; i < P.length; i += 3) w.push({ lx: P[i], p: toW(c, P[i], P[i + 1], P[i + 2]) }); } }); return w; };
+  const bogiesOf = (c, A) => { const w = carWheelsL(c).map((q) => ({ p: q.p, u: q.lx })).sort((a, b) => a.u - b.u);
     const ax = []; let last = -1e9; for (const q of w) { if (q.u - last > 0.6) ax.push([]); ax[ax.length - 1].push(q.p); last = q.u; }
     const avg = (L) => { const s = [0, 0, 0]; for (const p of L) { s[0] += p[0]; s[1] += p[1]; s[2] += p[2]; } return s.map((v) => v / L.length); };
     const out = []; for (let i = 0; i + 1 < ax.length; i += 2) out.push({ b: avg(ax[i].concat(ax[i + 1])), ax: [ax[i], ax[i + 1]], w: ax[i].concat(ax[i + 1]) });
@@ -2142,7 +2144,7 @@ if (LAND && X.ROAD_MARKS) {
       else if (!r.poles.every(near)) bad = bad || nm + ':停止線・縞から 12m より遠い柱'; }
     ok('駅前広場の口:横断歩道と信号', bad === null, '口を渡る縞 8本以上(帯の中・広場の縁から 3.5m)・計画の道路を渡る縞 6本以上・停止線 3本・車両用 3基と歩行者用 4基', bad || got.join(' / ')); }
   // 防護柵
-  { let bad = null; const onSW = (x, z) => (X.SIDEWALKS || []).some((W) => (W.seg || []).some(([u0, u1]) => { const p = W.f((u0 + u1) / 2); if (Math.hypot(p.x - x, p.z - z) > 3) return false;
+  { let bad = null; const onSW = (x, z) => (X.SIDEWALKS || []).some((W) => (W.seg || []).some(([u0, u1]) => { const p = W.f((u0 + u1) / 2); if (Math.hypot(p.x - x, p.z - z) > 3 + (u1 - u0) / 2) return false;   // 片の中ほどから(片の半分+3m)より遠ければ見ない(放射第23号線の片は 8m)
       const q = W.f(u0), r = W.f(u1), L = Math.hypot(r.x - q.x, r.z - q.z) || 1, tx = (r.x - q.x) / L, tz = (r.z - q.z) / L, u = (x - q.x) * tx + (z - q.z) * tz, v = -(x - q.x) * tz + (z - q.z) * tx;
       return u >= -0.1 && u <= L + 0.1 && Math.abs(v) <= W.w / 2 + 0.05; }));
     for (const g of M.guards) { if (!onSW(g.x, g.z) && !bad) bad = '支柱 (' + g.x.toFixed(1) + ',' + g.z.toFixed(1) + ') が歩道の外'; const d = intDout(g.x, g.z, 2.5); if (d < 2.5 && !bad) bad = '支柱 (' + g.x.toFixed(1) + ',' + g.z.toFixed(1) + ') が交差部から ' + d.toFixed(2) + 'm'; }
