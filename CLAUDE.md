@@ -1506,8 +1506,9 @@ node tools/capture.js --out /tmp/vid --w 480 --h 270 --fps 12 --workers 3 \
 - **実写のようなリアルさへの AI 連携(2026-11 調査と実証)→ `reference/ai_realism/README.md`**:結論は「一段の決め手は無し。
   (a) GLB 書き出し→Blender(Cycles)で物理の光(この環境で実証済み。道具 export_glb.js・render_cycles.py は同フォルダ。
   pip の bpy 5.0.1=ヘッドレスでも Cycles CPU が動く)+(b) その絵を img2img(Nano Banana Pro 等)/vid2vid(RealMaster 系)で
-  実写風に、の二段重ねが堅い。BlenderMCP は (a) を利用者の PC で対話にする接続の道具。Unity Muse は廃止(→Unity AI)・
-  Microsoft Muse(WHAM)は用途違い」。シェーダの塗り(車両・建物の窓)は glTF に乗らないので、Blender 側を本気にするなら
+  実写風に、の二段重ねが堅い。BlenderMCP は (a) を利用者の PC で対話にする接続の道具。利用者の言う Muse は **Meta の Muse**(Image/Video/エージェント。
+  2026-11 に PLATEAU×Blender×Muse の空撮風が話題)で、(b) の最有力=ビューアの絵を Muse Image→Muse Video へ(素の PLATEAU
+  からだと計画が消えるので不向き。README §1b に試し方とプロンプト)。Unity Muse(廃止→Unity AI)・Microsoft Muse(WHAM)は別物」。シェーダの塗り(車両・建物の窓)は glTF に乗らないので、Blender 側を本気にするなら
   テクスチャへの焼き込みが次の一歩(表と躓きは README に)
 - 他線区への横展開 → **`HANDOVER_NEW_LINE.md`**(2026-10-18。`TEMPLATE.md` §9 を今の実装に合わせて書き直した引継書)。要点は
   「先に京王の出力を変えずにエンジンと線区データを分ける(組み立てた HTML が今のものとバイト単位で一致→線区依存の箇所を表へ)」
