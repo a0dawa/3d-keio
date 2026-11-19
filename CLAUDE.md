@@ -32,6 +32,7 @@ keio-3d-viewer/
 │   ├── karasuyama/          ← 千歳烏山駅前広場南側地区(再開発の計画)の README.md(資料・図の合わせ方・読んだ位置と高さ。資料の画像は入れない)
 │   ├── meidaimae/           ← 明大前駅前広場と補助第154号線(都市計画)の README.md(出典・公表の値・事業案内図の合わせ方・読んだ位置・推定の配置)
 │   ├── hosha23/             ← 放射第23号線(都市計画)の README.md(東京都の事業評価の資料の平面図の合わせ方・中心線と幅の表)
+│   ├── porting/             ← 京王の進歩をほかのモデルへ移す仕組み(機能の目録 features.json・README.md・下流向けのスキル)
 │   └── xtrains/             ← 井の頭線(京王1000系 1751F)・世田谷線(東急300系 304F)の寸法の根拠 measured_1000.md・measured_300.md(写真の実測と公表値)・
 │                              README.md(8000・9000系への指示と流れの洗い出しと適用の表・推定)
 └── tools/                   ← 検証ツール一式
@@ -84,6 +85,7 @@ keio-3d-viewer/
     ├── meida_ref.js         ← 明大前駅前広場と補助第154号線の検証側の基準(広場の四隅・154 の中心線と幅・公表の延長と面積。reference/meidaimae から写す。⑦が使う)
     ├── h23_ref.js           ← 放射第23号線の検証側の基準(中心線と幅・公表の延長・幅員・歩道の幅。reference/hosha23 から写す。⑦ 4l が使う)
     ├── ortho_trees.py       ← 地理院タイルの航空写真(z18)の緑の塊 → 沿線の木の位置と樹冠の半径(gsi_trees.js を作る)
+    ├── upstream_status.py   ← 京王の進歩を下流のモデルへ移すための状況表(reference/porting/features.json の目録と下流の UPSTREAM.json から)
     └── patch_helper.py      ← 厳密一致置換のヘルパー
 ```
 
@@ -141,6 +143,13 @@ Claude(AI)は自分が生成した3D描画を安定して見られない。見�
 - **人間のスクリーンショットで**(最終確認は人に依頼)
 
 「確認しました」で済ませず、必ず上記のいずれかを実行する。
+
+### 4b. 他のモデルへ展開できる進歩は目録に残す
+戸越公園・品川・渋谷・新宿・淡路などの下流のモデルは、京王のエンジンと作り方を土台にしている。京王で機能を足す・大きく直したら、同じ作業の中で
+`reference/porting/features.json` に1項目足し(id・title・kind・portable A/B/C・since・date・detect か files・verify・doc・needs)、
+`python3 -I tools/upstream_status.py check` を通す。下流では `python3 -I tools/upstream_status.py status <下流のリポジトリ> --keio .` で
+取り込み状況と次に移せる機能が出る。仕組みと手順は `reference/porting/README.md`、下流のセッション向けの手順書(スキル)は
+`reference/porting/skill/port-from-keio/SKILL.md`(各下流の `.claude/skills/port-from-keio/` に置く)。
 
 ### 4. 座標系(絶対に崩さない)
 - `s` = 起点(笹塚)中心からの営業距離[m]、`off` = 線路直角方向[m](+=北)
