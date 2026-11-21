@@ -1846,8 +1846,8 @@ function karaCut(P){
 const PLD=(typeof globalThis!=='undefined'&&globalThis.PLATEAU_DEM&&globalThis.PLATEAU_DEM.h64)?globalThis.PLATEAU_DEM:null;
 const TER={on:!!(PLD&&PLL&&HAS_PLB), DX:25, X0:-9100, X1:1900, Z0:-1950, Z1:3250,
   AS:21, BL:40, FAR0:480, FAR1:600, END0:100, END1:300, CLOSE:0.5, CLOSE_GS:2, BLUR:1, GS_SIG:60, GS_OFF:20, SHADE:5,
-  GX:0, GZ:0, H:null, NN:null, flat:null, GS:null, stat:{}};
-TER.GX=Math.round((TER.X1-TER.X0)/TER.DX); TER.GZ=Math.round((TER.Z1-TER.Z0)/TER.DX);
+  RF:4, TGT_BL:10, GX:0, GZ:0, H:null, NN:null, flat:null, GS:null, RO:null, FHa:null, FNa:null, FM:null, KJ:0, stat:{}};   // RF:井の頭線の線路まわりのセルの分割数(25m→6.25m)
+TER.GX=Math.round((TER.X1-TER.X0)/TER.DX); TER.GZ=Math.round((TER.Z1-TER.Z0)/TER.DX); TER.KJ=TER.GZ*TER.RF+1;
 TER.CORR=[{A:INO, hw:11, u0:XR.U0-10, u1:XR.U1+10, bl:30, dy:XR.INO_DY, n:'井の頭線'},
           {A:SETA, hw:7, u0:XR.SETA_U0-10, u1:XR.SETA_U1+10, bl:30, n:'世田谷線'}];
 // 千歳烏山駅前広場南側地区(再開発の計画。KARA):区域の多角形の中を平らに、外へ 30m で起伏へ(以前は駅前広場の点の周り 26m の円)
@@ -1858,7 +1858,7 @@ if(MEIDA.on) for(const P of MEIDA.holes) TER.POLY.push({P:P, bl:30, n:'明大前
 TER.corrD=(C,x,z)=>{const p=C.A.uv(x,z); return Math.max(Math.abs(p.n)-C.hw, C.u0-p.u, p.u-C.u1);};
 // 平らにする所の目標の高さ(線路の地盤との差)。井の頭線の線路まわりは谷の底=XR.INO_DY、ほかは 0。外へ C.bl でなめらかに 0 へ
 TER.tgt=(x,z)=>{let t=0; for(const C of TER.CORR) if(C.dy) t+=C.dy*(1-sstep(TER.corrD(C,x,z)/C.bl));
-  if(t) for(const Q of TER.POLY) t*=sstep(polyDist(Q.P,x,z)/Q.bl);   // 計画の区域(駅前広場など)の中は 0(平ら)のまま
+  if(t) for(const Q of TER.POLY) t*=sstep(polyDist(Q.P,x,z)/Math.min(Q.bl,TER.TGT_BL));   // 計画の区域(駅前広場など)の中は 0(平ら)のまま。谷の擦り付けは区域の縁から 10m(30m だと区域の 26m 先の線路が谷の底まで下がらず埋まった)
   return t;};
 // 線形の端の先は prjXY が端で止まるので、端の接線に沿ってはみ出した分を s に足す
 TER.prj=(x,z)=>{
@@ -1944,6 +1944,46 @@ if(TER.on){
     // 区域に掛かるセルの角は 0 で確定(隣のセルが共有する角を目標値で上書きしない)
     if(f){ for(const [a,b] of [[0,0],[1,0],[0,1],[1,1]]){ const k=(j+b)*W+i+a; if(fp){ H[k]=0; ZP[k]=1; continue; } if(ZP[k]) continue; const v=TER.tgt(TER.X0+(i+a)*TER.DX, TER.Z0+(j+b)*TER.DX); H[k]=Math.abs(v)<0.003?0:v; } nForce++; }
   }
+  /* 6) 井の頭線の線路まわりだけセルを RF 分割(25m→6.25m)。25m の格子では谷の幅(±11m)を表せず、線路の上の地表が目標(−3.4m)より
+        高く出て線路を埋めた(隣の角が計画の区域の「平ら」に引かれて 0 のままだったり、線路が角と角の間にあったりした)。
+        分割するのは「中心の距離−半対角が 谷の外への擦り付け(bl)の内」のセル RC。分割したセルの内側の点(と、まわりがすべて分割したセルの角)は
+        格子と同じ式で高さを決め(強制の判定は小さいセルの半対角で)、分割しないセルと接する辺の点は辺の両端の線形補間(隣のセルと同じ線) */
+  const RF=TER.RF, DXF=TER.DX/RF, hdF=DXF*Math.SQRT1_2, GXc=TER.GX, GZc=TER.GZ, KJ=TER.KJ, R1=RF+1;
+  const RC=new Uint8Array(GXc*GZc), INOC=TER.CORR.find(C=>C.dy); let nRC=0;
+  if(INOC) for(let j=0;j<GZc;j++)for(let i=0;i<GXc;i++){
+    const x=TER.X0+(i+0.5)*TER.DX, z=TER.Z0+(j+0.5)*TER.DX;
+    if(inDem(x,z)&&TER.corrD(INOC,x,z)-hd<INOC.bl){ RC[j*GXc+i]=1; nRC++; }
+  }
+  const FHm=new Map(), FNm=new Map(); let isFreeN=null;
+  if(nRC){
+    const rc=(i,j)=>i>=0&&j>=0&&i<GXc&&j<GZc&&RC[j*GXc+i]===1;
+    const isFree=isFreeN=(I,J)=>{ const ci=I%RF===0?[I/RF-1,I/RF]:[Math.floor(I/RF)], cj=J%RF===0?[J/RF-1,J/RF]:[Math.floor(J/RF)];
+      for(const a of ci)for(const b of cj) if(!rc(a,b)) return false; return true; };
+    const fineVal=(x,z)=>{ if(!inDem(x,z)) return 0; const q=TER.prj(x,z), w=TER.weight(q.s,q.off,x,z), tg=TER.tgt(x,z); if(w<=0&&!tg) return 0;
+      const h=w>0?dem(x,z)-TER.gsAt(q.s):0; if(h!==h) return 0; const v=w*h+tg; return Math.abs(v)<0.003?0:v; };
+    const snap=v=>Math.abs(v)<0.003?0:v;
+    const FREE=new Set();
+    for(let j=0;j<GZc;j++)for(let i=0;i<GXc;i++) if(RC[j*GXc+i]) for(let b=0;b<=RF;b++)for(let a=0;a<=RF;a++){
+      const I=i*RF+a, J=j*RF+b, key=I*KJ+J; if(FHm.has(key)) continue;
+      const x=TER.X0+I*DXF, z=TER.Z0+J*DXF;
+      if(isFree(I,J)){ FHm.set(key,fineVal(x,z)); FREE.add(key); }
+      else if(I%RF===0&&J%RF===0) FHm.set(key,H[(J/RF)*W+I/RF]);
+      else if(I%RF===0){ const ii=I/RF, jj=Math.floor(J/RF), t=(J%RF)/RF; FHm.set(key,H[jj*W+ii]*(1-t)+H[(jj+1)*W+ii]*t); }
+      else{ const ii=Math.floor(I/RF), jj=J/RF, t=(I%RF)/RF; FHm.set(key,H[jj*W+ii]*(1-t)+H[jj*W+ii+1]*t); }
+    }
+    // 小さいセルの強制(格子と同じ規則):京王線の帯・谷の線路まわり・計画の区域に掛かるセルの角。計画の区域は 0 で確定
+    const ZPF=new Set();
+    for(let j=0;j<GZc;j++)for(let i=0;i<GXc;i++) if(RC[j*GXc+i]) for(let b=0;b<RF;b++)for(let a=0;a<RF;a++){
+      const I=i*RF+a, J=j*RF+b, x=TER.X0+(I+0.5)*DXF, z=TER.Z0+(J+0.5)*DXF, q=TER.prj(x,z);
+      let f=Math.abs(q.off)-hdF<=TER.AS; for(const C of TER.CORR) if(TER.corrD(C,x,z)-hdF<=0) f=true;
+      let fp=false; for(const Q of TER.POLY) if(polyDist(Q.P,x,z)-hdF<=0){ f=true; fp=true; }
+      if(!f) continue;
+      for(const [da,db] of [[0,0],[1,0],[0,1],[1,1]]){ const key=(I+da)*KJ+J+db; if(!FREE.has(key)) continue;
+        if(fp){ FHm.set(key,0); ZPF.add(key); continue; } if(ZPF.has(key)) continue;
+        FHm.set(key,snap(TER.tgt(TER.X0+(I+da)*DXF, TER.Z0+(J+db)*DXF))); }
+    }
+    for(const key of FREE){ const I=Math.floor(key/KJ), J=key-I*KJ; if(I%RF===0&&J%RF===0) H[(J/RF)*W+I/RF]=FHm.get(key); }   // まわりがすべて分割したセルの角は格子にも書く
+  }
   for(let j=0;j<TER.GZ;j++)for(let i=0;i<TER.GX;i++){const k=j*W+i; F[j*TER.GX+i]=(H[k]===0&&H[k+1]===0&&H[k+W]===0&&H[k+W+1]===0)?1:0;}
   // 頂点の法線(中央差分)。平らなセルの隅は真上(平らな面と同じ。継ぎ目で陰が跳ばない)
   const NN=new Float32Array(3*W*(TER.GZ+1));
@@ -1957,7 +1997,26 @@ if(TER.on){
     const nx=-TER.SHADE*(hAt(i+1,j)-hAt(i-1,j))/(2*TER.DX), nz=-TER.SHADE*(hAt(i,j+1)-hAt(i,j-1))/(2*TER.DX), l=Math.hypot(nx,1,nz);
     NN[k]=nx/l; NN[k+1]=1/l; NN[k+2]=nz/l;
   }
+  for(let c=0;c<RC.length;c++) if(RC[c]) F[c]=0;                 // 分割したセルは平らとして扱わない
   TER.H=H; TER.flat=F; TER.NN=NN;
+  if(nRC){                                                       // 分割したセルの高さと法線(セルごとの (RF+1)² の表・メッシュ用の点の表)
+    const hF=(I,J)=>{const v=FHm.get(I*KJ+J); return v===undefined?0:v;};
+    const RO=new Int32Array(GXc*GZc).fill(-1), FHa=new Float32Array(nRC*R1*R1), FNa=new Float32Array(nRC*R1*R1*3), FM=new Map();
+    for(const [key,h] of FHm){
+      const I=Math.floor(key/KJ), J=key-I*KJ; let n;
+      if(isFreeN(I,J)){ const nx=-TER.SHADE*(hF(I+1,J)-hF(I-1,J))/(2*DXF), nz=-TER.SHADE*(hF(I,J+1)-hF(I,J-1))/(2*DXF), l=Math.hypot(nx,1,nz); n=[nx/l,1/l,nz/l]; }
+      else if(I%RF===0&&J%RF===0){ const k=3*((J/RF)*W+I/RF); n=[NN[k],NN[k+1],NN[k+2]]; }
+      else if(I%RF===0){ const ii=I/RF, jj=Math.floor(J/RF), t=(J%RF)/RF, a=3*(jj*W+ii), b=3*((jj+1)*W+ii); n=[0,1,2].map(m=>NN[a+m]*(1-t)+NN[b+m]*t); const l=Math.hypot(...n); n=n.map(v=>v/l); }
+      else{ const ii=Math.floor(I/RF), jj=J/RF, t=(I%RF)/RF, a=3*(jj*W+ii), b=3*(jj*W+ii+1); n=[0,1,2].map(m=>NN[a+m]*(1-t)+NN[b+m]*t); const l=Math.hypot(...n); n=n.map(v=>v/l); }
+      FNm.set(key,n); FM.set(key,[h,n[0],n[1],n[2]]);
+    }
+    let o=0;
+    for(let j=0;j<GZc;j++)for(let i=0;i<GXc;i++) if(RC[j*GXc+i]){ RO[j*GXc+i]=o;
+      for(let b=0;b<=RF;b++)for(let a=0;a<=RF;a++){ const e=FM.get((i*RF+a)*KJ+j*RF+b), m=o*R1*R1+b*R1+a; FHa[m]=e[0]; FNa[3*m]=e[1]; FNa[3*m+1]=e[2]; FNa[3*m+2]=e[3]; }
+      o++; }
+    for(const [key,n] of FNm){ const I=Math.floor(key/KJ), J=key-I*KJ; if(I%RF===0&&J%RF===0){ const k=3*((J/RF)*W+I/RF); NN[k]=n[0]; NN[k+1]=n[1]; NN[k+2]=n[2]; } }
+    TER.RO=RO; TER.FHa=FHa; TER.FNa=FNa; TER.FM=FM;
+  }else{ TER.RO=new Int32Array(GXc*GZc).fill(-1); }
   let nT=0, hmin=0, hmax=0; for(let c=0;c<F.length;c++) if(!F[c]) nT++;
   for(let k=0;k<H.length;k++){hmin=Math.min(hmin,H[k]); hmax=Math.max(hmax,H[k]);}
   TER.stat={cells:F.length, terrain:nT, forced:nForce, hmin:hmin, hmax:hmax, ms:Math.round(performance.now()-t0)};
@@ -1967,6 +2026,11 @@ function terH(x,z){
   if(!TER.H) return 0;
   const fx=(x-TER.X0)/TER.DX, fz=(z-TER.Z0)/TER.DX, i=Math.floor(fx), j=Math.floor(fz);
   if(i<0||j<0||i>=TER.GX||j>=TER.GZ) return 0;
+  const o=TER.RO[j*TER.GX+i];
+  if(o>=0){                                      // 井の頭線の線路まわりの分割したセル(RF×RF の小さい面。対角は同じ向き)
+    const R=TER.RF, R1=R+1, ux=(fx-i)*R, uz=(fz-j)*R, a=Math.min(R-1,Math.floor(ux)), b=Math.min(R-1,Math.floor(uz)), tx=ux-a, tz=uz-b, g=TER.FHa, m=o*R1*R1+b*R1+a;
+    return tx>=tz ? g[m]+(g[m+1]-g[m])*tx+(g[m+R1+1]-g[m+1])*tz : g[m]+(g[m+R1]-g[m])*tz+(g[m+R1+1]-g[m+R1])*tx;
+  }
   const tx=fx-i, tz=fz-j, W=TER.GX+1, k=j*W+i, H=TER.H;
   return tx>=tz ? H[k]+(H[k+1]-H[k])*tx+(H[k+W+1]-H[k+1])*tz : H[k]+(H[k+W]-H[k])*tz+(H[k+W+1]-H[k+W])*tx;
 }
@@ -1976,7 +2040,12 @@ function terN(x,z,out){
   if(!TER.H){out[0]=0;out[1]=1;out[2]=0;return out;}
   const fx=(x-TER.X0)/TER.DX, fz=(z-TER.Z0)/TER.DX, i=Math.floor(fx), j=Math.floor(fz);
   if(i<0||j<0||i>=TER.GX||j>=TER.GZ||TER.flat[j*TER.GX+i]){out[0]=0;out[1]=1;out[2]=0;return out;}
-  const tx=fx-i, tz=fz-j, W=TER.GX+1, k=j*W+i, N=TER.NN;
+  const o=TER.RO[j*TER.GX+i];
+  let tx=fx-i, tz=fz-j, W=TER.GX+1, k=j*W+i, N=TER.NN;
+  if(o>=0){                                      // 分割したセル(terH と同じ小さい面)
+    const R=TER.RF, R1=R+1, ux=tx*R, uz=tz*R, a=Math.min(R-1,Math.floor(ux)), b=Math.min(R-1,Math.floor(uz));
+    tx=ux-a; tz=uz-b; W=R1; k=o*R1*R1+b*R1+a; N=TER.FNa;
+  }
   const c=tx>=tz?[[k,1-tx],[k+1,tx-tz],[k+W+1,tz]]:[[k,1-tz],[k+W,tz-tx],[k+W+1,tx]];
   out[0]=0;out[1]=0;out[2]=0;
   for(const [m,w] of c){out[0]+=N[3*m]*w; out[1]+=N[3*m+1]*w; out[2]+=N[3*m+2]*w;}
@@ -2006,8 +2075,8 @@ function terClipHP(Q,a,b,c){                       // a*x+b*z+c ≥ 0 の側を�
     if((dp>=0)!==(dq>=0)){const t=dp/(dp-dq); R.push([p[0]+(q[0]-p[0])*t, p[1]+(q[1]-p[1])*t]);}}
   return R;
 }
-function terWin(Q,i,j,half){                        // セル (i,j) の窓で切る。half=0:セル全体/1:tx≥tz の三角形/2:tx≤tz の三角形
-  const xa=TER.X0+i*TER.DX, za=TER.Z0+j*TER.DX, xb=xa+TER.DX, zb=za+TER.DX;
+function terWin(Q,i,j,half,sub){                    // セル (i,j) の窓で切る。half=0:セル全体/1:tx≥tz の三角形/2:tx≤tz の三角形。sub=[a,b]:分割したセルの小さい面
+  const d=sub?TER.DX/TER.RF:TER.DX, xa=TER.X0+i*TER.DX+(sub?sub[0]*d:0), za=TER.Z0+j*TER.DX+(sub?sub[1]*d:0), xb=xa+d, zb=za+d;
   Q=terClipHP(Q,1,0,-xa); if(Q.length<3) return Q; Q=terClipHP(Q,-1,0,xb); if(Q.length<3) return Q;
   Q=terClipHP(Q,0,1,-za); if(Q.length<3) return Q; Q=terClipHP(Q,0,-1,zb); if(Q.length<3) return Q;
   if(half===1) Q=terClipHP(Q,1,-1,za-xa); else if(half===2) Q=terClipHP(Q,-1,1,xa-za);
@@ -2033,11 +2102,13 @@ function terDrape(P,y0,out,col,G){
   TER_DRAPE.clip++;
   const tris=GT.T.map(t=>[GT.V[t[0]],GT.V[t[1]],GT.V[t[2]]]);
   for(let j=j0;j<=j1;j++)for(let i=i0;i<=i1;i++){
+    const subs=TER.RO[j*TER.GX+i]>=0?(()=>{const L=[]; for(let b=0;b<TER.RF;b++)for(let a=0;a<TER.RF;a++) L.push([a,b]); return L;})():[null];   // 分割したセルは小さい面ごと
+   for(const sub of subs){
     const halves=TER.flat[j*TER.GX+i]?[0]:[1,2];
     for(const hf of halves){
       let done=false;
       if(!G){                                        // 多角形ごと切る(片の数が少ない)
-        let Q=terWin(P,i,j,hf);
+        let Q=terWin(P,i,j,hf,sub);
         if(Q.length>=3){
           Q=Q.filter((p,k)=>{const q=Q[(k+1)%Q.length]; return Math.abs(p[0]-q[0])>1e-9||Math.abs(p[1]-q[1])>1e-9;});
           const a=Math.abs(terArea(Q));
@@ -2049,10 +2120,11 @@ function terDrape(P,y0,out,col,G){
       }
       if(done) continue;
       for(const t of tris){                          // 三角形ごとに切る(凸なので片は1つ)
-        const Q=terWin(t,i,j,hf); if(Q.length<3||Math.abs(terArea(Q))<1e-6) continue;
+        const Q=terWin(t,i,j,hf,sub); if(Q.length<3||Math.abs(terArea(Q))<1e-6) continue;
         const T=[]; for(let k=1;k<Q.length-1;k++) T.push([0,k,k+1]); emit(Q,T); TER_DRAPE.tri++;
       }
     }
+   }
   }
   return out.P.length/3-o0;
 }
@@ -2166,13 +2238,25 @@ const groundMesh=(function(){
    return S.some(x=>Math.max(za,zAt(cA,x))<Math.min(zb,zAt(cB,x))-1e-9);
  };
  // セルの種類:0=平ら・1=起伏・2=穴に掛かる
- const T=new Uint8Array(GX*GZ);
+ const T=new Uint8Array(GX*GZ), RO=TER.RO, RF=TER.RF, FM=TER.FM, KJ=TER.KJ, DXF=DX/RF;
  let hb=[1e9,-1e9,1e9,-1e9]; for(const p of Q){hb[0]=Math.min(hb[0],p[0]);hb[1]=Math.max(hb[1],p[0]);hb[2]=Math.min(hb[2],p[1]);hb[3]=Math.max(hb[3],p[1]);}
  for(let j=0;j<GZ;j++)for(let i=0;i<GX;i++){
    const c=j*GX+i; if(!F[c]){T[c]=1;continue;}
    const xa=X0+i*DX, za=Z0+j*DX;
    if(xa+DX>hb[0]&&xa<hb[1]&&za+DX>hb[2]&&za<hb[3]&&holeHit(i,j)) T[c]=2;
  }
+ // 井の頭線の線路まわりの分割したセルは 3。それと辺で接する平らなセルは、分割した側の辺に点を足すので起伏のセルと同じに扱う(平らな続きに入れない)
+ const rfc=(i,j)=>i>=0&&j>=0&&i<GX&&j<GZ&&RO[j*GX+i]>=0;
+ for(let j=0;j<GZ;j++)for(let i=0;i<GX;i++) if(rfc(i,j)) T[j*GX+i]=3;
+ for(let j=0;j<GZ;j++)for(let i=0;i<GX;i++) if(T[j*GX+i]===0&&(rfc(i-1,j)||rfc(i+1,j)||rfc(i,j-1)||rfc(i,j+1))) T[j*GX+i]=1;
+ const FV=new Map();                          // 分割した所の点(格子の角は node と共有)
+ const fv=(I,J)=>{ if(I%RF===0&&J%RF===0) return node(I/RF,J/RF); const key=I*KJ+J; let id=FV.get(key);
+   if(id===undefined){ const e=FM.get(key); id=P.length/3; P.push(X0+I*DXF,e[0],Z0+J*DXF); N.push(e[1],e[2],e[3]); FV.set(key,id); } return id; };
+ const fan=R=>{                               // 三角形の縁に点を足した多角形(同じ平面の上)を重心から扇に切る
+   if(R.length===3){ tri(R[0],R[1],R[2]); return; }
+   let cx=0,cy=0,cz=0,nx=0,ny=0,nz=0; for(const v of R){cx+=P[3*v];cy+=P[3*v+1];cz+=P[3*v+2];nx+=N[3*v];ny+=N[3*v+1];nz+=N[3*v+2];}
+   const m=R.length, l=Math.hypot(nx,ny,nz)||1, id=P.length/3; P.push(cx/m,cy/m,cz/m); N.push(nx/l,ny/l,nz/l);
+   for(let k=0;k<m;k++) tri(id,R[k],R[(k+1)%m]); };
  // 平らな続き(行ごと)と、各行の線の区切り(この点は線の上下どちらの片も頂点にする)
  const RUNS=[], BP=[]; for(let J=0;J<=GZ;J++) BP.push(new Set([0,GX]));
  for(let j=0;j<GZ;j++){
@@ -2192,16 +2276,23 @@ const groundMesh=(function(){
      else{tri(A[a],B[b],B[b+1]); b++;}
    }
  }
- let nT=0, nH=0, nHP=0;
+ let nT=0, nH=0, nHP=0, nRf=0;
  for(let j=0;j<GZ;j++)for(let i=0;i<GX;i++){
    const c=j*GX+i;
-   if(T[c]===1){ const a=node(i,j), b=node(i+1,j), cc=node(i+1,j+1), d=node(i,j+1); tri(a,cc,b); tri(a,d,cc); nT++; }
+   if(T[c]===3){ for(let b=0;b<RF;b++)for(let a=0;a<RF;a++){ const I0=i*RF+a, J0=j*RF+b, p00=fv(I0,J0), p10=fv(I0+1,J0), p11=fv(I0+1,J0+1), p01=fv(I0,J0+1); tri(p00,p11,p10); tri(p00,p01,p11); } nRf++; }
+   else if(T[c]===1){ const a=node(i,j), b=node(i+1,j), cc=node(i+1,j+1), d=node(i,j+1); nT++;
+     const eb=rfc(i,j-1), er=rfc(i+1,j), et=rfc(i,j+1), el=rfc(i-1,j);
+     if(!(eb||er||et||el)){ tri(a,cc,b); tri(a,d,cc); }
+     else{                                      // 分割したセルと接する辺には、そのセルの点を足す(T 字の継ぎ目を作らない)
+       const A=[a]; if(eb) for(let m=1;m<RF;m++) A.push(fv(i*RF+m,j*RF)); A.push(b); if(er) for(let m=1;m<RF;m++) A.push(fv((i+1)*RF,j*RF+m)); A.push(cc);
+       const B=[a,cc]; if(et) for(let m=RF-1;m>=1;m--) B.push(fv(i*RF+m,(j+1)*RF)); B.push(d); if(el) for(let m=RF-1;m>=1;m--) B.push(fv(i*RF,j*RF+m));
+       fan(A); fan(B); } }
    else if(T[c]===2){ nH++;
      for(const pts of holeCell(i,j)){ const V=pts.filter((p,k)=>{const q=pts[(k+1)%pts.length]; return Math.abs(p[0]-q[0])>1e-9||Math.abs(p[1]-q[1])>1e-9;});
        if(V.length<3) continue; nHP++; const id=V.map(p=>pt(p[0],p[1]));
        for(const t of earTri(V)) tri(id[t[0]],id[t[1]],id[t[2]]); } }
  }
- TER.stat.ground={terrain:nT, runs:RUNS.length, hole:nH, holePieces:nHP, mono:mono, verts:P.length/3, tris:I.length/3};
+ TER.stat.ground={refined:nRf, terrain:nT, runs:RUNS.length, hole:nH, holePieces:nHP, mono:mono, verts:P.length/3, tris:I.length/3};
  }
  const g=new THREE.Mesh(facesGeo(P,N,I),MAT.ground);
  g.name='地表'; scene.add(g); return g;})();
