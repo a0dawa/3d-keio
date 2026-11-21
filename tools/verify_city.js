@@ -45,6 +45,7 @@ const REF = {
   PLAT_RANGE0: [-155, 55], PLAT_HALF: 105, BLDG_END: { 下高井戸: 112 },
   // 交差鉄道の建築限界の半幅[m]。井の頭線=複線+掘割擁壁(±9.4)、世田谷線=単線+ホーム
   XRAIL_HALF: { 井の頭線: 13.0, 世田谷線: 3.7 },   // 井の頭線は 2026-10-27 から下の INO_CLEAR(線路から測る)。13.0 は写真の検査で近くを除く幅だけに使う
+  INO_DY: -3.4,             // 井の頭線の線路の地面の高さ(京王の線路の地盤との差)。国土地理院 DEM5A−京王の Gs の中央値(明大前の前後 440m で −2.8〜−4.1m)
   INO_CLEAR: 3.2,           // 井の頭線:建物は実際の線路の中心から 3.2m(擁壁の外面)より外。ホームの範囲は INO_PLAT_CLEAR
   INO_PLAT_CLEAR: 1.55 + 8.4 + 0.5 + 0.3,   // ホームの縁 1.55+幅 8.4+背面の擁壁 0.5(+厚さの半分)
   // 占有域に掛かっても描く建物(2026-11 利用者指示「フレンテ明大前…被っても表示させて」)。PLATEAU の足跡の面積の重心(reference/plateau/README.md)。
@@ -1126,7 +1127,7 @@ let L2_ALL = null, P0_ALL = null;          // 4c で読んだ LOD2 の面(建物
   const railTop = X.XR.RAILY + X.XR.RAILH / 2;    // レール頭頂面(検証側で計算)
   X.stepXRail(3.0);                                // 実際に走らせてから測る
   const inoG = X.inoTrains.map((t) => t.g), setaG = X.setaTrain.g, allG = inoG.concat([setaG]);
-  const kind = { 井の頭線: { A: XC.INO, gauge: X.GAUGE_INO, u0: X.XR.U0, u1: X.XR.U1 }, 世田谷線: { A: XC.SETA, gauge: X.GAUGE_SETA, u0: X.XR.SETA_U0, u1: X.XR.SETA_U1 } };
+  const kind = { 井の頭線: { A: XC.INO, gauge: X.GAUGE_INO, u0: X.XR.U0, u1: X.XR.U1, dy: REF.INO_DY }, 世田谷線: { A: XC.SETA, gauge: X.GAUGE_SETA, u0: X.XR.SETA_U0, u1: X.XR.SETA_U1, dy: 0 } };
   /* 2026-11 から車両は1両ずつの群(makeXCar。8000系と同じ作り)。描いた位置=群の位置と y 回りの回転(局所 x → (cosθ, −sinθ)、局所 z → (sinθ, cosθ))で
      車輪の形(材質 XM_WHL)の頂点を世界へ写す(検証側で計算。モデルの pose は読まない) */
   const toW = (c, x, y, z) => { const th = c.rotation.y, cs = Math.cos(th), sn = Math.sin(th); return [c.position.x + x * cs + z * sn, c.position.y + y, c.position.z - x * sn + z * cs]; };
@@ -1163,7 +1164,7 @@ let L2_ALL = null, P0_ALL = null;          // 4c で読んだ LOD2 の面(建物
         const P = o.geometry.attributes.position.array;
         if (o.parent !== X.scene && !(o.parent && o.parent.parent === X.scene && o.parent.position.x === 0 && o.parent.position.z === 0 && o.parent.rotation.y === 0)) return;
         for (let i = 0; i < P.length; i += 3) {
-          const x = P[i], y = P[i + 1], z = P[i + 2]; if (y < 0 || y > 1.2) continue;
+          const x = P[i], y = P[i + 1], z = P[i + 2]; if (y < K.dy || y > K.dy + 1.2) continue;
           const p = K.A.uv(x, z); if (Math.abs(p.n) > 8 || p.u < K.u0 + 1 || p.u > K.u1 - 1) continue;
           if (nm === '世田谷線' && p.u > REF.SETA_XO_ZONE[0] && p.u < REF.SETA_XO_ZONE[1]) continue;
           const d = Math.min(K.A.dTrack(0, x, z), K.A.dTrack(1, x, z)), e = Math.abs(d - want); n++;
@@ -1212,7 +1213,7 @@ let L2_ALL = null, P0_ALL = null;          // 4c で読んだ LOD2 の面(建物
           } else if (d0 > REF.XR_ON_TRACK && d1 > REF.XR_ON_TRACK) S.xo++;
           // 車輪:下端=レール頭頂面、左右の間隔(線路の横の向きに、台車の中心からの距離の平均)=(軌間+頭部の幅)/2
           let ymin = 1e9; for (const p of q.w) ymin = Math.min(ymin, p[1]);
-          if (Math.abs(ymin - railTop) > 1e-4 && !S.badY) S.badY = [ymin.toFixed(4)];
+          if (Math.abs(ymin - (railTop + K.dy)) > 1e-4 && !S.badY) S.badY = [ymin.toFixed(4)];
           const a = K.A.uv(b[0], b[2]), t0 = K.A.pos(a.u - 1, a.n), t1 = K.A.pos(a.u + 1, a.n), hx = t1.x - t0.x, hz = t1.z - t0.z, hl = Math.hypot(hx, hz);
           const m = q.w.reduce((s, p) => s + Math.abs(((p[0] - b[0]) * (-hz) + (p[2] - b[2]) * hx) / hl), 0) / q.w.length, want = (K.gauge + X.RAIL_W) / 2;
           if (!inXO) { S.gw = Math.max(S.gw, Math.abs(m - want)); if (Math.abs(m - want) > 0.01 && !S.badG) S.badG = ['左右 ' + m.toFixed(4)]; }
@@ -1234,7 +1235,7 @@ let L2_ALL = null, P0_ALL = null;          // 4c で読んだ LOD2 の面(建物
     for (const [nm, S] of [['井の頭線', I], ['世田谷線', Z]]) {
       ok(nm + 'の台車が線路の上', S.badT === null && S.nObs > 50, '線路の中心線から ' + REF.XR_ON_TRACK + 'm 以内', S.badT ? S.badT.join(' ') : '最大 ' + S.worst.toFixed(3) + 'm(' + S.nObs + 'コマ)');
       ok(nm + 'は左側通行', S.badL === null && S.dirs.size === 2, '上下とも進行方向の左の線', S.badL ? S.badL.join(' ') : (S.dirs.size === 2 ? '上下とも左' : '片方向のみ'));
-      ok(nm + 'の車輪', S.badY === null && S.badG === null, '下端=' + railTop.toFixed(3) + '・左右=(軌間+頭部)/2', (S.badY || S.badG || ['一致(左右の差 ' + S.gw.toFixed(4) + 'm)']).join(' '));
+      ok(nm + 'の車輪', S.badY === null && S.badG === null, '下端=レール頭頂面(井の頭線は谷の底 ' + REF.INO_DY + 'm)・左右=(軌間+頭部)/2', (S.badY || S.badG || ['一致(左右の差 ' + S.gw.toFixed(4) + 'm)']).join(' '));
       ok(nm + 'の編成が線路内', S.badOut === null, '車体の端が線路の範囲', S.badOut ? S.badOut.join(' ') : '全て');
     }
     ok('世田谷線は渡り線を通る', Z.xo > 0, '渡り線の範囲で2本の線路の間を通る', Z.xo + '台車・コマ');
@@ -1272,7 +1273,7 @@ if (TER_DATA && !TER_ON) ok('起伏がある', false, '地形・道路・建物�
 if (TER_ON) {
   const fs = require('fs'), pth = require('path');
   const TR = { DX: 25, X0: -9100, X1: 1900, Z0: -1950, Z1: 3250, AS: 21, BL: 40, FAR0: 480, FAR1: 600, END0: 100, END1: 300,
-    CLOSE: 0.5, CLOSE_GS: 2, BLUR: 1, GS_SIG: 60, GS_OFF: 20, GS_STEP: 10, GS_EXT: 700, SNAP: 0.003, CORR: [['INO', 11, 'U0', 'U1'], ['SETA', 7, 'SETA_U0', 'SETA_U1']],
+    CLOSE: 0.5, CLOSE_GS: 2, BLUR: 1, GS_SIG: 60, GS_OFF: 20, GS_STEP: 10, GS_EXT: 700, SNAP: 0.003, CORR: [['INO', 11, 'U0', 'U1', -3.4], ['SETA', 7, 'SETA_U0', 'SETA_U1', 0]],
     CORR_EXT: 10, CORR_BL: 30, POLY_BL: 30, OFFS: [0.05, 0.06, 0.07, 0.08, 0.10, 0.12, 0.16], CAR_Y: 0.13, PED_Y: 0.27, SW_Y: [0.12, 0.27], LAMP_Y: 5.2 };
   const g = {};
   new Function('globalThis', fs.readFileSync(pth.join(pth.dirname(path), 'plateau_dem.js'), 'utf8'))(g);
@@ -1318,8 +1319,11 @@ if (TER_ON) {
       if (d > 0) return { s: sE + (i === 0 ? -d : d), off: q.off }; }
     return q; };
   const ss = (t) => { t = Math.max(0, Math.min(1, t)); return t * t * (3 - 2 * t); };
-  const CR = TR.CORR.map((c) => ({ A: XC[c[0]], hw: c[1], u0: X.XR[c[2]] - TR.CORR_EXT, u1: X.XR[c[3]] + TR.CORR_EXT }));
+  const CR = TR.CORR.map((c) => ({ A: XC[c[0]], hw: c[1], u0: X.XR[c[2]] - TR.CORR_EXT, u1: X.XR[c[3]] + TR.CORR_EXT, dy: c[4] }));
   const corrD = (C, x, z) => { const p = C.A.uv(x, z); return Math.max(Math.abs(p.n) - C.hw, C.u0 - p.u, p.u - C.u1); };
+  // 平らにする所の目標の高さ(井の頭線の線路まわりは谷の底。外へ CORR_BL でなめらかに 0 へ)
+  const tgtOf = (x, z) => { let t = 0; for (const C of CR) if (C.dy) t += C.dy * (1 - ss(corrD(C, x, z) / TR.CORR_BL));
+    if (t) { t *= ss(polyDist(KV.D, x, z) / TR.POLY_BL); for (const P of MV.H) t *= ss(polyDist(P, x, z) / TR.POLY_BL); } return t; };
   const wOf = (x, z) => { const q = prj(x, z), a = Math.abs(q.off);
     let w = ss((a - TR.AS) / TR.BL) * (1 - ss((a - TR.FAR0) / (TR.FAR1 - TR.FAR0))) * (1 - ss((X.DOM.x0 - TR.END0 - q.s) / (TR.END1 - TR.END0))) * (1 - ss((q.s - X.DOM.x1 - TR.END0) / (TR.END1 - TR.END0)));
     for (const C of CR) w *= ss(corrD(C, x, z) / TR.CORR_BL);
@@ -1330,11 +1334,11 @@ if (TER_ON) {
   const GX = Math.round((TR.X1 - TR.X0) / TR.DX), GZ = Math.round((TR.Z1 - TR.Z0) / TR.DX), W = GX + 1, H = new Float64Array(W * (GZ + 1)), WN = new Float64Array(W * (GZ + 1));
   const inD = (x, z) => x > D.x0 + D.dx && x < D.x0 + (NX - 1) * D.dx && z > D.z0 + D.dx && z < D.z0 + (NZ - 1) * D.dx;
   for (let j = 0; j <= GZ; j++) for (let i = 0; i <= GX; i++) { const x = TR.X0 + i * TR.DX, z = TR.Z0 + j * TR.DX; if (!inD(x, z)) continue;
-    const r = wOf(x, z); WN[j * W + i] = r.w; if (r.w <= 0) continue; const h = dem(x, z) - gsAt(r.s); if (Number.isNaN(h)) continue; const v = r.w * h; H[j * W + i] = Math.abs(v) < TR.SNAP ? 0 : v; }
-  const hd = TR.DX / Math.SQRT2;
+    const r = wOf(x, z); WN[j * W + i] = r.w; const tg = tgtOf(x, z); if (r.w <= 0 && !tg) continue; const h = r.w > 0 ? dem(x, z) - gsAt(r.s) : 0; if (Number.isNaN(h)) continue; const v = r.w * h + tg; H[j * W + i] = Math.abs(v) < TR.SNAP ? 0 : v; }
+  const hd = TR.DX / Math.SQRT2, ZP = new Uint8Array(W * (GZ + 1));
   for (let j = 0; j < GZ; j++) for (let i = 0; i < GX; i++) { const x = TR.X0 + (i + 0.5) * TR.DX, z = TR.Z0 + (j + 0.5) * TR.DX; if (!inD(x, z)) continue;
-    const q = prj(x, z); let f = Math.abs(q.off) - hd <= TR.AS; for (const C of CR) if (corrD(C, x, z) - hd <= 0) f = true; if (polyDist(KV.D, x, z) - hd <= 0) f = true; for (const P of MV.H) if (polyDist(P, x, z) - hd <= 0) f = true;
-    if (f) for (const [a, b] of [[0, 0], [1, 0], [0, 1], [1, 1]]) H[(j + b) * W + i + a] = 0; }
+    const q = prj(x, z); let f = Math.abs(q.off) - hd <= TR.AS; for (const C of CR) if (corrD(C, x, z) - hd <= 0) f = true; let fp = false; if (polyDist(KV.D, x, z) - hd <= 0) { f = true; fp = true; } for (const P of MV.H) if (polyDist(P, x, z) - hd <= 0) { f = true; fp = true; }
+    if (f) for (const [a, b] of [[0, 0], [1, 0], [0, 1], [1, 1]]) { const k = (j + b) * W + i + a; if (fp) { H[k] = 0; ZP[k] = 1; continue; } if (ZP[k]) continue; const v = tgtOf(TR.X0 + (i + a) * TR.DX, TR.Z0 + (j + b) * TR.DX); H[k] = Math.abs(v) < TR.SNAP ? 0 : v; } }
   const tH = (x, z) => { const fx = (x - TR.X0) / TR.DX, fz = (z - TR.Z0) / TR.DX, i = Math.floor(fx), j = Math.floor(fz);
     if (i < 0 || j < 0 || i >= GX || j >= GZ) return 0; const tx = fx - i, tz = fz - j, k = j * W + i;
     return tx >= tz ? H[k] + (H[k + 1] - H[k]) * tx + (H[k + W + 1] - H[k + 1]) * tz : H[k] + (H[k + W] - H[k]) * tz + (H[k + W + 1] - H[k + W]) * tx; };
@@ -1344,7 +1348,7 @@ if (TER_ON) {
   if (!VH || VH.length !== H.length) ex = '格子の大きさが違う';
   else for (let k = 0; k < H.length; k++) { const d = Math.abs(VH[k] - H[k]); if (d > dMax) dMax = d; if (d > 0.02) { nBad++; if (!ex) ex = '節点 (' + (k % W) + ',' + Math.floor(k / W) + ') ' + VH[k].toFixed(2) + ' ≠ ' + H[k].toFixed(2); } }
   let bandBad = null;
-  for (let s = X.DOM.x0; s <= X.DOM.x1 && !bandBad; s += 7) for (const o of [-21, -14, -7, 0, 7, 14, 21]) { const f = X.frame(s, o); if (Math.abs(X.terH(f.x, f.z)) > 1e-9) { bandBad = 's=' + s + ' off=' + o + ' 地表 ' + X.terH(f.x, f.z).toFixed(3); break; } }
+  for (let s = X.DOM.x0; s <= X.DOM.x1 && !bandBad; s += 7) for (const o of [-21, -14, -7, 0, 7, 14, 21]) { const f = X.frame(s, o); if (CR.some((C) => corrD(C, f.x, f.z) < 60)) continue; if (Math.abs(X.terH(f.x, f.z)) > 1e-9) { bandBad = 's=' + s + ' off=' + o + ' 地表 ' + X.terH(f.x, f.z).toFixed(3); break; } }
   ok('地形の高さ(格子)', ex === null && bandBad === null, 'plateau_dem.js から検証側で計算した 25m 格子と ±2cm・京王線の帯(±21m)は 0',
     ex ? ex + (nBad ? '(' + nBad + '点)' : '') : bandBad ? bandBad : '節点 ' + H.length + '・最大の差 ' + dMax.toFixed(4) + 'm');
   // (b) 地表の網

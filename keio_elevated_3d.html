@@ -659,6 +659,10 @@ const INOKASHIRA_X=prjXY(INO.pos(0,0).x,INO.pos(0,0).z).s, SETAGAYA_X=prjXY(SETA
    XR.RAILTOP を直せば車両の載る高さも一緒に動く(片方だけ変えると車輪が沈む)。 */
 const XR={U0:-440,U1:440, RAILY:.83, RAILH:.12, SETA_U0:-400, SETA_U1:0};   // u の範囲(井の頭線は京王線と交わる所から・世田谷線は終端から)
 XR.RAILTOP=XR.RAILY+XR.RAILH/2;                          // レール頭頂面(車両の原点を置く高さ)
+/* 井の頭線の線路の地面は、京王の基準(線路の地盤 Gs=0)より約 3.4m 低い(2026-11 利用者指示。国土地理院 DEM5A−京王の Gs の中央値。明大前の京王線との
+   交点から前後 440m で −2.8〜−4.1m。北へ約 200m の道路の橋の所だけ +0.2m)。井の頭線は谷の底を走る。井の頭線の形(xKit の A.dy)・列車(seatXCar)・
+   地形の平らにする所の目標(TER.CORR の dy)がすべてこの値を見る。世田谷線は 0 */
+XR.INO_DY=-3.4; INO.dy=XR.INO_DY;
 /* 交差鉄道のトロリ線のレール面からの高さ(2026-11:車両のパンタを架線に当てる。以前の 3.96m・3.86m は 1000系のパンタの折りたたみ高さ
    4,100mm(公表)より低かった)。井の頭線 5.05m・世田谷線 4.95m(推定) */
 const XR_TRO={ino:5.05, seta:4.95};
@@ -1844,7 +1848,7 @@ const TER={on:!!(PLD&&PLL&&HAS_PLB), DX:25, X0:-9100, X1:1900, Z0:-1950, Z1:3250
   AS:21, BL:40, FAR0:480, FAR1:600, END0:100, END1:300, CLOSE:0.5, CLOSE_GS:2, BLUR:1, GS_SIG:60, GS_OFF:20, SHADE:5,
   GX:0, GZ:0, H:null, NN:null, flat:null, GS:null, stat:{}};
 TER.GX=Math.round((TER.X1-TER.X0)/TER.DX); TER.GZ=Math.round((TER.Z1-TER.Z0)/TER.DX);
-TER.CORR=[{A:INO, hw:11, u0:XR.U0-10, u1:XR.U1+10, bl:30, n:'井の頭線'},
+TER.CORR=[{A:INO, hw:11, u0:XR.U0-10, u1:XR.U1+10, bl:30, dy:XR.INO_DY, n:'井の頭線'},
           {A:SETA, hw:7, u0:XR.SETA_U0-10, u1:XR.SETA_U1+10, bl:30, n:'世田谷線'}];
 // 千歳烏山駅前広場南側地区(再開発の計画。KARA):区域の多角形の中を平らに、外へ 30m で起伏へ(以前は駅前広場の点の周り 26m の円)
 TER.POLY=[{P:KARA.dist, bl:30, n:'千歳烏山駅前広場南側地区'}];
@@ -1852,6 +1856,10 @@ TER.POLY=[{P:KARA.dist, bl:30, n:'千歳烏山駅前広場南側地区'}];
 if(MEIDA.on) for(const P of MEIDA.holes) TER.POLY.push({P:P, bl:30, n:'明大前駅前広場・補助第154号線'});
 // 交差鉄道の線路の帯からの距離(中は負。端の先は中心線に沿う距離との大きい方)。中心線は曲線(xLineOf)
 TER.corrD=(C,x,z)=>{const p=C.A.uv(x,z); return Math.max(Math.abs(p.n)-C.hw, C.u0-p.u, p.u-C.u1);};
+// 平らにする所の目標の高さ(線路の地盤との差)。井の頭線の線路まわりは谷の底=XR.INO_DY、ほかは 0。外へ C.bl でなめらかに 0 へ
+TER.tgt=(x,z)=>{let t=0; for(const C of TER.CORR) if(C.dy) t+=C.dy*(1-sstep(TER.corrD(C,x,z)/C.bl));
+  if(t) for(const Q of TER.POLY) t*=sstep(polyDist(Q.P,x,z)/Q.bl);   // 計画の区域(駅前広場など)の中は 0(平ら)のまま
+  return t;};
 // 線形の端の先は prjXY が端で止まるので、端の接線に沿ってはみ出した分を s に足す
 TER.prj=(x,z)=>{
   const q=prjXY(x,z), n=DP.x.length-1;
@@ -1921,18 +1929,20 @@ if(TER.on){
   const inDem=(x,z)=>x>D.x0+D.dx&&x<D.x0+(NX-1)*D.dx&&z>D.z0+D.dx&&z<D.z0+(NZ-1)*D.dx;
   for(let j=0;j<=TER.GZ;j++)for(let i=0;i<=TER.GX;i++){
     const x=TER.X0+i*TER.DX, z=TER.Z0+j*TER.DX; if(!inDem(x,z)) continue;
-    const q=TER.prj(x,z), w=TER.weight(q.s,q.off,x,z); if(w<=0) continue;
-    const h=dem(x,z)-TER.gsAt(q.s); if(h!==h) continue;
-    const v=w*h; H[j*W+i]=Math.abs(v)<0.003?0:v;
+    const q=TER.prj(x,z), w=TER.weight(q.s,q.off,x,z), tg=TER.tgt(x,z); if(w<=0&&!tg) continue;
+    const h=w>0?dem(x,z)-TER.gsAt(q.s):0; if(h!==h) continue;
+    const v=w*h+tg; H[j*W+i]=Math.abs(v)<0.003?0:v;
   }
-  let nForce=0;
+  let nForce=0; const ZP=new Uint8Array(W*(TER.GZ+1));
   for(let j=0;j<TER.GZ;j++)for(let i=0;i<TER.GX;i++){
     const x=TER.X0+(i+0.5)*TER.DX, z=TER.Z0+(j+0.5)*TER.DX; if(!inDem(x,z)) continue;
     const q=TER.prj(x,z);
     let f=Math.abs(q.off)-hd<=TER.AS;
     for(const C of TER.CORR) if(TER.corrD(C,x,z)-hd<=0) f=true;
-    for(const Q of TER.POLY) if(polyDist(Q.P,x,z)-hd<=0) f=true;
-    if(f){ H[j*W+i]=0; H[j*W+i+1]=0; H[(j+1)*W+i]=0; H[(j+1)*W+i+1]=0; nForce++; }
+    let fp=false; for(const Q of TER.POLY) if(polyDist(Q.P,x,z)-hd<=0){ f=true; fp=true; }
+    // 計画の区域(駅前広場など)に掛かるセルの4隅は 0(平ら)。それ以外は井の頭線の線路まわりの目標(谷の底)
+    // 区域に掛かるセルの角は 0 で確定(隣のセルが共有する角を目標値で上書きしない)
+    if(f){ for(const [a,b] of [[0,0],[1,0],[0,1],[1,1]]){ const k=(j+b)*W+i+a; if(fp){ H[k]=0; ZP[k]=1; continue; } if(ZP[k]) continue; const v=TER.tgt(TER.X0+(i+a)*TER.DX, TER.Z0+(j+b)*TER.DX); H[k]=Math.abs(v)<0.003?0:v; } nForce++; }
   }
   for(let j=0;j<TER.GZ;j++)for(let i=0;i<TER.GX;i++){const k=j*W+i; F[j*TER.GX+i]=(H[k]===0&&H[k+1]===0&&H[k+W]===0&&H[k+W+1]===0)?1:0;}
   // 頂点の法線(中央差分)。平らなセルの隅は真上(平らな面と同じ。継ぎ目で陰が跳ばない)
@@ -3366,6 +3376,7 @@ const XSTEP=2.5;
 function xKit(g,A){
   const B=new Map(), L=[], T=[];
   const F=(f,u)=>typeof f==='function'?f(u):f;
+  const DY=A.dy||0;                                      // 線の高さのずれ(井の頭線は谷の底=XR.INO_DY。世田谷線は 0)
   const buf=mat=>{let q=B.get(mat); if(!q){q={P:[],N:[],I:[]};B.set(mat,q);} return q;};
   // 四角形(p=[x,y,z]×4・法線 n。巻き順は法線から決める)
   const quad=(q,p,n)=>{ const o=q.P.length/3;
@@ -3373,11 +3384,11 @@ function xKit(g,A){
     const ax=p[1][0]-p[0][0], ay=p[1][1]-p[0][1], az=p[1][2]-p[0][2], bx=p[2][0]-p[0][0], by=p[2][1]-p[0][1], bz=p[2][2]-p[0][2];
     const d=(ay*bz-az*by)*n[0]+(az*bx-ax*bz)*n[1]+(ax*by-ay*bx)*n[2];
     if(d>=0) q.I.push(o,o+1,o+2,o,o+2,o+3); else q.I.push(o,o+2,o+1,o,o+3,o+2); };
-  const W=(u,v,y)=>{ const w=A.pos(u,v); return [w.x,y,w.z]; };
+  const W=(u,v,y)=>{ const w=A.pos(u,v); return [w.x,y+DY,w.z]; };
   const k={
     // u0〜u1 を中心 v・幅 w(どちらも u の関数でよい)・高さの中心 y・高さ h の断面で掃引する
     sweep(u0,u1,v,w,mat,y,h){
-      const q=buf(mat), n=Math.max(1,Math.ceil((u1-u0)/XSTEP)), y0=y-h/2, y1=y+h/2, S=[];
+      const q=buf(mat), n=Math.max(1,Math.ceil((u1-u0)/XSTEP)), y0=y-h/2+DY, y1=y+h/2+DY, S=[];
       for(let i=0;i<=n;i++){ const u=u0+(u1-u0)*i/n, a=A.at(u), c=F(v,u), hw=F(w,u)/2;
         S.push({a:a, l:[a.x+a.nx*(c-hw),a.z+a.nz*(c-hw)], r:[a.x+a.nx*(c+hw),a.z+a.nz*(c+hw)]}); }
       for(let i=0;i<n;i++){ const p=S[i], r=S[i+1], nm=[(p.a.nx+r.a.nx)/2,0,(p.a.nz+r.a.nz)/2];
@@ -3390,7 +3401,7 @@ function xKit(g,A){
       return k;},
     // u の接線に向けた箱(中心 u,v・線路方向 du・横 dv・高さの中心 y・高さ h)
     piece(u,v,du,dv,mat,y,h){
-      const q=buf(mat), a=A.at(u), c=A.pos(u,v), y0=y-h/2, y1=y+h/2;
+      const q=buf(mat), a=A.at(u), c=A.pos(u,v), y0=y-h/2+DY, y1=y+h/2+DY;
       const P=(i,j,yy)=>[c.x+a.tx*i*du/2+a.nx*j*dv/2, yy, c.z+a.tz*i*du/2+a.nz*j*dv/2];
       quad(q,[P(-1,-1,y1),P(1,-1,y1),P(1,1,y1),P(-1,1,y1)],[0,1,0]);
       quad(q,[P(-1,-1,y0),P(-1,1,y0),P(1,1,y0),P(1,-1,y0)],[0,-1,0]);
@@ -3442,7 +3453,7 @@ function xKit(g,A){
         const e=P(1); L.push(...pv,...e);
       }
       return k;},
-    ties(u0,u1,c,len,y){for(let u=u0+0.3;u<u1;u+=0.625){ const a=A.at(u), w=A.pos(u,F(c,u)); T.push([w.x,w.z,Math.atan2(-a.tz,a.tx),len,y]); } return k;},
+    ties(u0,u1,c,len,y){for(let u=u0+0.3;u<u1;u+=0.625){ const a=A.at(u), w=A.pos(u,F(c,u)); T.push([w.x,w.z,Math.atan2(-a.tz,a.tx),len,y+DY]); } return k;},
     flush(){
       for(const [mat,q] of B) g.add(new THREE.Mesh(facesGeo(q.P,q.N,q.I),mat));
       if(L.length) g.add(new THREE.LineSegments(new THREE.BufferGeometry().setAttribute('position',new THREE.Float32BufferAttribute(L,3)),wireMat));
@@ -9092,9 +9103,9 @@ function xArtPoint(A,vf,uJ,sg,d){
   return {p:pJ, hx:dx/l, hz:dz/l};
 }
 // 車両を置く:p={x,z,hx,hz}=車体の中心と +u の向き。dir=車体の局所 +x が +u の向きなら 1。局所 +z=(−hz,hx)
-function seatXCar(c,p,dir){
+function seatXCar(c,p,dir,dy){
   const hx=p.hx*dir, hz=p.hz*dir;
-  c.position.set(p.x,XR.RAILTOP,p.z); c.rotation.set(0,Math.atan2(-hz,hx),0);
+  c.position.set(p.x,XR.RAILTOP+(dy||0),p.z); c.rotation.set(0,Math.atan2(-hz,hx),0);
   c.userData.pose={x:p.x,z:p.z,hx:hx,hz:hz};
   lodCar(c);
 }
@@ -9137,7 +9148,7 @@ function stepIno(t,dt){
   let any=false;
   for(let j=0;j<INO_CARS;j++){ const uc=t.u-t.dir*j*INO_PITCH, c=t.cars[j];
     c.visible=Math.abs(uc)+t.ext<=INO_UL;
-    if(c.visible){ any=true; t.poses[j]=xCarPose(INO,t.vf,uc,K10.BOGIE_X); seatXCar(c,t.poses[j],t.dir); } }
+    if(c.visible){ any=true; t.poses[j]=xCarPose(INO,t.vf,uc,K10.BOGIE_X); seatXCar(c,t.poses[j],t.dir,XR.INO_DY); } }
   t.g.visible=inoShow&&any;
   const open=t.wait>3&&t.wait<INO_DWELL-0.5, c0=t.cars[0];
   xDoorStep(t,t.cars,dt,open,c0.visible?xDoorSide(INO,c0,t.u,t.vf(t.u),t.k?1:-1):1);
