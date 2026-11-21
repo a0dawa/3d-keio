@@ -1844,7 +1844,7 @@ const TER={on:!!(PLD&&PLL&&HAS_PLB), DX:25, X0:-9100, X1:1900, Z0:-1950, Z1:3250
   AS:21, BL:40, FAR0:480, FAR1:600, END0:100, END1:300, CLOSE:2, BLUR:1, GS_SIG:60, GS_OFF:20, SHADE:5,
   GX:0, GZ:0, H:null, NN:null, flat:null, GS:null, stat:{}};
 TER.GX=Math.round((TER.X1-TER.X0)/TER.DX); TER.GZ=Math.round((TER.Z1-TER.Z0)/TER.DX);
-TER.CORR=[{A:INO, hw:17, u0:XR.U0-10, u1:XR.U1+10, bl:30, n:'井の頭線'},
+TER.CORR=[{A:INO, hw:11, u0:XR.U0-10, u1:XR.U1+10, bl:30, n:'井の頭線'},
           {A:SETA, hw:7, u0:XR.SETA_U0-10, u1:XR.SETA_U1+10, bl:30, n:'世田谷線'}];
 // 千歳烏山駅前広場南側地区(再開発の計画。KARA):区域の多角形の中を平らに、外へ 30m で起伏へ(以前は駅前広場の点の周り 26m の円)
 TER.POLY=[{P:KARA.dist, bl:30, n:'千歳烏山駅前広場南側地区'}];

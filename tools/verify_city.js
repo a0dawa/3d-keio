@@ -1272,7 +1272,7 @@ if (TER_DATA && !TER_ON) ok('起伏がある', false, '地形・道路・建物�
 if (TER_ON) {
   const fs = require('fs'), pth = require('path');
   const TR = { DX: 25, X0: -9100, X1: 1900, Z0: -1950, Z1: 3250, AS: 21, BL: 40, FAR0: 480, FAR1: 600, END0: 100, END1: 300,
-    CLOSE: 2, BLUR: 1, GS_SIG: 60, GS_OFF: 20, GS_STEP: 10, GS_EXT: 700, SNAP: 0.003, CORR: [['INO', 17, 'U0', 'U1'], ['SETA', 7, 'SETA_U0', 'SETA_U1']],
+    CLOSE: 2, BLUR: 1, GS_SIG: 60, GS_OFF: 20, GS_STEP: 10, GS_EXT: 700, SNAP: 0.003, CORR: [['INO', 11, 'U0', 'U1'], ['SETA', 7, 'SETA_U0', 'SETA_U1']],
     CORR_EXT: 10, CORR_BL: 30, POLY_BL: 30, OFFS: [0.05, 0.06, 0.07, 0.08, 0.10, 0.12, 0.16], CAR_Y: 0.13, PED_Y: 0.27, SW_Y: [0.12, 0.27], LAMP_Y: 5.2 };
   const g = {};
   new Function('globalThis', fs.readFileSync(pth.join(pth.dirname(path), 'plateau_dem.js'), 'utf8'))(g);
