@@ -41,6 +41,7 @@
     {"id":"verify-core","title":"検証の骨格(構文・スタブ実行・厳密一致置換・verify_all のチェックポイント)","kind":"verify","portable":"A","since":"4815e19","date":"2026-07-28","files":["tools/verify_all.sh","tools/check_syntax.py","tools/harness.js","tools/stub_three.js","tools/patch_helper.py"],"verify":["①","②"],"doc":"作業ルール"},
     {"id":"handover-docs","title":"制作テンプレートと他線区への引継書","kind":"process","portable":"A","since":"5739703","date":"2026-10-18","files":["TEMPLATE.md","HANDOVER_NEW_LINE.md"],"doc":"HANDOVER_NEW_LINE.md"},
     {"id":"ai-realism","title":"実写風の AI 連携(GLB→Cycles・Muse・動画変換・周回動画)","kind":"process","portable":"A","since":"2a09c51","date":"2026-11-16","files":["reference/ai_realism/README.md"],"doc":"実写のようなリアルさへの AI 連携","note":"書き出しの道具 export_glb.js・render_cycles.py は京王の reference/ai_realism から取る(視点とスタブは取り込み先に合わせる)"},
+    {"id":"terrain-local-refine","title":"地形:線路の脇の細い谷を局所細分(25m 格子を 6.25m に)+谷の底へ線路を下げる(線路の地盤との差の目標 dy)","kind":"city","portable":"B","since":"4c47147","date":"2026-11-21","detect":["TGT_BL","RF:4"],"verify":["⑦"],"doc":"地形・交差鉄道の線路は実際の位置(地表の細分)","needs":["terrain-dem"],"note":"交差する線・川・掘割など、幅が格子(25m)より狭い谷に線路を沈めるときに要る。格子のままだと隣の角の強制(計画の区域=0)で線路が地表に埋まる。分割セルの内側は同じ式・境の辺は線形補間・接する平らなセルは辺に点を足す(T字を作らない)。⑦は検証側で再実装し、線路の中心の地表が目標+5cm以下を見る。先に実際の地面の高さ(DEM5A など)を線路の地盤との差で測って dy を決める"},
     {"id":"keio-only-stations","title":"京王の駅の外装・車両の形式(8000・9000系)・笹塚の留置など","kind":"keio","portable":"C","since":"131e081","date":"2026-10-09","note":"移さない(取り込み先は自分の線区の資料から作る)"}
   ]
 }
