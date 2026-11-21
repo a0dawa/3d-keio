@@ -25,7 +25,7 @@ const X = require('./stub_three')(path,
   'PEDS:(typeof PEDS!=="undefined"?PEDS:[]),SIDEWALKS:(typeof SIDEWALKS!=="undefined"?SIDEWALKS:[]),pedPos:(typeof pedPos!=="undefined"?pedPos:null),' +
   'stepPeds:(typeof stepPeds!=="undefined"?stepPeds:()=>{}),KANPACHI_X:KANPACHI_X,' +
   'STRUCT:STRUCT,groundMesh:groundMesh,scene:scene,ROAD_LAMPS:(typeof ROAD_LAMPS!=="undefined"?ROAD_LAMPS:[]),' +
-  'TER:(typeof TER!=="undefined"?TER:null),terH:(typeof terH!=="undefined"?terH:()=>0),DP:DP,S_OFS:S_OFS,MAT:MAT,MAT_FENCE:MAT_FENCE,NIGHT:NIGHT,' +
+  'TER:(typeof TER!=="undefined"?TER:null),cutHolePoly:cutHolePoly,terH:(typeof terH!=="undefined"?terH:()=>0),DP:DP,S_OFS:S_OFS,MAT:MAT,MAT_FENCE:MAT_FENCE,NIGHT:NIGHT,' +
   'ORTHO_MGR:(typeof ORTHO_MGR!=="undefined"?ORTHO_MGR:null),ORTHO_U:(typeof ORTHO_U!=="undefined"?ORTHO_U:null),LON0:LON0,MLON:MLON,' +
   'lodStruct:lodStruct,renderer:renderer,LU:LU,CINE:CINE,MAT_JOSUI:(typeof MAT_JOSUI!=="undefined"?MAT_JOSUI:null),IS_MOBILE:IS_MOBILE,' +
   'KPZ:(typeof KPZ!=="undefined"?KPZ:null),plazaStep:(typeof plazaStep!=="undefined"?plazaStep:()=>{}),KARA_LAMPS:(typeof KARA_LAMPS!=="undefined"?KARA_LAMPS:null),' +
@@ -1274,7 +1274,7 @@ if (TER_ON) {
   const fs = require('fs'), pth = require('path');
   const TR = { DX: 25, X0: -9100, X1: 1900, Z0: -1950, Z1: 3250, AS: 21, BL: 40, FAR0: 480, FAR1: 600, END0: 100, END1: 300,
     CLOSE: 0.5, CLOSE_GS: 2, BLUR: 1, GS_SIG: 60, GS_OFF: 20, GS_STEP: 10, GS_EXT: 700, SNAP: 0.003, CORR: [['INO', 11, 'U0', 'U1', -3.4], ['SETA', 7, 'SETA_U0', 'SETA_U1', 0]],
-    CORR_EXT: 10, CORR_BL: 30, POLY_BL: 30, TGT_BL: 10, RF: 4, OFFS: [0.05, 0.06, 0.07, 0.08, 0.10, 0.12, 0.16], CAR_Y: 0.13, PED_Y: 0.27, SW_Y: [0.12, 0.27], LAMP_Y: 5.2 };
+    CORR_EXT: 10, CORR_BL: 30, POLY_BL: 30, TGT_BL: 10, RF: 4, RIV_BL: 8, OFFS: [0.05, 0.06, 0.07, 0.08, 0.10, 0.12, 0.16], CAR_Y: 0.13, PED_Y: 0.27, SW_Y: [0.12, 0.27], LAMP_Y: 5.2 };
   const g = {};
   new Function('globalThis', fs.readFileSync(pth.join(pth.dirname(path), 'plateau_dem.js'), 'utf8'))(g);
   const D = g.PLATEAU_DEM, NX = D.nx, NZ = D.nz;
@@ -1324,8 +1324,14 @@ if (TER_ON) {
   // 平らにする所の目標の高さ(井の頭線の線路まわりは谷の底。外へ CORR_BL でなめらかに 0 へ)
   const tgtOf = (x, z) => { let t = 0; for (const C of CR) if (C.dy) t += C.dy * (1 - ss(corrD(C, x, z) / TR.CORR_BL));
     if (t) { t *= ss(polyDist(KV.D, x, z) / TR.TGT_BL); for (const P of MV.H) t *= ss(polyDist(P, x, z) / TR.TGT_BL); } return t; };   // 谷の擦り付けは計画の区域の縁から 10m
-  const wOf = (x, z) => { const q = prj(x, z), a = Math.abs(q.off);
-    let w = ss((a - TR.AS) / TR.BL) * (1 - ss((a - TR.FAR0) / (TR.FAR1 - TR.FAR0))) * (1 - ss((X.DOM.x0 - TR.END0 - q.s) / (TR.END1 - TR.END0))) * (1 - ss((q.s - X.DOM.x1 - TR.END0) / (TR.END1 - TR.END0)));
+  const inDomP = (P) => { for (let i = 0; i < P.length; i++) { const a = P[i], b = P[(i + 1) % P.length], m = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / 20));
+      for (let k = 0; k < m; k++) { const q = prj(a[0] + (b[0] - a[0]) * k / m, a[1] + (b[1] - a[1]) * k / m); if (q.s > X.DOM.x0 - 150 && q.s < X.DOM.x1 + 150 && Math.abs(q.off) < X.DOM.z + 60) return true; } } return false; };
+  const WATER = LAND.water.filter(inDomP);   // 検証側の水部(帯の範囲に掛かるもの)
+  const WBB = new Map(WATER.map((P) => { let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9; for (const v of P) { x0 = Math.min(x0, v[0]); x1 = Math.max(x1, v[0]); z0 = Math.min(z0, v[1]); z1 = Math.max(z1, v[1]); } return [P, [x0, x1, z0, z1]]; }));
+  // 川の水面(検証側で plateau_land.js から読んだ水部)の中は帯の中でも起伏を残す:水面の中=1・外へ RIV_BL で 0。重み=遠く・端の項 × max(帯の項, 川)。riv=true は川だけ
+  const wpAt = (x, z) => { let d = 1e9; for (const P of WATER) { const b = WBB.get(P); if (x < b[0] - TR.RIV_BL || x > b[1] + TR.RIV_BL || z < b[2] - TR.RIV_BL || z > b[3] + TR.RIV_BL) continue; const v = polyDist(P, x, z); if (v < d) d = v; } return d >= 1e9 ? 0 : 1 - ss(d / TR.RIV_BL); };
+  const wOf = (x, z, riv) => { const q = prj(x, z), a = Math.abs(q.off), wp = wpAt(x, z);
+    let w = (1 - ss((a - TR.FAR0) / (TR.FAR1 - TR.FAR0))) * (1 - ss((X.DOM.x0 - TR.END0 - q.s) / (TR.END1 - TR.END0))) * (1 - ss((q.s - X.DOM.x1 - TR.END0) / (TR.END1 - TR.END0))) * (riv ? wp : Math.max(ss((a - TR.AS) / TR.BL), wp));
     for (const C of CR) w *= ss(corrD(C, x, z) / TR.CORR_BL);
     w *= ss(polyDist(KV.D, x, z) / TR.POLY_BL);           // 千歳烏山駅前広場南側地区(検証側の区域 kara_ref.js)
     for (const P of MV.H) w *= ss(polyDist(P, x, z) / TR.POLY_BL);   // 明大前駅前広場と 154 の帯(meida_ref.js。2026-11)
@@ -1335,15 +1341,21 @@ if (TER_ON) {
   const inD = (x, z) => x > D.x0 + D.dx && x < D.x0 + (NX - 1) * D.dx && z > D.z0 + D.dx && z < D.z0 + (NZ - 1) * D.dx;
   for (let j = 0; j <= GZ; j++) for (let i = 0; i <= GX; i++) { const x = TR.X0 + i * TR.DX, z = TR.Z0 + j * TR.DX; if (!inD(x, z)) continue;
     const r = wOf(x, z); WN[j * W + i] = r.w; const tg = tgtOf(x, z); if (r.w <= 0 && !tg) continue; const h = r.w > 0 ? dem(x, z) - gsAt(r.s) : 0; if (Number.isNaN(h)) continue; const v = r.w * h + tg; H[j * W + i] = Math.abs(v) < TR.SNAP ? 0 : v; }
+  const rivV = (x, z) => { if (!WATER.length || !inD(x, z)) return 0; const r = wOf(x, z, true); if (r.w <= 0) return 0; const h = dem(x, z) - gsAt(r.s); return Number.isNaN(h) ? 0 : r.w * h; };   // 川の凹み(平らに強制するセルの角にも足す)
   const hd = TR.DX / Math.SQRT2, ZP = new Uint8Array(W * (GZ + 1));
   for (let j = 0; j < GZ; j++) for (let i = 0; i < GX; i++) { const x = TR.X0 + (i + 0.5) * TR.DX, z = TR.Z0 + (j + 0.5) * TR.DX; if (!inD(x, z)) continue;
     const q = prj(x, z); let f = Math.abs(q.off) - hd <= TR.AS; for (const C of CR) if (corrD(C, x, z) - hd <= 0) f = true; let fp = false; if (polyDist(KV.D, x, z) - hd <= 0) { f = true; fp = true; } for (const P of MV.H) if (polyDist(P, x, z) - hd <= 0) { f = true; fp = true; }
-    if (f) for (const [a, b] of [[0, 0], [1, 0], [0, 1], [1, 1]]) { const k = (j + b) * W + i + a; if (fp) { H[k] = 0; ZP[k] = 1; continue; } if (ZP[k]) continue; const v = tgtOf(TR.X0 + (i + a) * TR.DX, TR.Z0 + (j + b) * TR.DX); H[k] = Math.abs(v) < TR.SNAP ? 0 : v; } }
+    if (f) for (const [a, b] of [[0, 0], [1, 0], [0, 1], [1, 1]]) { const k = (j + b) * W + i + a; if (fp) { H[k] = 0; ZP[k] = 1; continue; } if (ZP[k]) continue; const xx = TR.X0 + (i + a) * TR.DX, zz = TR.Z0 + (j + b) * TR.DX, v = tgtOf(xx, zz) + rivV(xx, zz); H[k] = Math.abs(v) < TR.SNAP ? 0 : v; } }
   // 5b) 井の頭線の線路まわりのセルを RF 分割(6.25m)。検証側の実装:分割するのは「セルの中心の谷までの距離−半対角 < 擦り付け」のセル。
   //     内側の点とまわりがすべて分割したセルの角は格子と同じ式(強制は小さいセルの半対角で)、分割しないセルと接する辺の点は辺の両端の線形補間
   const RF = TR.RF, DXF = TR.DX / RF, hdF = DXF / Math.SQRT2, KJ = GZ * RF + 1, IC = CR.find((C) => C.dy), RCm = new Set(), FHv = new Map(), FREEv = new Set();
   const isR = (i, j) => i >= 0 && j >= 0 && i < GX && j < GZ && RCm.has(j * GX + i);
-  if (IC) for (let j = 0; j < GZ; j++) for (let i = 0; i < GX; i++) { const x = TR.X0 + (i + 0.5) * TR.DX, z = TR.Z0 + (j + 0.5) * TR.DX; if (inD(x, z) && corrD(IC, x, z) - hd < TR.CORR_BL) RCm.add(j * GX + i); }
+  const HOLEP = X.cutHolePoly(), nearHole = (x, z) => polyDist(HOLEP, x, z) - hd < 0;   // 仙川の掘割の穴に掛かるセルは分割しない
+  if (IC) for (let j = 0; j < GZ; j++) for (let i = 0; i < GX; i++) { const x = TR.X0 + (i + 0.5) * TR.DX, z = TR.Z0 + (j + 0.5) * TR.DX; if (inD(x, z) && corrD(IC, x, z) - hd < TR.CORR_BL && !nearHole(x, z)) RCm.add(j * GX + i); }
+  // 川の水面から RIV_BL の内で京王線の帯の影響がある所のセルも分割
+  for (let j = 0; j < GZ; j++) for (let i = 0; i < GX; i++) { if (RCm.has(j * GX + i)) continue; const x = TR.X0 + (i + 0.5) * TR.DX, z = TR.Z0 + (j + 0.5) * TR.DX; if (!inD(x, z) || nearHole(x, z)) continue;
+    if (Math.abs(prj(x, z).off) - hd >= TR.AS + TR.BL) continue;
+    for (const P of WATER) { const b = WBB.get(P); if (x < b[0] - TR.RIV_BL - hd || x > b[1] + TR.RIV_BL + hd || z < b[2] - TR.RIV_BL - hd || z > b[3] + TR.RIV_BL + hd) continue; if (polyDist(P, x, z) - hd < TR.RIV_BL) { RCm.add(j * GX + i); break; } } }
   const allR = (I, J) => { for (const a of (I % RF === 0 ? [I / RF - 1, I / RF] : [Math.floor(I / RF)])) for (const b of (J % RF === 0 ? [J / RF - 1, J / RF] : [Math.floor(J / RF)])) if (!isR(a, b)) return false; return true; };
   const valAt = (x, z) => { if (!inD(x, z)) return 0; const r = wOf(x, z), tg = tgtOf(x, z); if (r.w <= 0 && !tg) return 0; const h = r.w > 0 ? dem(x, z) - gsAt(r.s) : 0; if (Number.isNaN(h)) return 0; const v = r.w * h + tg; return Math.abs(v) < TR.SNAP ? 0 : v; };
   for (const c of RCm) { const i = c % GX, j = (c - i) / GX; for (let b = 0; b <= RF; b++) for (let a = 0; a <= RF; a++) { const I = i * RF + a, J = j * RF + b, key = I * KJ + J; if (FHv.has(key)) continue;
@@ -1356,7 +1368,7 @@ if (TER_ON) {
     let f = Math.abs(q.off) - hdF <= TR.AS; for (const C of CR) if (corrD(C, x, z) - hdF <= 0) f = true;
     let fp = polyDist(KV.D, x, z) - hdF <= 0; for (const P of MV.H) if (polyDist(P, x, z) - hdF <= 0) fp = true; if (fp) f = true; if (!f) continue;
     for (const [da, db] of [[0, 0], [1, 0], [0, 1], [1, 1]]) { const key = (I + da) * KJ + J + db; if (!FREEv.has(key)) continue; if (fp) { FHv.set(key, 0); ZPv.add(key); continue; } if (ZPv.has(key)) continue;
-      const v = tgtOf(TR.X0 + (I + da) * DXF, TR.Z0 + (J + db) * DXF); FHv.set(key, Math.abs(v) < TR.SNAP ? 0 : v); } } }
+      const xx = TR.X0 + (I + da) * DXF, zz = TR.Z0 + (J + db) * DXF, v = tgtOf(xx, zz) + rivV(xx, zz); FHv.set(key, Math.abs(v) < TR.SNAP ? 0 : v); } } }
   for (const key of FREEv) { const I = Math.floor(key / KJ), J = key - I * KJ; if (I % RF === 0 && J % RF === 0) H[(J / RF) * W + I / RF] = FHv.get(key); }
   const tH = (x, z) => { const fx = (x - TR.X0) / TR.DX, fz = (z - TR.Z0) / TR.DX, i = Math.floor(fx), j = Math.floor(fz);
     if (i >= 0 && j >= 0 && i < GX && j < GZ && RCm.has(j * GX + i)) { const ux = (fx - i) * RF, uz = (fz - j) * RF, a = Math.min(RF - 1, Math.floor(ux)), b = Math.min(RF - 1, Math.floor(uz)), tx = ux - a, tz = uz - b, I = i * RF + a, J = j * RF + b,
@@ -1372,7 +1384,7 @@ if (TER_ON) {
   if (!VH || VH.length !== H.length) ex = '格子の大きさが違う';
   else for (let k = 0; k < H.length; k++) { const d = Math.abs(VH[k] - H[k]); if (d > dMax) dMax = d; if (d > 0.02) { nBad++; if (!ex) ex = '節点 (' + (k % W) + ',' + Math.floor(k / W) + ') ' + VH[k].toFixed(2) + ' ≠ ' + H[k].toFixed(2); } }
   let bandBad = null;
-  for (let s = X.DOM.x0; s <= X.DOM.x1 && !bandBad; s += 7) for (const o of [-21, -14, -7, 0, 7, 14, 21]) { const f = X.frame(s, o); if (CR.some((C) => corrD(C, f.x, f.z) < 60)) continue; if (Math.abs(X.terH(f.x, f.z)) > 1e-9) { bandBad = 's=' + s + ' off=' + o + ' 地表 ' + X.terH(f.x, f.z).toFixed(3); break; } }
+  for (let s = X.DOM.x0; s <= X.DOM.x1 && !bandBad; s += 7) for (const o of [-21, -14, -7, 0, 7, 14, 21]) { const f = X.frame(s, o); if (CR.some((C) => corrD(C, f.x, f.z) < 60) || WATER.some((P) => polyDist(P, f.x, f.z) < 40)) continue; if (Math.abs(X.terH(f.x, f.z)) > 1e-9) { bandBad = 's=' + s + ' off=' + o + ' 地表 ' + X.terH(f.x, f.z).toFixed(3); break; } }
   ok('地形の高さ(格子)', ex === null && bandBad === null, 'plateau_dem.js から検証側で計算した 25m 格子と ±2cm・京王線の帯(±21m)は 0',
     ex ? ex + (nBad ? '(' + nBad + '点)' : '') : bandBad ? bandBad : '節点 ' + H.length + '・最大の差 ' + dMax.toFixed(4) + 'm');
   // (a2) 井の頭線の線路まわりの細分(2026-11 利用者指示:線路が地表に埋まった)。点の高さが検証側の計算と ±2cm、線路の上の地表が谷の底(REF.INO_DY)
@@ -1384,6 +1396,13 @@ if (TER_ON) {
       n++; const d = X.terH(px, pz) - REF.INO_DY; if (d > 0.05) nHi++; if (d > worst) { worst = d; wu = u; } }
     ok('井の頭線の線路の上の地表が谷の底', bad === null && nHi <= n * 0.01, '細分した点が検証側と ±2cm・線路の中心(両線・5m ごと)の地表が谷の底 ' + REF.INO_DY + 'm+5cm 以下 99% 以上(地表が線路を埋めない)',
       bad || ('点 ' + FHv.size + '・最大の差 ' + mx.toFixed(4) + 'm・線路 ' + n + ' 点中 地表が高い ' + nHi + '(最大 +' + worst.toFixed(2) + 'm u=' + wu + ')')); }
+  // (a3) 川の凹み(2026-11 利用者指示「本当は川は凹んでいる」):京王線の帯の中を通る川の水面の中の地表が、検証側の DEM−線路の地盤(川床)に沿う
+  { let n = 0, nOk = 0, sum = 0, worst = 0, wp = '';
+    for (const P of WATER) { const b = WBB.get(P); for (let x = b[0]; x <= b[1]; x += 5) for (let z = b[2]; z <= b[3]; z += 5) {
+      if (!inD(x, z) || polyDist(P, x, z) > -2) continue; const q = prj(x, z); if (Math.abs(q.off) > TR.AS + 10 || q.s < X.DOM.x0 || q.s > X.DOM.x1) continue; const tol = polyDist(HOLEP, x, z) < 40 ? 1.0 : 0.5;   // 穴の近くのセルは分割しない(格子のまま)ので 1m
+      const raw = dem(x, z) - gsAt(q.s); if (Number.isNaN(raw)) continue; n++; const d = X.terH(x, z) - raw; sum += X.terH(x, z); if (Math.abs(d) <= tol) nOk++; else if (Math.abs(d) > worst) { worst = Math.abs(d); wp = '(' + x.toFixed(0) + ',' + z.toFixed(0) + ')'; } } }
+    ok('川の凹み(京王線の帯の中)', n >= 5 && nOk >= n * 0.9 && sum / n < -0.3, '帯の中(|off|≤' + (TR.AS + 10) + 'm)の水面の中の地表が検証側の DEM−線路の地盤に ±0.5m(穴の 40m 内は ±1m)・90% 以上・平均は −0.3m より低い(平らな 0 でない)',
+      n + '点・±0.5m 内 ' + nOk + '・平均 ' + (n ? (sum / n).toFixed(2) : '-') + 'm' + (worst ? '・最大の差 ' + worst.toFixed(2) + 'm ' + wp : '')); }
   // (b) 地表の網
   { const ga = X.groundMesh.geometry.attributes.position.array, gi = X.groundMesh.geometry.index.array;
     let bad = null, nT = 0;

@@ -1872,16 +1872,27 @@ TER.prj=(x,z)=>{
   return q;
 };
 // 起伏を残す重み(0=平ら・1=起伏のまま)。off/s は線路の座標、x,z は世界座標
-TER.weight=(s,off,x,z)=>{
-  const a=Math.abs(off);
-  let w=sstep((a-TER.AS)/TER.BL)*(1-sstep((a-TER.FAR0)/(TER.FAR1-TER.FAR0)))
-       *(1-sstep((DOM.x0-TER.END0-s)/(TER.END1-TER.END0)))*(1-sstep((s-DOM.x1-TER.END0)/(TER.END1-TER.END0)));
+/* 川の水面(PLATEAU の水部 k=3 の多角形)の中は、京王線の帯の中でも起伏(川の凹み)を残す:水面の中=1・外へ RIV_BL=8m で 0。
+   帯の中は地表を 0 で平らにするので、川も 0 の平らな面になっていた(2026-11 利用者指示「本当は川は凹んでいる」)。
+   riv=true のときは帯の項を 0 にして川の分だけの重みを返す(平らに強制するセルの角に川の凹みだけを足す) */
+TER.WATER=[]; TER.RIV_BL=8;
+TER.wpAt=(x,z)=>{ let d=1e9; const R=TER.RIV_BL;
+  for(const W of TER.WATER){ if(x<W.bb[0]-R||x>W.bb[1]+R||z<W.bb[2]-R||z>W.bb[3]+R) continue; const v=polyDist(W.P,x,z); if(v<d) d=v; }
+  return d>=1e9?0:1-sstep(d/R); };
+TER.weight=(s,off,x,z,riv)=>{
+  const a=Math.abs(off), wp=TER.WATER.length?TER.wpAt(x,z):0;
+  let w=(1-sstep((a-TER.FAR0)/(TER.FAR1-TER.FAR0)))
+       *(1-sstep((DOM.x0-TER.END0-s)/(TER.END1-TER.END0)))*(1-sstep((s-DOM.x1-TER.END0)/(TER.END1-TER.END0)))
+       *(riv?wp:Math.max(sstep((a-TER.AS)/TER.BL),wp));
   for(const C of TER.CORR) w*=sstep(TER.corrD(C,x,z)/C.bl);
   for(const Q of TER.POLY) w*=sstep(polyDist(Q.P,x,z)/Q.bl);
   return w;
 };
+let TER_LAND=null;                     // 土地利用・水部の復号(8章の緑と水面も同じものを使う)
 if(TER.on){
   const D=PLD, NX=D.nx, NZ=D.nz, t0=performance.now();
+  if(PLL.land64){ TER_LAND=plrDecode(PLL.land64,'PLU1');
+    for(const R of TER_LAND) if(R.k===3&&polyInDom(R.P)){ let x0=1e9,x1=-1e9,z0=1e9,z1=-1e9; for(const p of R.P){x0=Math.min(x0,p[0]);x1=Math.max(x1,p[0]);z0=Math.min(z0,p[1]);z1=Math.max(z1,p[1]);} TER.WATER.push({P:R.P,bb:[x0,x1,z0,z1]}); } }
   // 1) 10m 格子を復号(帯の外は NaN)
   const rb=atob(D.r64), hb=atob(D.h64), u16=(s,i)=>s.charCodeAt(2*i)|(s.charCodeAt(2*i+1)<<8);
   let A=new Float32Array(NX*NZ).fill(NaN);
@@ -1933,6 +1944,7 @@ if(TER.on){
     const h=w>0?dem(x,z)-TER.gsAt(q.s):0; if(h!==h) continue;
     const v=w*h+tg; H[j*W+i]=Math.abs(v)<0.003?0:v;
   }
+  const rivV=(x,z)=>{ if(!TER.WATER.length||!inDem(x,z)) return 0; const q=TER.prj(x,z), w=TER.weight(q.s,q.off,x,z,true); if(w<=0) return 0; const h=dem(x,z)-TER.gsAt(q.s); return h===h?w*h:0; };   // 川の凹み(平らに強制するセルの角にも足す)
   let nForce=0; const ZP=new Uint8Array(W*(TER.GZ+1));
   for(let j=0;j<TER.GZ;j++)for(let i=0;i<TER.GX;i++){
     const x=TER.X0+(i+0.5)*TER.DX, z=TER.Z0+(j+0.5)*TER.DX; if(!inDem(x,z)) continue;
@@ -1942,24 +1954,32 @@ if(TER.on){
     let fp=false; for(const Q of TER.POLY) if(polyDist(Q.P,x,z)-hd<=0){ f=true; fp=true; }
     // 計画の区域(駅前広場など)に掛かるセルの4隅は 0(平ら)。それ以外は井の頭線の線路まわりの目標(谷の底)
     // 区域に掛かるセルの角は 0 で確定(隣のセルが共有する角を目標値で上書きしない)
-    if(f){ for(const [a,b] of [[0,0],[1,0],[0,1],[1,1]]){ const k=(j+b)*W+i+a; if(fp){ H[k]=0; ZP[k]=1; continue; } if(ZP[k]) continue; const v=TER.tgt(TER.X0+(i+a)*TER.DX, TER.Z0+(j+b)*TER.DX); H[k]=Math.abs(v)<0.003?0:v; } nForce++; }
+    if(f){ for(const [a,b] of [[0,0],[1,0],[0,1],[1,1]]){ const k=(j+b)*W+i+a; if(fp){ H[k]=0; ZP[k]=1; continue; } if(ZP[k]) continue; const xx=TER.X0+(i+a)*TER.DX, zz=TER.Z0+(j+b)*TER.DX, v=TER.tgt(xx,zz)+rivV(xx,zz); H[k]=Math.abs(v)<0.003?0:v; } nForce++; }
   }
   /* 6) 井の頭線の線路まわりだけセルを RF 分割(25m→6.25m)。25m の格子では谷の幅(±11m)を表せず、線路の上の地表が目標(−3.4m)より
         高く出て線路を埋めた(隣の角が計画の区域の「平ら」に引かれて 0 のままだったり、線路が角と角の間にあったりした)。
         分割するのは「中心の距離−半対角が 谷の外への擦り付け(bl)の内」のセル RC。分割したセルの内側の点(と、まわりがすべて分割したセルの角)は
         格子と同じ式で高さを決め(強制の判定は小さいセルの半対角で)、分割しないセルと接する辺の点は辺の両端の線形補間(隣のセルと同じ線) */
   const RF=TER.RF, DXF=TER.DX/RF, hdF=DXF*Math.SQRT1_2, GXc=TER.GX, GZc=TER.GZ, KJ=TER.KJ, R1=RF+1;
-  const RC=new Uint8Array(GXc*GZc), INOC=TER.CORR.find(C=>C.dy); let nRC=0;
+  const RC=new Uint8Array(GXc*GZc), INOC=TER.CORR.find(C=>C.dy); let nRC=0, nRiv=0;
+  const HOLEP=cutHolePoly(), nearHole=(x,z)=>polyDist(HOLEP,x,z)-hd<0;   // 仙川の掘割の穴に掛かるセルは分割しない(穴の片は分割に未対応)
   if(INOC) for(let j=0;j<GZc;j++)for(let i=0;i<GXc;i++){
     const x=TER.X0+(i+0.5)*TER.DX, z=TER.Z0+(j+0.5)*TER.DX;
-    if(inDem(x,z)&&TER.corrD(INOC,x,z)-hd<INOC.bl){ RC[j*GXc+i]=1; nRC++; }
+    if(inDem(x,z)&&TER.corrD(INOC,x,z)-hd<INOC.bl&&!nearHole(x,z)){ RC[j*GXc+i]=1; nRC++; }
+  }
+  // 川の水面から RIV_BL の内で、京王線の帯の影響(平らにする所)がある所のセルも分割(川幅は格子と同じくらいで、25m 格子では凹みが出ない)
+  if(TER.WATER.length) for(let j=0;j<GZc;j++)for(let i=0;i<GXc;i++){
+    if(RC[j*GXc+i]) continue; const x=TER.X0+(i+0.5)*TER.DX, z=TER.Z0+(j+0.5)*TER.DX; if(!inDem(x,z)||nearHole(x,z)) continue;
+    if(Math.abs(TER.prj(x,z).off)-hd>=TER.AS+TER.BL) continue;
+    let near=false; for(const Wt of TER.WATER){ if(x<Wt.bb[0]-TER.RIV_BL-hd||x>Wt.bb[1]+TER.RIV_BL+hd||z<Wt.bb[2]-TER.RIV_BL-hd||z>Wt.bb[3]+TER.RIV_BL+hd) continue; if(polyDist(Wt.P,x,z)-hd<TER.RIV_BL){ near=true; break; } }
+    if(near){ RC[j*GXc+i]=1; nRC++; nRiv++; }
   }
   const FHm=new Map(), FNm=new Map(); let isFreeN=null;
   if(nRC){
     const rc=(i,j)=>i>=0&&j>=0&&i<GXc&&j<GZc&&RC[j*GXc+i]===1;
     const isFree=isFreeN=(I,J)=>{ const ci=I%RF===0?[I/RF-1,I/RF]:[Math.floor(I/RF)], cj=J%RF===0?[J/RF-1,J/RF]:[Math.floor(J/RF)];
       for(const a of ci)for(const b of cj) if(!rc(a,b)) return false; return true; };
-    const fineVal=(x,z)=>{ if(!inDem(x,z)) return 0; const q=TER.prj(x,z), w=TER.weight(q.s,q.off,x,z), tg=TER.tgt(x,z); if(w<=0&&!tg) return 0;
+  const fineVal=(x,z)=>{ if(!inDem(x,z)) return 0; const q=TER.prj(x,z), w=TER.weight(q.s,q.off,x,z), tg=TER.tgt(x,z); if(w<=0&&!tg) return 0;
       const h=w>0?dem(x,z)-TER.gsAt(q.s):0; if(h!==h) return 0; const v=w*h+tg; return Math.abs(v)<0.003?0:v; };
     const snap=v=>Math.abs(v)<0.003?0:v;
     const FREE=new Set();
@@ -1980,7 +2000,7 @@ if(TER.on){
       if(!f) continue;
       for(const [da,db] of [[0,0],[1,0],[0,1],[1,1]]){ const key=(I+da)*KJ+J+db; if(!FREE.has(key)) continue;
         if(fp){ FHm.set(key,0); ZPF.add(key); continue; } if(ZPF.has(key)) continue;
-        FHm.set(key,snap(TER.tgt(TER.X0+(I+da)*DXF, TER.Z0+(J+db)*DXF))); }
+        { const xx=TER.X0+(I+da)*DXF, zz=TER.Z0+(J+db)*DXF; FHm.set(key,snap(TER.tgt(xx,zz)+rivV(xx,zz))); } }
     }
     for(const key of FREE){ const I=Math.floor(key/KJ), J=key-I*KJ; if(I%RF===0&&J%RF===0) H[(J/RF)*W+I/RF]=FHm.get(key); }   // まわりがすべて分割したセルの角は格子にも書く
   }
@@ -2019,7 +2039,7 @@ if(TER.on){
   }else{ TER.RO=new Int32Array(GXc*GZc).fill(-1); }
   let nT=0, hmin=0, hmax=0; for(let c=0;c<F.length;c++) if(!F[c]) nT++;
   for(let k=0;k<H.length;k++){hmin=Math.min(hmin,H[k]); hmax=Math.max(hmax,H[k]);}
-  TER.stat={cells:F.length, terrain:nT, forced:nForce, hmin:hmin, hmax:hmax, ms:Math.round(performance.now()-t0)};
+  TER.stat={refined:nRC, river:nRiv, water:TER.WATER.length, cells:F.length, terrain:nT, forced:nForce, hmin:hmin, hmax:hmax, ms:Math.round(performance.now()-t0)};
 }
 // 格子の面の高さ(地表の網と同じ式)。格子の外・地形が無いときは 0
 function terH(x,z){
@@ -2169,9 +2189,10 @@ const groundMesh=(function(){
  const DX=TER.DX, GX=TER.GX, GZ=TER.GZ, W=GX+1, HH=TER.H, NN=TER.NN, F=TER.flat;
  const NV=new Int32Array(W*(GZ+1)).fill(-1);
  const node=(i,j)=>{const k=j*W+i; if(NV[k]<0){NV[k]=P.length/3; P.push(X0+i*DX,HH[k],Z0+j*DX); N.push(NN[3*k],NN[3*k+1],NN[3*k+2]);} return NV[k];};
+ const PTC=new Map();                           // 格子の点でない点も同じ位置なら1つの頂点(対角で切った片が継ぎ目を作らない)
  const pt=(x,z)=>{const i=Math.round((x-X0)/DX), j=Math.round((z-Z0)/DX);   // 格子の点なら共有、ほかは新しい頂点(平ら・真上)
    if(Math.abs(X0+i*DX-x)<1e-7&&Math.abs(Z0+j*DX-z)<1e-7&&i>=0&&j>=0&&i<=GX&&j<=GZ) return node(i,j);
-   P.push(x,0,z); N.push(0,1,0); return P.length/3-1;};
+   const key=x.toFixed(5)+','+z.toFixed(5); let id=PTC.get(key); if(id===undefined){ P.push(x,terH(x,z),z); N.push(0,1,0); id=P.length/3-1; PTC.set(key,id); } return id;};   // 穴の片の点は地表の高さ(川の凹みが穴の端に掛かるので 0 でなく terH。格子の辺の上の点は辺の線形補間と同じ)
  const tri=(a,b,c)=>{const ax=P[3*a],az=P[3*a+2],bx=P[3*b],bz=P[3*b+2],cx=P[3*c],cz=P[3*c+2];
    const up=(bz-az)*(cx-ax)-(bx-ax)*(cz-az); if(Math.abs(up)<1e-12) return; if(up>0) I.push(a,b,c); else I.push(a,c,b);};
  // 穴の2本の鎖(x の小さい端から大きい端へ)。cA=北(z の小さい側)・cB=南
@@ -2241,9 +2262,9 @@ const groundMesh=(function(){
  const T=new Uint8Array(GX*GZ), RO=TER.RO, RF=TER.RF, FM=TER.FM, KJ=TER.KJ, DXF=DX/RF;
  let hb=[1e9,-1e9,1e9,-1e9]; for(const p of Q){hb[0]=Math.min(hb[0],p[0]);hb[1]=Math.max(hb[1],p[0]);hb[2]=Math.min(hb[2],p[1]);hb[3]=Math.max(hb[3],p[1]);}
  for(let j=0;j<GZ;j++)for(let i=0;i<GX;i++){
-   const c=j*GX+i; if(!F[c]){T[c]=1;continue;}
-   const xa=X0+i*DX, za=Z0+j*DX;
-   if(xa+DX>hb[0]&&xa<hb[1]&&za+DX>hb[2]&&za<hb[3]&&holeHit(i,j)) T[c]=2;
+   const c=j*GX+i, xa=X0+i*DX, za=Z0+j*DX;
+   if(xa+DX>hb[0]&&xa<hb[1]&&za+DX>hb[2]&&za<hb[3]&&holeHit(i,j)){ T[c]=2; continue; }   // 穴に掛かるセルは起伏があっても穴の規則(川の凹みが穴の端に掛かる)
+   if(!F[c]){T[c]=1;continue;}
  }
  // 井の頭線の線路まわりの分割したセルは 3。それと辺で接する平らなセルは、分割した側の辺に点を足すので起伏のセルと同じに扱う(平らな続きに入れない)
  const rfc=(i,j)=>i>=0&&j>=0&&i<GX&&j<GZ&&RO[j*GX+i]>=0;
@@ -2289,8 +2310,12 @@ const groundMesh=(function(){
        fan(A); fan(B); } }
    else if(T[c]===2){ nH++;
      for(const pts of holeCell(i,j)){ const V=pts.filter((p,k)=>{const q=pts[(k+1)%pts.length]; return Math.abs(p[0]-q[0])>1e-9||Math.abs(p[1]-q[1])>1e-9;});
-       if(V.length<3) continue; nHP++; const id=V.map(p=>pt(p[0],p[1]));
-       for(const t of earTri(V)) tri(id[t[0]],id[t[1]],id[t[2]]); } }
+       if(V.length<3) continue; nHP++;
+       /* 穴の片は格子の対角でも切る(川の凹みで穴のセルが平面でなくなった。対角をまたぐ三角形は面の上に載らない):
+          耳切りの三角形ごとに、セルの2つの三角形(tx≥tz と tx≤tz)の窓で切って、各片を格子の1つの面の上へ(頂点は terH) */
+       for(const t of earTri(V)){ const T3=[V[t[0]],V[t[1]],V[t[2]]];
+         for(const hf of [1,2]){ const Q=terWin(T3,i,j,hf); if(Q.length<3||Math.abs(terArea(Q))<1e-9) continue;
+           const id=Q.map(p=>pt(p[0],p[1])); for(let m=1;m<Q.length-1;m++) tri(id[0],id[m],id[m+1]); } } } }
  }
  TER.stat.ground={refined:nRf, terrain:nT, runs:RUNS.length, hole:nH, holePieces:nHP, mono:mono, verts:P.length/3, tris:I.length/3};
  }
@@ -2444,7 +2469,7 @@ if(PLL){
     const LC=[[0.74,0.92,0.62],[1.02,0.90,0.62],[0.48,0.64,0.44]];   // 公園(濃い芝)・農地(黄土)・山林(深い緑)
     const PK=setSrgb(new THREE.Color(),0xa9abaa);
     const W={P:[],N:[],I:[]};
-    for(const R0 of plrDecode(PLL.land64,'PLU1')){
+    for(const R0 of (TER_LAND||plrDecode(PLL.land64,'PLU1'))){
       let inDom=false;
       inDom=polyInDom(R0.P);
       if(!inDom) continue;
