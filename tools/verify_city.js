@@ -1272,7 +1272,7 @@ if (TER_DATA && !TER_ON) ok('起伏がある', false, '地形・道路・建物�
 if (TER_ON) {
   const fs = require('fs'), pth = require('path');
   const TR = { DX: 25, X0: -9100, X1: 1900, Z0: -1950, Z1: 3250, AS: 21, BL: 40, FAR0: 480, FAR1: 600, END0: 100, END1: 300,
-    CLOSE: 2, BLUR: 1, GS_SIG: 60, GS_OFF: 20, GS_STEP: 10, GS_EXT: 700, SNAP: 0.003, CORR: [['INO', 11, 'U0', 'U1'], ['SETA', 7, 'SETA_U0', 'SETA_U1']],
+    CLOSE: 0.5, CLOSE_GS: 2, BLUR: 1, GS_SIG: 60, GS_OFF: 20, GS_STEP: 10, GS_EXT: 700, SNAP: 0.003, CORR: [['INO', 11, 'U0', 'U1'], ['SETA', 7, 'SETA_U0', 'SETA_U1']],
     CORR_EXT: 10, CORR_BL: 30, POLY_BL: 30, OFFS: [0.05, 0.06, 0.07, 0.08, 0.10, 0.12, 0.16], CAR_Y: 0.13, PED_Y: 0.27, SW_Y: [0.12, 0.27], LAMP_Y: 5.2 };
   const g = {};
   new Function('globalThis', fs.readFileSync(pth.join(pth.dirname(path), 'plateau_dem.js'), 'utf8'))(g);
@@ -1283,26 +1283,28 @@ if (TER_ON) {
   for (let j = 0, o = 0; j < NZ; j++) { const i0 = rb.readUInt16LE(4 * j), n = rb.readUInt16LE(4 * j + 2);
     for (let k = 0; k < n; k++) { const v = hb.readUInt16LE(2 * (o + k)); if (v !== 65535) A[j * NX + i0 + k] = D.h0 + v * D.q; } o += n; }
   // 2) 閉じる(最大→最小)
-  const disk = []; for (let dj = -TR.CLOSE; dj <= TR.CLOSE; dj++) for (let di = -TR.CLOSE; di <= TR.CLOSE; di++) if (di * di + dj * dj <= TR.CLOSE * TR.CLOSE) disk.push([di, dj]);
-  const mm = (S, f) => { const O = new Float64Array(NX * NZ).fill(NaN);
+  const mkDisk = (C) => { const d = []; const CL = Math.floor(C); for (let dj = -CL; dj <= CL; dj++) for (let di = -CL; di <= CL; di++) if (di * di + dj * dj <= C * C + 0.01) d.push([di, dj]); return d; };
+  const mm = (S, f, disk) => { const O = new Float64Array(NX * NZ).fill(NaN);
     for (let j = 0; j < NZ; j++) for (let i = 0; i < NX; i++) { if (Number.isNaN(S[j * NX + i])) continue; let v = S[j * NX + i];
       for (const [di, dj] of disk) { const a = i + di, b = j + dj; if (a >= 0 && b >= 0 && a < NX && b < NZ && !Number.isNaN(S[b * NX + a])) v = f(v, S[b * NX + a]); }
       O[j * NX + i] = v; } return O; };
-  A = mm(mm(A, Math.max), Math.min);
+  const A0 = A, dkG = mkDisk(TR.CLOSE_GS), dkR = mkDisk(TR.CLOSE);
+  let AG = mm(mm(A0, Math.max, dkG), Math.min, dkG); A = mm(mm(A0, Math.max, dkR), Math.min, dkR);
   // 3) ぼかす(縦横のガウス。データの無いマスは重みから外す)
   const KR = Math.ceil(2 * TR.BLUR), KW = []; for (let k = -KR; k <= KR; k++) KW.push(Math.exp(-0.5 * (k / TR.BLUR) ** 2));
   const bl = (S, di, dj) => { const O = new Float64Array(NX * NZ).fill(NaN);
     for (let j = 0; j < NZ; j++) for (let i = 0; i < NX; i++) { if (Number.isNaN(S[j * NX + i])) continue; let a = 0, w = 0;
       for (let k = -KR; k <= KR; k++) { const ii = i + k * di, jj = j + k * dj; if (ii < 0 || jj < 0 || ii >= NX || jj >= NZ || Number.isNaN(S[jj * NX + ii])) continue; a += S[jj * NX + ii] * KW[k + KR]; w += KW[k + KR]; }
       O[j * NX + i] = a / w; } return O; };
-  A = bl(bl(A, 1, 0), 0, 1);
-  const dem = (x, z) => { const fx = (x - D.x0) / D.dx - 0.5, fz = (z - D.z0) / D.dx - 0.5, i = Math.floor(fx), j = Math.floor(fz);
+  A = bl(bl(A, 1, 0), 0, 1); AG = bl(bl(AG, 1, 0), 0, 1);
+  const mkDem = (B) => (x, z) => { const fx = (x - D.x0) / D.dx - 0.5, fz = (z - D.z0) / D.dx - 0.5, i = Math.floor(fx), j = Math.floor(fz);
     if (i < 0 || j < 0 || i + 1 >= NX || j + 1 >= NZ) return NaN; const tx = fx - i, tz = fz - j, k = j * NX + i;
-    return (A[k] * (1 - tx) + A[k + 1] * tx) * (1 - tz) + (A[k + NX] * (1 - tx) + A[k + NX + 1] * tx) * tz; };
+    return (B[k] * (1 - tx) + B[k + 1] * tx) * (1 - tz) + (B[k + NX] * (1 - tx) + B[k + NX + 1] * tx) * tz; };
+  const dem = mkDem(A), demG = mkDem(AG);
   // 4) 線路の地盤 Gs
   const G0 = X.DOM.x0 - TR.GS_EXT, gv = [];
   for (let s = G0; s <= X.DOM.x1 + TR.GS_EXT + 1e-6; s += TR.GS_STEP) {
-    const v = [-TR.GS_OFF, 0, TR.GS_OFF].map((f) => { const p = X.frame(s, f); return dem(p.x, p.z); }).filter((v) => !Number.isNaN(v)).sort((a, b) => a - b);
+    const v = [-TR.GS_OFF, 0, TR.GS_OFF].map((f) => { const p = X.frame(s, f); return demG(p.x, p.z); }).filter((v) => !Number.isNaN(v)).sort((a, b) => a - b);
     gv.push(v.length ? v[(v.length - 1) >> 1] : NaN); }
   const GK = Math.ceil(3 * TR.GS_SIG / TR.GS_STEP);
   const GS = gv.map((_, i) => { let a = 0, w = 0; for (let k = -GK; k <= GK; k++) { const v = gv[i + k]; if (v === undefined || Number.isNaN(v)) continue;

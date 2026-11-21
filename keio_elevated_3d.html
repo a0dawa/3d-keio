@@ -1827,7 +1827,7 @@ function karaCut(P){
    国土交通省 3D都市モデル(Project PLATEAU)2025年度の地形モデル(dem:TINRelief。点は約2.6m おき)を tools/plateau_dem.py が
    10m 格子の標高にしたもの。ビューアの線路・高架・駅は「線路の地盤=0」の上に作ってあるので、地形は**線路の地盤からの差**
    (相対の起伏)にする。手順(⑦ は同じ手順を検証側に別に書いて照合する):
-   1. 細い溝を閉じる:最大→最小(半径 CLOSE マス=20m の円)。幅 40m 未満の溝(鉄道の掘割・道路の切り下げ・河川の水路)を埋める。
+   1. 細い溝を閉じる:最大→最小(半径 CLOSE マスの円。2026-11 に 2マス=20m から 0.5マス=5m へ。10m の格子では半径 5m の円に中心の1マスしか入らないので、実質は閉じない=細い溝も地形に残す)。以前は幅 40m 未満の溝(鉄道の掘割・道路の切り下げ・河川の水路)を埋めていた。
       ビューアはそれらを別に描く(井の頭線・道路は平ら、河川は水面)ので、地形に残すと二重になる
    2. ぼかす(σ BLUR マス=10m)
    3. 線路の地盤 Gs(s):中心線と ±20m の3点の中央値を σ 60m でならす。起伏 T = 標高 − Gs(線路へ射影した s)
@@ -1841,7 +1841,7 @@ function karaCut(P){
    ・登録簿 TER(格子の高さ H・平らなセル flat・線路の地盤 GS・平らな所の定義 CORR/POLY) */
 const PLD=(typeof globalThis!=='undefined'&&globalThis.PLATEAU_DEM&&globalThis.PLATEAU_DEM.h64)?globalThis.PLATEAU_DEM:null;
 const TER={on:!!(PLD&&PLL&&HAS_PLB), DX:25, X0:-9100, X1:1900, Z0:-1950, Z1:3250,
-  AS:21, BL:40, FAR0:480, FAR1:600, END0:100, END1:300, CLOSE:2, BLUR:1, GS_SIG:60, GS_OFF:20, SHADE:5,
+  AS:21, BL:40, FAR0:480, FAR1:600, END0:100, END1:300, CLOSE:0.5, CLOSE_GS:2, BLUR:1, GS_SIG:60, GS_OFF:20, SHADE:5,
   GX:0, GZ:0, H:null, NN:null, flat:null, GS:null, stat:{}};
 TER.GX=Math.round((TER.X1-TER.X0)/TER.DX); TER.GZ=Math.round((TER.Z1-TER.Z0)/TER.DX);
 TER.CORR=[{A:INO, hw:11, u0:XR.U0-10, u1:XR.U1+10, bl:30, n:'井の頭線'},
@@ -1880,14 +1880,17 @@ if(TER.on){
   for(let j=0,o=0;j<NZ;j++){const i0=u16(rb,2*j), n=u16(rb,2*j+1);
     for(let k=0;k<n;k++){const v=u16(hb,o+k); if(v!==65535) A[j*NX+i0+k]=D.h0+v*D.q;} o+=n;}
   // 2) 閉じる(最大の後に最小。半径 CLOSE マスの円。データの無いマスは見ない)
-  const R=TER.CLOSE, DK=[];
-  for(let dj=-R;dj<=R;dj++)for(let di=-R;di<=R;di++) if(di*di+dj*dj<=R*R+0.01) DK.push([di,dj]);
-  const morph=(S,mx)=>{const O=new Float32Array(NX*NZ).fill(NaN);
+  // 格子は 10m。半径 R マスの円に入るマス(R<1 なら中心の1マスだけ=閉じない)
+  const kern=R=>{const K=[], RI=Math.floor(R); for(let dj=-RI;dj<=RI;dj++)for(let di=-RI;di<=RI;di++) if(di*di+dj*dj<=R*R+0.01) K.push([di,dj]); return K;};
+  const morph=(S,mx,DK)=>{const O=new Float32Array(NX*NZ).fill(NaN);
     for(let j=0;j<NZ;j++)for(let i=0;i<NX;i++){const c=S[j*NX+i]; if(c!==c) continue; let v=c;
       for(const [di,dj] of DK){const a=i+di, b=j+dj; if(a<0||b<0||a>=NX||b>=NZ) continue; const w=S[b*NX+a]; if(w!==w) continue; v=mx?(w>v?w:v):(w<v?w:v);}
       O[j*NX+i]=v;}
     return O;};
-  A=morph(morph(A,true),false);
+  // 起伏は半径 CLOSE、線路の地盤 Gs は半径 CLOSE_GS(2マス=20m。細い溝を埋めた標高)で作る。Gs を動かすと線路は0のまま周りの地面が持ち上がるので、Gs の基準は変えない
+  const A0=A, KG=kern(TER.CLOSE_GS), KR0=kern(TER.CLOSE);
+  let AG=morph(morph(A0,true,KG),false,KG);
+  A=morph(morph(A0,true,KR0),false,KR0);
   // 3) ぼかす(σ BLUR マスのガウス。縦横に分けて。データの無いマスは重みから外す)
   const sg=TER.BLUR, KR=Math.ceil(2*sg), KW=[]; for(let k=-KR;k<=KR;k++) KW.push(Math.exp(-0.5*(k/sg)*(k/sg)));
   const blur=(S,hor)=>{const O=new Float32Array(NX*NZ).fill(NaN);
@@ -1895,17 +1898,18 @@ if(TER.on){
       for(let k=-KR;k<=KR;k++){const ii=hor?i+k:i, jj=hor?j:j+k; if(ii<0||jj<0||ii>=NX||jj>=NZ) continue; const v=S[jj*NX+ii]; if(v!==v) continue; a+=v*KW[k+KR]; w+=KW[k+KR];}
       O[j*NX+i]=a/w;}
     return O;};
-  A=blur(blur(A,true),false);
+  A=blur(blur(A,true),false); AG=blur(blur(AG,true),false);
   // 10m 格子の双線形(4マスのどれかが無ければ NaN)
-  const dem=(x,z)=>{const fx=(x-D.x0)/D.dx-0.5, fz=(z-D.z0)/D.dx-0.5, i=Math.floor(fx), j=Math.floor(fz);
+  const mkDem=B=>(x,z)=>{const fx=(x-D.x0)/D.dx-0.5, fz=(z-D.z0)/D.dx-0.5, i=Math.floor(fx), j=Math.floor(fz);
     if(i<0||j<0||i+1>=NX||j+1>=NZ) return NaN;
     const tx=fx-i, tz=fz-j, k=j*NX+i;
-    return (A[k]*(1-tx)+A[k+1]*tx)*(1-tz)+(A[k+NX]*(1-tx)+A[k+NX+1]*tx)*tz;};
+    return (B[k]*(1-tx)+B[k+1]*tx)*(1-tz)+(B[k+NX]*(1-tx)+B[k+NX+1]*tx)*tz;};
+  const dem=mkDem(A), demG=mkDem(AG);
   TER.dem=dem;
   // 4) 線路の地盤 Gs(s)
   const GS0=DOM.x0-700, GDS=10, g0=[];
   for(let s=GS0;s<=DOM.x1+700+1e-6;s+=GDS){
-    const v=[-TER.GS_OFF,0,TER.GS_OFF].map(f=>{const p=frame(s,f); return dem(p.x,p.z);}).filter(v=>v===v).sort((a,b)=>a-b);
+    const v=[-TER.GS_OFF,0,TER.GS_OFF].map(f=>{const p=frame(s,f); return demG(p.x,p.z);}).filter(v=>v===v).sort((a,b)=>a-b);
     g0.push(v.length?v[(v.length-1)>>1]:NaN);}
   const GK=Math.ceil(3*TER.GS_SIG/GDS), GS=g0.map((_,i)=>{let a=0,w=0;
     for(let k=-GK;k<=GK;k++){const v=g0[i+k]; if(v===undefined||v!==v) continue; const ww=Math.exp(-0.5*(k*GDS/TER.GS_SIG)*(k*GDS/TER.GS_SIG)); a+=v*ww; w+=ww;}
